@@ -1,7 +1,7 @@
-package com.giovanniandreuzza.nimbus.presentation
+package io.github.giovanniandreuzza.nimbus.presentation
 
-import com.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
-import com.giovanniandreuzza.nimbus.core.application.dtos.DownloadState
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadState
 import kotlinx.coroutines.flow.Flow
 
 /**

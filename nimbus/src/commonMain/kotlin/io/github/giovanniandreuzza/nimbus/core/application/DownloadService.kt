@@ -1,12 +1,12 @@
-package com.giovanniandreuzza.nimbus.core.application
+package io.github.giovanniandreuzza.nimbus.core.application
 
-import com.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
-import com.giovanniandreuzza.nimbus.core.application.dtos.DownloadState
-import com.giovanniandreuzza.nimbus.core.application.dtos.DownloadStream
-import com.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
-import com.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
-import com.giovanniandreuzza.nimbus.core.ports.DownloadRepository
-import com.giovanniandreuzza.nimbus.core.ports.FileRepository
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadState
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadStream
+import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
+import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
+import io.github.giovanniandreuzza.nimbus.core.ports.DownloadRepository
+import io.github.giovanniandreuzza.nimbus.core.ports.FileRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -90,7 +90,7 @@ internal class DownloadService(
     }
 
     internal fun pauseDownload(downloadId: Long) {
-        val downloadId = DownloadId.create(downloadId)
+        val downloadId = DownloadId.Companion.create(downloadId)
 
         if (!downloadRequests.containsKey(downloadId)) {
             return
@@ -107,7 +107,7 @@ internal class DownloadService(
     }
 
     internal fun resumeDownload(downloadId: Long) {
-        val downloadId = DownloadId.create(downloadId)
+        val downloadId = DownloadId.Companion.create(downloadId)
 
         if (downloadRequests.containsKey(downloadId)) {
             return
@@ -131,7 +131,7 @@ internal class DownloadService(
     }
 
     internal fun cancelDownload(downloadId: Long) {
-        val downloadId = DownloadId.create(downloadId)
+        val downloadId = DownloadId.Companion.create(downloadId)
 
         if (pausedDownloads.containsKey(downloadId)) {
             val downloadRequest = pausedDownloads[downloadId]!!
@@ -248,7 +248,7 @@ internal class DownloadService(
     }
 
     private fun createUniqueId(fileUrl: String, filePath: String, fileName: String): DownloadId {
-        return DownloadId.create(fileUrl, filePath, fileName)
+        return DownloadId.Companion.create(fileUrl, filePath, fileName)
     }
 
     private fun deleteFile(filePath: String) {

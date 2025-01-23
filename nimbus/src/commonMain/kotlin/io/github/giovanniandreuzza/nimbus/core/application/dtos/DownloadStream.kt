@@ -1,4 +1,4 @@
-package com.giovanniandreuzza.nimbus.core.application.dtos
+package io.github.giovanniandreuzza.nimbus.core.application.dtos
 
 import okio.Source
 

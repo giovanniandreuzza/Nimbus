@@ -1,6 +1,6 @@
 package io.github.giovanniandreuzza.sample_android.infrastructure
 
-import com.giovanniandreuzza.nimbus.core.ports.FileRepository
+import io.github.giovanniandreuzza.nimbus.core.ports.FileRepository
 import okio.Sink
 import okio.sink
 import java.io.File

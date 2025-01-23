@@ -1,9 +1,9 @@
-package com.giovanniandreuzza.nimbus
+package io.github.giovanniandreuzza.nimbus
 
-import com.giovanniandreuzza.nimbus.core.ports.DownloadRepository
-import com.giovanniandreuzza.nimbus.core.ports.FileRepository
-import com.giovanniandreuzza.nimbus.presentation.DownloadController
-import com.giovanniandreuzza.nimbus.presentation.NimbusAPI
+import io.github.giovanniandreuzza.nimbus.core.ports.DownloadRepository
+import io.github.giovanniandreuzza.nimbus.core.ports.FileRepository
+import io.github.giovanniandreuzza.nimbus.presentation.DownloadController
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO

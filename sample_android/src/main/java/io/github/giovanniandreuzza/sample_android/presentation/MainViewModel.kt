@@ -2,9 +2,9 @@ package io.github.giovanniandreuzza.sample_android.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
-import com.giovanniandreuzza.nimbus.core.application.dtos.DownloadState
-import com.giovanniandreuzza.nimbus.presentation.NimbusAPI
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadState
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.io.File
