@@ -1,0 +1,90 @@
+[versions]
+## Kotlin
+kotlin = "2.1.0"
+
+## Okio
+okio = "3.10.2"
+
+## KotlinX - Coroutines
+kotlinxCoroutinesCore = "1.10.1"
+
+## KotlinX - Serialization
+kotlinx_serialization_version = "1.7.3"
+
+## Android
+agp = "8.7.3"
+android-compileSdk = "34"
+android-minSdk = "16"
+coreKtx = "1.15.0"
+lifecycleRuntimeKtx = "2.8.7"
+activityCompose = "1.10.0"
+composeBom = "2025.01.00"
+
+## Koin
+koin_android_version = "4.0.0"
+
+## Timber
+timber_version = "5.0.1"
+
+## OkHttp3
+okhttp3_version = "4.12.0"
+okhttp3_logging_interceptor_version = "4.12.0"
+
+# Retrofit2
+retrofit2_version = "2.11.0"
+retrofit2_serialization_converter_version = "1.0.0"
+
+## Test
+junit = "4.13.2"
+junitVersion = "1.2.1"
+espressoCore = "3.6.1"
+
+[libraries]
+## KotlinX - Coroutines
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutinesCore" }
+
+## KotlinX - Serialization
+kotlinx_serialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx_serialization_version" }
+
+## Okio
+okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
+
+## AndroidX
+core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
+
+## Koin
+koin_android = { module = "io.insert-koin:koin-android", version.ref = "koin_android_version" }
+
+## Timber
+timber = { module = "com.jakewharton.timber:timber", version.ref = "timber_version" }
+
+## OkHttp3
+okhttp3 = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp3_version" }
+okhttp3_logging_interceptor = { module = "com.squareup.okhttp3:logging-interceptor", version.ref = "okhttp3_logging_interceptor_version" }
+
+## Retrofit2
+retrofit2 = { module = "com.squareup.retrofit2:retrofit", version.ref = "retrofit2_version" }
+retrofit2_serialization = { module = "com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter", version.ref = "retrofit2_serialization_converter_version" }
+
+## Test
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+
+
+[plugins]
+## Nimbus
+androidLibrary = { id = "com.android.library", version.ref = "agp" }
+kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+vanniktech-mavenPublish = { id = "com.vanniktech.maven.publish", version = "0.29.0" }
+
+## Android
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
