@@ -1,10 +1,10 @@
-package com.giovanniandreuzza.nimbus.presentation
+package io.github.giovanniandreuzza.nimbus.presentation
 
-import com.giovanniandreuzza.nimbus.core.application.DownloadService
-import com.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
-import com.giovanniandreuzza.nimbus.core.application.dtos.DownloadState
-import com.giovanniandreuzza.nimbus.core.ports.DownloadRepository
-import com.giovanniandreuzza.nimbus.core.ports.FileRepository
+import io.github.giovanniandreuzza.nimbus.core.application.DownloadService
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadState
+import io.github.giovanniandreuzza.nimbus.core.ports.DownloadRepository
+import io.github.giovanniandreuzza.nimbus.core.ports.FileRepository
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 

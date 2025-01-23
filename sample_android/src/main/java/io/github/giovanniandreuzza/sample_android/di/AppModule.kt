@@ -1,9 +1,9 @@
 package io.github.giovanniandreuzza.sample_android.di
 
-import com.giovanniandreuzza.nimbus.Nimbus
-import com.giovanniandreuzza.nimbus.core.ports.DownloadRepository
-import com.giovanniandreuzza.nimbus.core.ports.FileRepository
-import com.giovanniandreuzza.nimbus.presentation.NimbusAPI
+import io.github.giovanniandreuzza.nimbus.Nimbus
+import io.github.giovanniandreuzza.nimbus.core.ports.DownloadRepository
+import io.github.giovanniandreuzza.nimbus.core.ports.FileRepository
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.sample_android.framework.retrofit.AppEndpoint
 import io.github.giovanniandreuzza.sample_android.infrastructure.LocalFileRepository
 import io.github.giovanniandreuzza.sample_android.infrastructure.RemoteDownloadRepository

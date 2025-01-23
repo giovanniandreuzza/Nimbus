@@ -1,7 +1,7 @@
 package io.github.giovanniandreuzza.sample_android.infrastructure
 
-import com.giovanniandreuzza.nimbus.core.application.dtos.DownloadStream
-import com.giovanniandreuzza.nimbus.core.ports.DownloadRepository
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadStream
+import io.github.giovanniandreuzza.nimbus.core.ports.DownloadRepository
 import io.github.giovanniandreuzza.sample_android.framework.retrofit.AppEndpoint
 import okio.source
 import kotlin.text.toLong

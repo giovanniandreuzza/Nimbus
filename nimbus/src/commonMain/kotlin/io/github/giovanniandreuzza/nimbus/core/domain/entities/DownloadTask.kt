@@ -1,6 +1,6 @@
-package com.giovanniandreuzza.nimbus.core.domain.entities
+package io.github.giovanniandreuzza.nimbus.core.domain.entities
 
-import com.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
+import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 
 /**
  * Download Task.

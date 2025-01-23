@@ -1,4 +1,4 @@
-package com.giovanniandreuzza.nimbus.core.ports
+package io.github.giovanniandreuzza.nimbus.core.ports
 
 import okio.Sink
 

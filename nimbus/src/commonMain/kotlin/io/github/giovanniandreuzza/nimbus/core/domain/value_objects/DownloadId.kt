@@ -1,4 +1,4 @@
-package com.giovanniandreuzza.nimbus.core.domain.value_objects
+package io.github.giovanniandreuzza.nimbus.core.domain.value_objects
 
 /**
  * Download ID.

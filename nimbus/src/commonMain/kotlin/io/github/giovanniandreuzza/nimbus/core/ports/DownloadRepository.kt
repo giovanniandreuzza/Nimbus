@@ -1,6 +1,6 @@
-package com.giovanniandreuzza.nimbus.core.ports
+package io.github.giovanniandreuzza.nimbus.core.ports
 
-import com.giovanniandreuzza.nimbus.core.application.dtos.DownloadStream
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadStream
 
 /**
  * Download Repository.
