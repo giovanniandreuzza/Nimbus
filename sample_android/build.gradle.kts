@@ -70,7 +70,7 @@ dependencies {
     implementation(libs.retrofit2.serialization)
 
     // Nimbus
-    implementation(project(":nimbus"))
+    implementation(libs.nimbus)
 
     // Test
     testImplementation(libs.junit)
