@@ -7,6 +7,8 @@ import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.FileRepository
+import io.github.giovanniandreuzza.nimbus.utils.emit
+import io.github.giovanniandreuzza.nimbus.utils.takeUntil
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -15,12 +17,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import okio.buffer
 import okio.use
 
@@ -34,7 +35,7 @@ import okio.use
  * @author Giovanni Andreuzza
  */
 internal class DownloadService(
-    dispatcher: CoroutineDispatcher,
+    private val dispatcher: CoroutineDispatcher,
     concurrencyLimit: Int,
     private val fileRepository: FileRepository,
     private val downloadRepository: DownloadRepository
@@ -45,22 +46,23 @@ internal class DownloadService(
 
     private val semaphore = Semaphore(concurrencyLimit)
 
-    private val _downloadsFlow = MutableSharedFlow<Pair<DownloadId, DownloadState>>()
-    private val downloadsFlow: SharedFlow<Pair<DownloadId, DownloadState>> = _downloadsFlow
-
     private val downloadScope = CoroutineScope(dispatcher + SupervisorJob())
 
     private val downloadRequests = mutableMapOf<DownloadId, DownloadTask>()
     private val pausedDownloads = mutableMapOf<DownloadId, DownloadTask>()
     private val downloadJobs = mutableMapOf<DownloadId, Job>()
+    private val downloadFlows = mutableMapOf<DownloadId, MutableSharedFlow<DownloadState>>()
 
     internal suspend fun getFileSize(fileUrl: String): Long {
         return downloadRepository.getFileSize(fileUrl)
     }
 
     internal fun downloadFile(downloadRequest: DownloadRequest): Long {
-        val downloadId =
-            createUniqueId(downloadRequest.url, downloadRequest.path, downloadRequest.name)
+        val downloadId = DownloadId.create(
+            fileUrl = downloadRequest.url,
+            filePath = downloadRequest.path,
+            fileName = downloadRequest.name
+        )
 
         val downloadTask = DownloadTask(
             id = downloadId,
@@ -69,7 +71,8 @@ internal class DownloadService(
             name = downloadRequest.name
         )
 
-        if (downloadRequests.contains(downloadTask.id)) {
+        if (downloadRequests.containsKey(downloadTask.id)) {
+            println("Download already in progress")
             return downloadId.id
         }
 
@@ -82,15 +85,19 @@ internal class DownloadService(
     }
 
     internal fun observeDownload(downloadId: Long): Flow<DownloadState> {
-        return downloadsFlow.filter {
-            it.first.id == downloadId
-        }.map {
-            it.second
+        return downloadFlows.getOrPut(DownloadId.create(downloadId)) {
+            MutableSharedFlow(replay = 1)
+        }.takeUntil {
+            it is DownloadState.Finished || it is DownloadState.Failed
+        }.onCompletion {
+            if (it == null) {
+                cancelDownload(downloadId)
+            }
         }
     }
 
     internal fun pauseDownload(downloadId: Long) {
-        val downloadId = DownloadId.Companion.create(downloadId)
+        val downloadId = DownloadId.create(downloadId)
 
         if (!downloadRequests.containsKey(downloadId)) {
             return
@@ -107,7 +114,7 @@ internal class DownloadService(
     }
 
     internal fun resumeDownload(downloadId: Long) {
-        val downloadId = DownloadId.Companion.create(downloadId)
+        val downloadId = DownloadId.create(downloadId)
 
         if (downloadRequests.containsKey(downloadId)) {
             return
@@ -149,46 +156,46 @@ internal class DownloadService(
             downloadJobs[downloadId]!!.cancel()
             downloadJobs.remove(downloadId)
         }
+
+        if (downloadFlows.containsKey(downloadId)) {
+            downloadFlows.remove(downloadId)
+        }
     }
 
     private fun startProcessing(downloadTask: DownloadTask): Job {
         return downloadScope.launch {
-            try {
-                _downloadsFlow.emit(
-                    Pair(
+            withContext(dispatcher) {
+                try {
+                    downloadFlows.emit(
                         downloadTask.id,
                         DownloadState.Idle
                     )
-                )
 
-                semaphore.withPermit {
-                    ensureActive()
+                    semaphore.withPermit {
+                        ensureActive()
 
-                    val fileUrl = downloadTask.url
-                    val filePath = downloadTask.path
+                        val fileUrl = downloadTask.url
+                        val filePath = downloadTask.path
 
-                    val downloadStream = getDownloadStream(fileUrl, filePath)
+                        val downloadStream = getDownloadStream(fileUrl, filePath)
 
-                    if (downloadStream == null) {
-                        _downloadsFlow.emit(
-                            Pair(
+                        if (downloadStream == null) {
+                            downloadFlows.emit(
                                 downloadTask.id,
                                 DownloadState.Finished
                             )
-                        )
-                        return@withPermit
-                    }
+                            return@withPermit
+                        }
 
-                    ensureActive()
+                        ensureActive()
 
-                    val sink = fileRepository.getSink(filePath)
+                        val sink = fileRepository.getSink(filePath)
 
-                    val source = downloadStream.source
-                    val contentLength = downloadStream.contentLength
-                    var progressBytes = downloadStream.downloadedBytes
+                        val source = downloadStream.source
+                        val contentLength = downloadStream.contentLength
+                        var progressBytes = downloadStream.downloadedBytes
 
-                    _downloadsFlow.emit(
-                        Pair(
+                        downloadFlows.emit(
                             downloadTask.id,
                             DownloadState.Downloading(
                                 downloadProgress(
@@ -197,21 +204,19 @@ internal class DownloadService(
                                 )
                             )
                         )
-                    )
 
-                    sink.buffer().use { output ->
-                        source.buffer().use { input ->
-                            ensureActive()
-
-                            val bufferSize = DEFAULT_BUFFER_SIZE
-                            while (!input.exhausted()) {
+                        sink.buffer().use { output ->
+                            source.buffer().use { input ->
                                 ensureActive()
 
-                                val bytesRead = input.read(output.buffer, bufferSize)
-                                if (bytesRead > 0) {
-                                    progressBytes += bytesRead
-                                    _downloadsFlow.emit(
-                                        Pair(
+                                val bufferSize = DEFAULT_BUFFER_SIZE
+                                while (!input.exhausted()) {
+                                    ensureActive()
+
+                                    val bytesRead = input.read(output.buffer, bufferSize)
+                                    if (bytesRead > 0) {
+                                        progressBytes += bytesRead
+                                        downloadFlows.emit(
                                             downloadTask.id,
                                             DownloadState.Downloading(
                                                 downloadProgress(
@@ -220,35 +225,27 @@ internal class DownloadService(
                                                 )
                                             )
                                         )
-                                    )
-                                    output.emit()
+                                        output.emit()
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    _downloadsFlow.emit(
-                        Pair(
+                        downloadFlows.emit(
                             downloadTask.id,
                             DownloadState.Finished
                         )
-                    )
-                }
-            } catch (_: CancellationException) {
-                // Do nothing
-            } catch (e: Exception) {
-                _downloadsFlow.emit(
-                    Pair(
+                    }
+                } catch (_: CancellationException) {
+                    // Do nothing
+                } catch (e: Exception) {
+                    downloadFlows.emit(
                         downloadTask.id,
                         DownloadState.Failed(e)
                     )
-                )
+                }
             }
         }
-    }
-
-    private fun createUniqueId(fileUrl: String, filePath: String, fileName: String): DownloadId {
-        return DownloadId.Companion.create(fileUrl, filePath, fileName)
     }
 
     private fun deleteFile(filePath: String) {

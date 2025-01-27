@@ -8,6 +8,7 @@ import io.github.giovanniandreuzza.sample_android.framework.retrofit.AppEndpoint
 import io.github.giovanniandreuzza.sample_android.infrastructure.LocalFileRepository
 import io.github.giovanniandreuzza.sample_android.infrastructure.RemoteDownloadRepository
 import io.github.giovanniandreuzza.sample_android.presentation.MainViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.json.Json
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module

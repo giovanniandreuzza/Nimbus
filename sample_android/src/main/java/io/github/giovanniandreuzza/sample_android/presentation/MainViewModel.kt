@@ -5,9 +5,11 @@ import androidx.lifecycle.viewModelScope
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadState
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.io.File
+import kotlin.coroutines.CoroutineContext
 
 /**
  * Main ViewModel.
@@ -16,7 +18,7 @@ import java.io.File
  * @author Giovanni Andreuzza
  */
 class MainViewModel(
-    private val nimbusAPI: NimbusAPI,
+    private val nimbusAPI: NimbusAPI
 ) : ViewModel() {
 
     private val url = "https://uiuiui.storage.clo.ru/files/workshop-35/35_783436035.mp4"
@@ -31,9 +33,9 @@ class MainViewModel(
             val filePath1 = folder.path + File.separator + "video1.mp4"
             val downloadRequest1 = DownloadRequest(url, filePath1, name)
 
-            if (id1 == null) {
-                id1 = nimbusAPI.downloadFile(downloadRequest1)
-                nimbusAPI.observeDownload(id1!!).collect { downloadState ->
+            id1 = nimbusAPI.downloadFile(downloadRequest1)
+            nimbusAPI.observeDownload(id1!!)
+                .collect { downloadState ->
                     when (downloadState) {
                         is DownloadState.Downloading -> {
                             Timber.d("Downloading 1: ${downloadState.progress}")
@@ -52,9 +54,6 @@ class MainViewModel(
                         }
                     }
                 }
-            } else {
-                nimbusAPI.downloadFile(downloadRequest1)
-            }
         }
     }
 
@@ -63,29 +62,25 @@ class MainViewModel(
             val filePath2 = folder.path + File.separator + "video2.mp4"
             val downloadRequest2 = DownloadRequest(url, filePath2, name)
 
-            if (id2 == null) {
-                id2 = nimbusAPI.downloadFile(downloadRequest2)
-                nimbusAPI.observeDownload(id2!!).collect { downloadState ->
-                    when (downloadState) {
-                        is DownloadState.Downloading -> {
-                            Timber.d("Downloading 2: ${downloadState.progress}")
-                        }
+            id2 = nimbusAPI.downloadFile(downloadRequest2)
+            nimbusAPI.observeDownload(id2!!).collect { downloadState ->
+                when (downloadState) {
+                    is DownloadState.Downloading -> {
+                        Timber.d("Downloading 2: ${downloadState.progress}")
+                    }
 
-                        is DownloadState.Failed -> {
-                            Timber.e("Failed 2: ${downloadState.error}")
-                        }
+                    is DownloadState.Failed -> {
+                        Timber.e("Failed 2: ${downloadState.error}")
+                    }
 
-                        DownloadState.Finished -> {
-                            Timber.d("Finished 2")
-                        }
+                    DownloadState.Finished -> {
+                        Timber.d("Finished 2")
+                    }
 
-                        DownloadState.Idle -> {
-                            Timber.d("Idle 2")
-                        }
+                    DownloadState.Idle -> {
+                        Timber.d("Idle 2")
                     }
                 }
-            } else {
-                nimbusAPI.downloadFile(downloadRequest2)
             }
         }
     }
@@ -95,29 +90,25 @@ class MainViewModel(
             val filePath3 = folder.path + File.separator + "video3.mp4"
             val downloadRequest3 = DownloadRequest(url, filePath3, name)
 
-            if (id3 == null) {
-                id3 = nimbusAPI.downloadFile(downloadRequest3)
-                nimbusAPI.observeDownload(id3!!).collect { downloadState ->
-                    when (downloadState) {
-                        is DownloadState.Downloading -> {
-                            Timber.d("Downloading 3: ${downloadState.progress}")
-                        }
+            id3 = nimbusAPI.downloadFile(downloadRequest3)
+            nimbusAPI.observeDownload(id3!!).collect { downloadState ->
+                when (downloadState) {
+                    is DownloadState.Downloading -> {
+                        Timber.d("Downloading 3: ${downloadState.progress}")
+                    }
 
-                        is DownloadState.Failed -> {
-                            Timber.e("Failed 3: ${downloadState.error}")
-                        }
+                    is DownloadState.Failed -> {
+                        Timber.e("Failed 3: ${downloadState.error}")
+                    }
 
-                        DownloadState.Finished -> {
-                            Timber.d("Finished 3")
-                        }
+                    DownloadState.Finished -> {
+                        Timber.d("Finished 3")
+                    }
 
-                        DownloadState.Idle -> {
-                            Timber.d("Idle 3")
-                        }
+                    DownloadState.Idle -> {
+                        Timber.d("Idle 3")
                     }
                 }
-            } else {
-                nimbusAPI.downloadFile(downloadRequest3)
             }
         }
     }
