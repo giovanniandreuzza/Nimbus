@@ -38,7 +38,7 @@ retrofit2_version = "2.11.0"
 retrofit2_serialization_converter_version = "1.0.0"
 
 ## Nimbus
-nimbus_version = "1.0.1"
+nimbus_version = "1.0.2"
 
 ## Test
 junit = "4.13.2"

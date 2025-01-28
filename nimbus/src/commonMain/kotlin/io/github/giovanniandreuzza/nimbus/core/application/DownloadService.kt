@@ -64,7 +64,7 @@ internal class DownloadService(
             fileName = downloadRequest.name
         )
 
-        return downloadRequests.containsKey(downloadId)
+        return downloadRequests.containsKey(downloadId) || pausedDownloads.containsKey(downloadId)
     }
 
     internal fun downloadFile(downloadRequest: DownloadRequest): Long {
