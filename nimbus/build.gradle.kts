@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "io.github.giovanniandreuzza"
-version = "1.0.1"
+version = "1.0.2"
 
 kotlin {
     explicitApi()
@@ -61,7 +61,7 @@ mavenPublishing {
     coordinates(
         groupId = "io.github.giovanniandreuzza",
         artifactId = "nimbus",
-        version = "1.0.1"
+        version = "1.0.2"
     )
 
     // Configure POM metadata for the published artifact

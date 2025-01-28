@@ -35,8 +35,16 @@ internal class DownloadController(
         return downloadService.getFileSize(url)
     }
 
+    override fun isDownloading(downloadRequest: DownloadRequest): Boolean {
+        return downloadService.isDownloading(downloadRequest)
+    }
+
     override suspend fun downloadFile(downloadRequest: DownloadRequest): Long {
         return downloadService.downloadFile(downloadRequest)
+    }
+
+    override suspend fun getOngoingDownloadId(downloadRequest: DownloadRequest): Long? {
+        return downloadService.getOngoingDownloadId(downloadRequest)
     }
 
     override fun observeDownload(downloadId: Long): Flow<DownloadState> {

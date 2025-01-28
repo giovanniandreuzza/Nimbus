@@ -5,11 +5,9 @@ import androidx.lifecycle.viewModelScope
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadState
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
-import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.io.File
-import kotlin.coroutines.CoroutineContext
 
 /**
  * Main ViewModel.
@@ -32,6 +30,12 @@ class MainViewModel(
         viewModelScope.launch {
             val filePath1 = folder.path + File.separator + "video1.mp4"
             val downloadRequest1 = DownloadRequest(url, filePath1, name)
+
+            if (nimbusAPI.isDownloading(downloadRequest1)) {
+                val id = nimbusAPI.getOngoingDownloadId(downloadRequest1)
+                nimbusAPI.resumeDownload(id!!)
+                return@launch
+            }
 
             id1 = nimbusAPI.downloadFile(downloadRequest1)
             nimbusAPI.observeDownload(id1!!)
@@ -62,6 +66,12 @@ class MainViewModel(
             val filePath2 = folder.path + File.separator + "video2.mp4"
             val downloadRequest2 = DownloadRequest(url, filePath2, name)
 
+            if (nimbusAPI.isDownloading(downloadRequest2)) {
+                val id = nimbusAPI.getOngoingDownloadId(downloadRequest2)
+                nimbusAPI.resumeDownload(id!!)
+                return@launch
+            }
+
             id2 = nimbusAPI.downloadFile(downloadRequest2)
             nimbusAPI.observeDownload(id2!!).collect { downloadState ->
                 when (downloadState) {
@@ -89,6 +99,12 @@ class MainViewModel(
         viewModelScope.launch {
             val filePath3 = folder.path + File.separator + "video3.mp4"
             val downloadRequest3 = DownloadRequest(url, filePath3, name)
+
+            if (nimbusAPI.isDownloading(downloadRequest3)) {
+                val id = nimbusAPI.getOngoingDownloadId(downloadRequest3)
+                nimbusAPI.resumeDownload(id!!)
+                return@launch
+            }
 
             id3 = nimbusAPI.downloadFile(downloadRequest3)
             nimbusAPI.observeDownload(id3!!).collect { downloadState ->

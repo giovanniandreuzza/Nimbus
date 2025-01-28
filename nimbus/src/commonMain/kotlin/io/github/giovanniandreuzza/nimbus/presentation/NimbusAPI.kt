@@ -20,12 +20,28 @@ public interface NimbusAPI {
     public suspend fun getFileSize(filePath: String): Long
 
     /**
+     * Check if the file is downloading.
+     *
+     * @param downloadRequest The download request.
+     * @return True if the file is downloading, false otherwise.
+     */
+    public fun isDownloading(downloadRequest: DownloadRequest): Boolean
+
+    /**
      * Download a file.
      *
      * @param downloadRequest The download request.
      * @return The download id.
      */
     public suspend fun downloadFile(downloadRequest: DownloadRequest): Long
+
+    /**
+     * Get the ongoing download id.
+     *
+     * @param downloadRequest The download request.
+     * @return If the download is ongoing, the download id, otherwise null.
+     */
+    public suspend fun getOngoingDownloadId(downloadRequest: DownloadRequest): Long?
 
     /**
      * Observe the download state.
