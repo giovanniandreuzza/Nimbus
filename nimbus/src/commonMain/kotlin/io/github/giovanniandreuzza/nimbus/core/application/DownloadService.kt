@@ -57,6 +57,16 @@ internal class DownloadService(
         return downloadRepository.getFileSize(fileUrl)
     }
 
+    internal fun isDownloading(downloadRequest: DownloadRequest): Boolean {
+        val downloadId = DownloadId.create(
+            fileUrl = downloadRequest.url,
+            filePath = downloadRequest.path,
+            fileName = downloadRequest.name
+        )
+
+        return downloadRequests.containsKey(downloadId) || pausedDownloads.containsKey(downloadId)
+    }
+
     internal fun downloadFile(downloadRequest: DownloadRequest): Long {
         val downloadId = DownloadId.create(
             fileUrl = downloadRequest.url,
@@ -72,7 +82,6 @@ internal class DownloadService(
         )
 
         if (downloadRequests.containsKey(downloadTask.id)) {
-            println("Download already in progress")
             return downloadId.id
         }
 
@@ -84,14 +93,36 @@ internal class DownloadService(
         return downloadId.id
     }
 
+    internal fun getOngoingDownloadId(downloadRequest: DownloadRequest): Long? {
+        if (!isDownloading(downloadRequest)) {
+            return null
+        }
+
+        return DownloadId.create(
+            fileUrl = downloadRequest.url,
+            filePath = downloadRequest.path,
+            fileName = downloadRequest.name
+        ).id
+    }
+
     internal fun observeDownload(downloadId: Long): Flow<DownloadState> {
-        return downloadFlows.getOrPut(DownloadId.create(downloadId)) {
+        val downloadId = DownloadId.create(downloadId)
+        return downloadFlows.getOrPut(downloadId) {
             MutableSharedFlow(replay = 1)
         }.takeUntil {
             it is DownloadState.Finished || it is DownloadState.Failed
         }.onCompletion {
-            if (it == null) {
-                cancelDownload(downloadId)
+            if (downloadRequests.containsKey(downloadId)) {
+                downloadRequests.remove(downloadId)
+            }
+
+            if (downloadJobs.containsKey(downloadId)) {
+                downloadJobs[downloadId]!!.cancel()
+                downloadJobs.remove(downloadId)
+            }
+
+            if (downloadFlows.containsKey(downloadId)) {
+                downloadFlows.remove(downloadId)
             }
         }
     }
@@ -138,7 +169,7 @@ internal class DownloadService(
     }
 
     internal fun cancelDownload(downloadId: Long) {
-        val downloadId = DownloadId.Companion.create(downloadId)
+        val downloadId = DownloadId.create(downloadId)
 
         if (pausedDownloads.containsKey(downloadId)) {
             val downloadRequest = pausedDownloads[downloadId]!!
