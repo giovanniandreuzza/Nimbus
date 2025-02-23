@@ -2,6 +2,8 @@ package io.github.giovanniandreuzza.nimbus.presentation
 
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadState
+import io.github.giovanniandreuzza.nimbus.shared.utils.BaseError
+import io.github.giovanniandreuzza.nimbus.shared.utils.Either
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -15,9 +17,17 @@ public interface NimbusAPI {
      * Get the file size.
      *
      * @param filePath The file path.
-     * @return The file size.
+     * @return [Either] with the file size if the operation is successful, [BaseError] otherwise.
      */
-    public suspend fun getFileSize(filePath: String): Long
+    public suspend fun getFileSize(filePath: String): Either<Long, BaseError>
+
+    /**
+     * Check if the file is downloaded.
+     *
+     * @param downloadRequest The download request.
+     * @return True if the file is downloaded, false otherwise.
+     */
+    public suspend fun isDownloaded(downloadRequest: DownloadRequest): Boolean
 
     /**
      * Check if the file is downloading.

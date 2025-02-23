@@ -1,4 +1,4 @@
-package io.github.giovanniandreuzza.nimbus.utils
+package io.github.giovanniandreuzza.nimbus.shared.utils
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
