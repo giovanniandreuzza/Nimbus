@@ -1,35 +1,48 @@
 package io.github.giovanniandreuzza.nimbus
 
-import io.github.giovanniandreuzza.nimbus.core.ports.DownloadRepository
-import io.github.giovanniandreuzza.nimbus.core.ports.FileRepository
-import io.github.giovanniandreuzza.nimbus.presentation.DownloadController
-import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
+import io.github.giovanniandreuzza.nimbus.api.NimbusAPI
+import io.github.giovanniandreuzza.nimbus.api.NimbusDownloadRepository
+import io.github.giovanniandreuzza.nimbus.api.NimbusFileRepository
+import io.github.giovanniandreuzza.nimbus.di.init
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.SupervisorJob
 import kotlin.concurrent.Volatile
 
 /**
  * Nimbus.
  *
- * @param dispatcher The dispatcher.
+ * @param eventBudScope The event bus scope.
+ * @param eventBusOnError The event bus on error.
+ * @param downloadScope The download scope.
+ * @param ioDispatcher The IO dispatcher.
  * @param concurrencyLimit The concurrency limit.
- * @param downloadRepository The download repository.
- * @param fileRepository The file repository.
+ * @param nimbusDownloadRepository The nimbus download repository.
+ * @param nimbusFileRepository The nimbus file repository.
  * @author Giovanni Andreuzza
  */
 public class Nimbus private constructor(
-    dispatcher: CoroutineDispatcher,
+    eventBudScope: CoroutineScope,
+    eventBusOnError: (Throwable) -> Unit,
+    downloadScope: CoroutineScope,
+    ioDispatcher: CoroutineDispatcher,
     concurrencyLimit: Int,
-    downloadRepository: DownloadRepository,
-    fileRepository: FileRepository
+    nimbusDownloadRepository: NimbusDownloadRepository,
+    nimbusFileRepository: NimbusFileRepository,
+    downloadManagerPath: String
 ) {
 
-    private val nimbusAPI: NimbusAPI = DownloadController(
-        dispatcher = dispatcher,
+    private val nimbusAPI: NimbusAPI = init(
+        eventBusScope = eventBudScope,
+        eventBusOnError = eventBusOnError,
+        downloadScope = downloadScope,
+        ioDispatcher = ioDispatcher,
         concurrencyLimit = concurrencyLimit,
-        downloadRepository = downloadRepository,
-        fileRepository = fileRepository
+        nimbusDownloadRepository = nimbusDownloadRepository,
+        nimbusFileRepository = nimbusFileRepository,
+        downloadManagerPath = downloadManagerPath
     )
 
     public companion object {
@@ -37,34 +50,54 @@ public class Nimbus private constructor(
         private var instance: Nimbus? = null
 
         public class Builder {
-            private var dispatcher: CoroutineDispatcher = Dispatchers.IO
-            private var concurrencyLimit: Int = 1
-            private var downloadRepository: DownloadRepository? = null
-            private var fileRepository: FileRepository? = null
+            private var eventBusScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            private var eventBusOnError: (Throwable) -> Unit = {}
+            private var downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            private var ioDispatcher = Dispatchers.IO
+            private var concurrencyLimit = 1
+            private var nimbusDownloadRepository: NimbusDownloadRepository? = null
+            private var nimbusFileRepository: NimbusFileRepository? = null
+            private var downloadManagerPath: String? = null
 
-            public fun withDispatcher(dispatcher: CoroutineDispatcher): Builder =
-                apply { this.dispatcher = dispatcher }
+            public fun withEventBusScope(eventBusScope: CoroutineScope): Builder =
+                apply { this.eventBusScope = eventBusScope }
+
+            public fun withEventBusOnError(eventBusOnError: (Throwable) -> Unit): Builder =
+                apply { this.eventBusOnError = eventBusOnError }
+
+            public fun withDownloadScope(downloadScope: CoroutineScope): Builder =
+                apply { this.downloadScope = downloadScope }
+
+            public fun withIODispatcher(ioDispatcher: CoroutineDispatcher): Builder =
+                apply { this.ioDispatcher = ioDispatcher }
 
             public fun withConcurrencyLimit(concurrencyLimit: Int): Builder =
                 apply { this.concurrencyLimit = concurrencyLimit }
 
-            public fun withDownloadRepository(downloadRepository: DownloadRepository): Builder =
-                apply { this.downloadRepository = downloadRepository }
+            public fun withNimbusDownloadRepository(nimbusDownloadRepository: NimbusDownloadRepository): Builder =
+                apply { this.nimbusDownloadRepository = nimbusDownloadRepository }
 
-            public fun withFileRepository(fileRepository: FileRepository): Builder =
-                apply { this.fileRepository = fileRepository }
+            public fun withNimbusFileRepository(nimbusFileRepository: NimbusFileRepository): Builder =
+                apply { this.nimbusFileRepository = nimbusFileRepository }
+
+            public fun withDownloadManagerPath(downloadManagerPath: String): Builder =
+                apply { this.downloadManagerPath = downloadManagerPath }
 
             public fun build(): NimbusAPI {
-                if (downloadRepository == null || fileRepository == null) {
-                    throw IllegalStateException("DownloadRepository and FileRepository must be provided")
+                if (nimbusDownloadRepository == null || nimbusFileRepository == null || downloadManagerPath == null) {
+                    throw IllegalStateException("nimbusDownloadRepository, nimbusFileRepository and downloadManagerPath must be provided")
                 }
 
                 if (instance == null) {
                     instance = Nimbus(
-                        dispatcher = dispatcher,
+                        eventBudScope = eventBusScope,
+                        eventBusOnError = eventBusOnError,
+                        downloadScope = downloadScope,
+                        ioDispatcher = ioDispatcher,
                         concurrencyLimit = concurrencyLimit,
-                        downloadRepository = downloadRepository!!,
-                        fileRepository = fileRepository!!
+                        nimbusDownloadRepository = nimbusDownloadRepository!!,
+                        nimbusFileRepository = nimbusFileRepository!!,
+                        downloadManagerPath = downloadManagerPath!!
                     )
                 }
 

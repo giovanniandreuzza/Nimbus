@@ -1,20 +1,23 @@
 package io.github.giovanniandreuzza.nimbus.core.domain.value_objects
 
+import io.github.giovanniandreuzza.explicitarchitecture.domain.ValueObject
+
 /**
  * Download ID.
  *
- * @param id Download ID.
+ * @param value Download ID.
  * @author Giovanni Andreuzza
  */
-internal class DownloadId private constructor(val id: Long) {
+internal class DownloadId private constructor(val value: String) : ValueObject() {
 
     companion object {
         /**
          * Create a new Download ID.
          *
-         * @param id Download ID.
+         * @param id ID to use as value.
+         * @return [DownloadId] value object.
          */
-        fun create(id: Long): DownloadId {
+        fun create(id: String): DownloadId {
             return DownloadId(id)
         }
 
@@ -24,24 +27,15 @@ internal class DownloadId private constructor(val id: Long) {
          * @param fileUrl File URL.
          * @param filePath File path.
          * @param fileName File name.
+         * @return [DownloadId] value object.
          */
         fun create(fileUrl: String, filePath: String, fileName: String): DownloadId {
-            return DownloadId((fileUrl + filePath + fileName).hashCode().toLong())
+            val idToHash = "$fileUrl|$filePath|$fileName"
+            return DownloadId(idToHash.hashCode().toUInt().toString(16))
         }
     }
 
     override fun toString(): String {
-        return id.toString()
-    }
-
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is DownloadId) return false
-
-        return id == other.id
-    }
-
-    override fun hashCode(): Int {
-        return id.hashCode()
+        return "DownloadId(value=$value)"
     }
 }

@@ -1,18 +1,23 @@
 package io.github.giovanniandreuzza.sample_android.di
 
 import io.github.giovanniandreuzza.nimbus.Nimbus
-import io.github.giovanniandreuzza.nimbus.core.ports.DownloadRepository
-import io.github.giovanniandreuzza.nimbus.core.ports.FileRepository
-import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
+import io.github.giovanniandreuzza.nimbus.api.NimbusDownloadRepository
+import io.github.giovanniandreuzza.nimbus.api.NimbusFileRepository
+import io.github.giovanniandreuzza.nimbus.api.NimbusAPI
 import io.github.giovanniandreuzza.sample_android.framework.retrofit.AppEndpoint
-import io.github.giovanniandreuzza.sample_android.infrastructure.LocalFileRepository
+import io.github.giovanniandreuzza.sample_android.infrastructure.LocalNimbusFileRepository
 import io.github.giovanniandreuzza.sample_android.infrastructure.RemoteDownloadRepository
 import io.github.giovanniandreuzza.sample_android.presentation.MainViewModel
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.Json
+import org.koin.android.ext.koin.androidApplication
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
 import retrofit2.Retrofit
+import timber.log.Timber
+import java.io.File
 
 /**
  * App Module Dependency Injection.
@@ -34,15 +39,26 @@ val appModule = module {
         Retrofit.Builder().baseUrl("https://www.google.com").build().create(AppEndpoint::class.java)
     }
 
-    factory<DownloadRepository> { RemoteDownloadRepository(appEndpoint = get()) }
+    factory<NimbusDownloadRepository> { RemoteDownloadRepository(appEndpoint = get()) }
 
-    factory<FileRepository> { LocalFileRepository() }
+    factory<NimbusFileRepository> { LocalNimbusFileRepository() }
 
     single<NimbusAPI> {
+        val folder = File(androidApplication().filesDir, "test").also {
+            it.mkdirs()
+        }
+
         Nimbus.Companion.Builder()
-            .withDownloadRepository(get())
-            .withFileRepository(get())
+            .withEventBusScope(CoroutineScope(SupervisorJob() + Dispatchers.Default))
+            .withEventBusOnError {
+                Timber.e("EventBus error: $it")
+            }
+            .withDownloadScope(CoroutineScope(SupervisorJob() + Dispatchers.IO))
+            .withIODispatcher(Dispatchers.IO)
             .withConcurrencyLimit(5)
+            .withNimbusDownloadRepository(get())
+            .withNimbusFileRepository(get())
+            .withDownloadManagerPath(folder.path + File.separator + "download_manager")
             .build()
     }
 
