@@ -1,10 +1,26 @@
-package io.github.giovanniandreuzza.nimbus.presentation
+package io.github.giovanniandreuzza.nimbus.api
 
+import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadRequest
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadResponse
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadState
-import io.github.giovanniandreuzza.nimbus.shared.utils.BaseError
-import io.github.giovanniandreuzza.nimbus.shared.utils.Either
-import kotlinx.coroutines.flow.Flow
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetFileSizeRequest
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetFileSizeResponse
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.ObserveDownloadRequest
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.ObserveDownloadResponse
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.PauseDownloadRequest
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.PauseDownloadResponse
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.ResumeDownloadRequest
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.ResumeDownloadResponse
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.StartDownloadRequest
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.StartDownloadResponse
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErrors
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.PauseDownloadErrors
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.ResumeDownloadErrors
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
+import io.github.giovanniandreuzza.nimbus.core.errors.DownloadTaskNotFound
+import io.github.giovanniandreuzza.nimbus.core.errors.GetFileSizeFailed
 
 /**
  * This is the main interface of the Nimbus library.
@@ -16,69 +32,87 @@ public interface NimbusAPI {
     /**
      * Get the file size.
      *
-     * @param filePath The file path.
-     * @return [Either] with the file size if the operation is successful, [BaseError] otherwise.
+     * @param request The get file size request.
+     * @return [KResult] with [GetFileSizeResponse] if the operation is successful, [GetFileSizeFailed] otherwise.
      */
-    public suspend fun getFileSize(filePath: String): Either<Long, BaseError>
+    public suspend fun getFileSize(
+        request: GetFileSizeRequest
+    ): KResult<GetFileSizeResponse, GetFileSizeFailed>
 
     /**
-     * Check if the file is downloaded.
+     * Get the download state.
      *
-     * @param downloadRequest The download request.
-     * @return True if the file is downloaded, false otherwise.
+     * @param request The download request.
+     * @return [KResult] with the [DownloadTaskDTO] if the operation is successful, [DownloadTaskNotFound] otherwise.
      */
-    public suspend fun isDownloaded(downloadRequest: DownloadRequest): Boolean
+    public suspend fun getDownloadTask(
+        request: DownloadRequest
+    ): KResult<DownloadTaskDTO, DownloadTaskNotFound>
 
     /**
-     * Check if the file is downloading.
+     * Get all downloads.
      *
-     * @param downloadRequest The download request.
-     * @return True if the file is downloading, false otherwise.
+     * @return [Map] with the download id as key and the [DownloadTaskDTO] as value.
      */
-    public fun isDownloading(downloadRequest: DownloadRequest): Boolean
+    public suspend fun getAllDownloads(): Map<String, DownloadTaskDTO>
 
     /**
-     * Download a file.
+     * Enqueue the download.
      *
-     * @param downloadRequest The download request.
-     * @return The download id.
+     * @param request The download request.
+     * @return [KResult] with [DownloadTaskDTO] if the operation is successful, [EnqueueDownloadErrors] otherwise.
      */
-    public suspend fun downloadFile(downloadRequest: DownloadRequest): Long
+    public suspend fun enqueueDownload(
+        request: DownloadRequest
+    ): KResult<DownloadTaskDTO, EnqueueDownloadErrors>
 
     /**
-     * Get the ongoing download id.
+     * Start the download.
      *
-     * @param downloadRequest The download request.
-     * @return If the download is ongoing, the download id, otherwise null.
+     * @param request The start download request.
+     * @return [KResult] with [StartDownloadResponse] if the operation is successful, [StartDownloadErrors] otherwise.
      */
-    public suspend fun getOngoingDownloadId(downloadRequest: DownloadRequest): Long?
+    public suspend fun startDownload(
+        request: StartDownloadRequest
+    ): KResult<StartDownloadResponse, StartDownloadErrors>
 
     /**
      * Observe the download state.
      *
-     * @param downloadId The download id.
-     * @return The download state flow.
+     * @param request The observe download request.
+     * @return [KResult] with [ObserveDownloadResponse] if the operation is successful, [DownloadTaskNotFound] otherwise.
      */
-    public fun observeDownload(downloadId: Long): Flow<DownloadState>
+    public suspend fun observeDownload(
+        request: ObserveDownloadRequest
+    ): KResult<ObserveDownloadResponse, DownloadTaskNotFound>
 
     /**
      * Pause the download.
      *
-     * @param downloadId The download id.
+     * @param request The pause download request.
+     * @return [KResult] with [PauseDownloadResponse] if the operation is successful, [PauseDownloadErrors] otherwise.
      */
-    public fun pauseDownload(downloadId: Long)
+    public suspend fun pauseDownload(
+        request: PauseDownloadRequest
+    ): KResult<PauseDownloadResponse, PauseDownloadErrors>
 
     /**
      * Resume the download.
      *
-     * @param downloadId The download id.
+     * @param request The resume download request.
+     * @return [KResult] with [ResumeDownloadResponse] if the operation is successful, [ResumeDownloadErrors] otherwise.
      */
-    public fun resumeDownload(downloadId: Long)
+    public suspend fun resumeDownload(
+        request: ResumeDownloadRequest
+    ): KResult<ResumeDownloadResponse, ResumeDownloadErrors>
 
     /**
      * Cancel the download.
      *
-     * @param downloadId The download id.
+     * @param request The cancel download request.
+     * @return [KResult] with [CancelDownloadResponse] if the operation is successful, [DownloadTaskNotFound] otherwise.
      */
-    public fun cancelDownload(downloadId: Long)
+    public suspend fun cancelDownload(
+        request: CancelDownloadRequest
+    ): KResult<CancelDownloadResponse, DownloadTaskNotFound>
 }

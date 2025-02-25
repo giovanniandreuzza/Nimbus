@@ -1,11 +1,11 @@
 package io.github.giovanniandreuzza.sample_android.infrastructure
 
-import io.github.giovanniandreuzza.nimbus.api.FileCallback
+import io.github.giovanniandreuzza.explicitarchitecture.shared.Failure
+import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
+import io.github.giovanniandreuzza.explicitarchitecture.shared.Success
+import io.github.giovanniandreuzza.nimbus.api.NimbusFileRepository
 import io.github.giovanniandreuzza.nimbus.core.errors.FileCreationFailed
 import io.github.giovanniandreuzza.nimbus.core.errors.FileNotFound
-import io.github.giovanniandreuzza.nimbus.shared.utils.Failure
-import io.github.giovanniandreuzza.nimbus.shared.utils.KResult
-import io.github.giovanniandreuzza.nimbus.shared.utils.Success
 import okio.Sink
 import okio.Source
 import okio.sink
@@ -18,7 +18,7 @@ import java.io.FileOutputStream
  *
  * @author Giovanni Andreuzza
  */
-class LocalFileRepository : FileCallback {
+class LocalNimbusFileRepository : NimbusFileRepository {
 
     /**
      * Check if the file is downloaded.

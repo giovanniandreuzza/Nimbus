@@ -49,7 +49,7 @@ class MainActivity : ComponentActivity(), KoinComponent {
                     ) {
                         Text(
                             text = "Sample Android - Test Downloads",
-                            modifier = Modifier.padding(16.dp)
+                            modifier = Modifier.padding(14.dp)
                         )
 
                         Row(
@@ -58,50 +58,186 @@ class MainActivity : ComponentActivity(), KoinComponent {
                             Button(
                                 modifier = Modifier.padding(innerPadding),
                                 onClick = {
-                                    viewModel.start1(folder)
+                                    viewModel.enqueueAll(folder)
                                 }
                             ) {
                                 Text(
-                                    text = "Start Download 1",
-                                    modifier = Modifier.padding(16.dp)
+                                    text = "Enqueue All",
+                                    modifier = Modifier.padding(14.dp)
                                 )
                             }
 
                             VerticalDivider(
-                                modifier = Modifier.padding(16.dp)
+                                modifier = Modifier.padding(14.dp)
                             )
 
                             Button(
                                 modifier = Modifier.padding(innerPadding),
                                 onClick = {
-                                    viewModel.start2(folder)
+                                    viewModel.startAll()
                                 }
                             ) {
                                 Text(
-                                    text = "Start Download 2",
-                                    modifier = Modifier.padding(16.dp)
+                                    text = "Start All",
+                                    modifier = Modifier.padding(14.dp)
                                 )
                             }
 
                             VerticalDivider(
-                                modifier = Modifier.padding(16.dp)
+                                modifier = Modifier.padding(14.dp)
                             )
 
                             Button(
                                 modifier = Modifier.padding(innerPadding),
                                 onClick = {
-                                    viewModel.start3(folder)
+                                    viewModel.pauseAll()
                                 }
                             ) {
                                 Text(
-                                    text = "Start Download 3",
-                                    modifier = Modifier.padding(16.dp)
+                                    text = "Pause All",
+                                    modifier = Modifier.padding(14.dp)
+                                )
+                            }
+
+                            VerticalDivider(
+                                modifier = Modifier.padding(14.dp)
+                            )
+
+                            Button(
+                                modifier = Modifier.padding(innerPadding),
+                                onClick = {
+                                    viewModel.resumeAll()
+                                }
+                            ) {
+                                Text(
+                                    text = "Resume All",
+                                    modifier = Modifier.padding(14.dp)
+                                )
+                            }
+
+                            VerticalDivider(
+                                modifier = Modifier.padding(14.dp)
+                            )
+
+                            Button(
+                                modifier = Modifier.padding(innerPadding),
+                                onClick = {
+                                    viewModel.cancelAll()
+                                }
+                            ) {
+                                Text(
+                                    text = "Cancel All",
+                                    modifier = Modifier.padding(14.dp)
                                 )
                             }
                         }
 
                         HorizontalDivider(
-                            modifier = Modifier.padding(16.dp)
+                            modifier = Modifier.padding(14.dp)
+                        )
+
+                        Row(
+                            modifier = Modifier.height(IntrinsicSize.Min)
+                        ) {
+                            Button(
+                                modifier = Modifier.padding(innerPadding),
+                                onClick = {
+                                    viewModel.enqueue1(folder)
+                                }
+                            ) {
+                                Text(
+                                    text = "Enqueue Download 1",
+                                    modifier = Modifier.padding(14.dp)
+                                )
+                            }
+
+                            VerticalDivider(
+                                modifier = Modifier.padding(14.dp)
+                            )
+
+                            Button(
+                                modifier = Modifier.padding(innerPadding),
+                                onClick = {
+                                    viewModel.enqueue2(folder)
+                                }
+                            ) {
+                                Text(
+                                    text = "Enqueue Download 2",
+                                    modifier = Modifier.padding(14.dp)
+                                )
+                            }
+
+                            VerticalDivider(
+                                modifier = Modifier.padding(14.dp)
+                            )
+
+                            Button(
+                                modifier = Modifier.padding(innerPadding),
+                                onClick = {
+                                    viewModel.enqueue3(folder)
+                                }
+                            ) {
+                                Text(
+                                    text = "Enqueue Download 3",
+                                    modifier = Modifier.padding(14.dp)
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(14.dp)
+                        )
+
+                        Row(
+                            modifier = Modifier.height(IntrinsicSize.Min)
+                        ) {
+                            Button(
+                                modifier = Modifier.padding(innerPadding),
+                                onClick = {
+                                    viewModel.start1()
+                                }
+                            ) {
+                                Text(
+                                    text = "Start Download 1",
+                                    modifier = Modifier.padding(14.dp)
+                                )
+                            }
+
+                            VerticalDivider(
+                                modifier = Modifier.padding(14.dp)
+                            )
+
+                            Button(
+                                modifier = Modifier.padding(innerPadding),
+                                onClick = {
+                                    viewModel.start2()
+                                }
+                            ) {
+                                Text(
+                                    text = "Start Download 2",
+                                    modifier = Modifier.padding(14.dp)
+                                )
+                            }
+
+                            VerticalDivider(
+                                modifier = Modifier.padding(14.dp)
+                            )
+
+                            Button(
+                                modifier = Modifier.padding(innerPadding),
+                                onClick = {
+                                    viewModel.start3()
+                                }
+                            ) {
+                                Text(
+                                    text = "Start Download 3",
+                                    modifier = Modifier.padding(14.dp)
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(14.dp)
                         )
 
                         Row(
@@ -115,12 +251,12 @@ class MainActivity : ComponentActivity(), KoinComponent {
                             ) {
                                 Text(
                                     text = "Pause Download 1",
-                                    modifier = Modifier.padding(16.dp)
+                                    modifier = Modifier.padding(14.dp)
                                 )
                             }
 
                             VerticalDivider(
-                                modifier = Modifier.padding(16.dp)
+                                modifier = Modifier.padding(14.dp)
                             )
 
                             Button(
@@ -131,12 +267,12 @@ class MainActivity : ComponentActivity(), KoinComponent {
                             ) {
                                 Text(
                                     text = "Pause Download 2",
-                                    modifier = Modifier.padding(16.dp)
+                                    modifier = Modifier.padding(14.dp)
                                 )
                             }
 
                             VerticalDivider(
-                                modifier = Modifier.padding(16.dp)
+                                modifier = Modifier.padding(14.dp)
                             )
 
                             Button(
@@ -147,13 +283,13 @@ class MainActivity : ComponentActivity(), KoinComponent {
                             ) {
                                 Text(
                                     text = "Pause Download 3",
-                                    modifier = Modifier.padding(16.dp)
+                                    modifier = Modifier.padding(14.dp)
                                 )
                             }
                         }
 
                         HorizontalDivider(
-                            modifier = Modifier.padding(16.dp)
+                            modifier = Modifier.padding(14.dp)
                         )
 
                         Row(
@@ -167,12 +303,12 @@ class MainActivity : ComponentActivity(), KoinComponent {
                             ) {
                                 Text(
                                     text = "Resume Download 1",
-                                    modifier = Modifier.padding(16.dp)
+                                    modifier = Modifier.padding(14.dp)
                                 )
                             }
 
                             VerticalDivider(
-                                modifier = Modifier.padding(16.dp)
+                                modifier = Modifier.padding(14.dp)
                             )
 
                             Button(
@@ -183,12 +319,12 @@ class MainActivity : ComponentActivity(), KoinComponent {
                             ) {
                                 Text(
                                     text = "Resume Download 2",
-                                    modifier = Modifier.padding(16.dp)
+                                    modifier = Modifier.padding(14.dp)
                                 )
                             }
 
                             VerticalDivider(
-                                modifier = Modifier.padding(16.dp)
+                                modifier = Modifier.padding(14.dp)
                             )
 
                             Button(
@@ -199,13 +335,13 @@ class MainActivity : ComponentActivity(), KoinComponent {
                             ) {
                                 Text(
                                     text = "Resume Download 3",
-                                    modifier = Modifier.padding(16.dp)
+                                    modifier = Modifier.padding(14.dp)
                                 )
                             }
                         }
 
                         HorizontalDivider(
-                            modifier = Modifier.padding(16.dp)
+                            modifier = Modifier.padding(14.dp)
                         )
 
                         Row(
@@ -219,12 +355,12 @@ class MainActivity : ComponentActivity(), KoinComponent {
                             ) {
                                 Text(
                                     text = "Cancel Download 1",
-                                    modifier = Modifier.padding(16.dp)
+                                    modifier = Modifier.padding(14.dp)
                                 )
                             }
 
                             VerticalDivider(
-                                modifier = Modifier.padding(16.dp)
+                                modifier = Modifier.padding(14.dp)
                             )
 
                             Button(
@@ -235,12 +371,12 @@ class MainActivity : ComponentActivity(), KoinComponent {
                             ) {
                                 Text(
                                     text = "Cancel Download 2",
-                                    modifier = Modifier.padding(16.dp)
+                                    modifier = Modifier.padding(14.dp)
                                 )
                             }
 
                             VerticalDivider(
-                                modifier = Modifier.padding(16.dp)
+                                modifier = Modifier.padding(14.dp)
                             )
 
                             Button(
@@ -251,7 +387,7 @@ class MainActivity : ComponentActivity(), KoinComponent {
                             ) {
                                 Text(
                                     text = "Cancel Download 3",
-                                    modifier = Modifier.padding(16.dp)
+                                    modifier = Modifier.padding(14.dp)
                                 )
                             }
                         }

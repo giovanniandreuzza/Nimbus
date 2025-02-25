@@ -11,7 +11,7 @@ android {
     defaultConfig {
         applicationId = "io.github.giovanniandreuzza.sample_android"
         minSdk = 21
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
 
@@ -53,7 +53,7 @@ dependencies {
     implementation(libs.androidx.material3)
 
     // KotlinX Serialization
-    implementation(libs.kotlinx.serialization)
+    implementation(libs.kotlinx.serialization.json)
 
     // Koin
     implementation(libs.koin.android)
@@ -70,7 +70,8 @@ dependencies {
     implementation(libs.retrofit2.serialization)
 
     // Nimbus
-    implementation(libs.nimbus)
+//    implementation(libs.nimbus)
+    implementation(project(":nimbus"))
 
     // Test
     testImplementation(libs.junit)

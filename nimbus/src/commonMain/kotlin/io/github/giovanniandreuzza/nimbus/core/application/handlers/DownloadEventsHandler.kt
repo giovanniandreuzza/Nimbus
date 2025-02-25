@@ -1,36 +1,23 @@
 package io.github.giovanniandreuzza.nimbus.core.application.handlers
 
-import io.github.giovanniandreuzza.nimbus.api.DownloadCallback
-import io.github.giovanniandreuzza.nimbus.api.FileCallback
-import io.github.giovanniandreuzza.nimbus.core.domain.events.DownloadInfoEvents
-import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
-import io.github.giovanniandreuzza.nimbus.core.ports.DownloadInfoRepository
-import io.github.giovanniandreuzza.nimbus.core.application.usecases.GetFileSizeUseCase
-import io.github.giovanniandreuzza.nimbus.shared.ddd.domain.DomainEvent
-import io.github.giovanniandreuzza.nimbus.shared.ddd.events.EventBus
-import io.github.giovanniandreuzza.nimbus.shared.ddd.events.EventHandler
-import kotlinx.coroutines.CoroutineScope
+import io.github.giovanniandreuzza.explicitarchitecture.shared.events.EventHandler
+import io.github.giovanniandreuzza.nimbus.core.domain.events.DownloadTaskEvents
 
 /**
- * Download info initialized event handler.
+ * Download events handler.
  *
  * @author Giovanni Andreuzza
  */
-internal class DownloadInfoInitializedEventHandler(
-    private val scope: CoroutineScope,
-    private val downloadInfoRepository: DownloadInfoRepository,
-    private val getFileUseCase: GetFileSizeUseCase,
-    private val downloadCallback: DownloadCallback,
-    private val fileCallback: FileCallback,
-    private val eventBus: EventBus<DomainEvent<DownloadId>>
-) : EventHandler<DownloadInfoEvents.DownloadInfoInitializedEvent> {
-
-    private companion object {
-        const val DEFAULT_BUFFER_SIZE: Long = 8 * 1024
+internal class DownloadEventsHandler : EventHandler<DownloadTaskEvents> {
+    override fun handle(event: DownloadTaskEvents) {
+        when (event) {
+            is DownloadTaskEvents.DownloadEnqueuedEvent -> println("Download enqueued - $event")
+            is DownloadTaskEvents.DownloadStartedEvent -> println("Download started - $event")
+            is DownloadTaskEvents.DownloadPausedEvent -> println("Download paused - $event")
+            is DownloadTaskEvents.DownloadResumedEvent -> println("Download resumed - $event")
+            is DownloadTaskEvents.DownloadFailedEvent -> println("Download failed - $event")
+            is DownloadTaskEvents.DownloadCanceledEvent -> println("Download canceled - $event")
+            is DownloadTaskEvents.DownloadFinishedEvent -> println("Download finished - $event")
+        }
     }
-
-    override fun handle(event: DownloadInfoEvents.DownloadInfoInitializedEvent) {
-
-    }
-
 }

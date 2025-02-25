@@ -1,17 +1,17 @@
 package io.github.giovanniandreuzza.nimbus.api
 
+import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
 import io.github.giovanniandreuzza.nimbus.core.errors.FileCreationFailed
 import io.github.giovanniandreuzza.nimbus.core.errors.FileNotFound
-import io.github.giovanniandreuzza.nimbus.shared.utils.KResult
 import okio.Sink
 import okio.Source
 
 /**
- * File Callback.
+ * Nimbus File Repository.
  *
  * @author Giovanni Andreuzza
  */
-public interface FileCallback {
+public interface NimbusFileRepository {
 
     /**
      * Check if the file is downloaded.

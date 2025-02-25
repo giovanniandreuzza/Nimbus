@@ -1,21 +1,34 @@
-package io.github.giovanniandreuzza.nimbus.core.usecases
+package io.github.giovanniandreuzza.nimbus.core.application.usecases
 
-import io.github.giovanniandreuzza.nimbus.core.ports.DownloadRepository
-import io.github.giovanniandreuzza.nimbus.shared.ddd.application.UseCase
-import io.github.giovanniandreuzza.nimbus.shared.utils.BaseError
-import io.github.giovanniandreuzza.nimbus.shared.utils.Either
+import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
+import io.github.giovanniandreuzza.explicitarchitecture.shared.Success
+import io.github.giovanniandreuzza.explicitarchitecture.shared.isFailure
+import io.github.giovanniandreuzza.nimbus.api.NimbusDownloadRepository
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetFileSizeRequest
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetFileSizeResponse
+import io.github.giovanniandreuzza.nimbus.core.errors.GetFileSizeFailed
+import io.github.giovanniandreuzza.nimbus.core.queries.GetFileSizeQuery
 
+/**
+ * Get file size use case.
+ *
+ * @param nimbusDownloadRepository The nimbus download repository.
+ * @author Giovanni Andreuzza
+ */
 internal class GetFileSizeUseCase(
-    private val downloadRepository: DownloadRepository
-) : UseCase<String, Long, BaseError> {
+    private val nimbusDownloadRepository: NimbusDownloadRepository
+) : GetFileSizeQuery {
 
-    override suspend fun execute(params: String): Either<Long, BaseError> {
-        return try {
-            val fileSize = downloadRepository.getFileSize(params)
-            Either.Success(fileSize)
-        } catch (e: Exception) {
-            Either.Failure(BaseError("", "", e))
+    override suspend fun execute(
+        params: GetFileSizeRequest
+    ): KResult<GetFileSizeResponse, GetFileSizeFailed> {
+        val fileSizeResult = nimbusDownloadRepository.getFileSize(params.fileUrl)
+
+        if (fileSizeResult.isFailure()) {
+            return fileSizeResult
         }
+
+        return Success(GetFileSizeResponse(fileSizeResult.value))
     }
 
 }

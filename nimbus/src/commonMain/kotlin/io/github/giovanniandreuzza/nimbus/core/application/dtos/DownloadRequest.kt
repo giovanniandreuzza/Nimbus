@@ -1,15 +1,17 @@
 package io.github.giovanniandreuzza.nimbus.core.application.dtos
 
+import io.github.giovanniandreuzza.explicitarchitecture.application.Application
+
 /**
  * Download Request.
  *
- * @param url URL to download.
- * @param path Path to save the file.
- * @param name File name.
+ * @param fileUrl URL to download.
+ * @param filePath Path to save the file.
+ * @param fileName File name.
  * @author Giovanni Andreuzza
  */
 public data class DownloadRequest(
-    val url: String,
-    val path: String,
-    val name: String
-)
+    val fileUrl: String,
+    val filePath: String,
+    val fileName: String
+) : Application

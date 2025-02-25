@@ -1,15 +1,19 @@
 import com.vanniktech.maven.publish.SonatypeHost
-import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.io.FileNotFoundException
+import java.util.Properties
 
 plugins {
-    alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidLibrary)
+    alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.vanniktech.mavenPublish)
+    alias(libs.plugins.kotlinSerialization)
 }
 
+val properties = loadProperties()
+
 group = "io.github.giovanniandreuzza"
-version = "1.0.2"
+version = properties.getVersion()
 
 kotlin {
     explicitApi()
@@ -17,7 +21,6 @@ kotlin {
     jvm()
     androidTarget {
         publishLibraryVariants("release")
-        @OptIn(ExperimentalKotlinGradlePluginApi::class)
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_11)
         }
@@ -39,7 +42,10 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             api(libs.kotlinx.coroutines.core)
-            implementation(libs.okio)
+            api(libs.kotlinx.serialization.protobuf)
+            api(libs.kotlinx.datetime)
+            api(libs.okio)
+            api(libs.explicitarchitecture)
         }
     }
 }
@@ -56,12 +62,39 @@ android {
     }
 }
 
+tasks.register("generateReadme") {
+    val readmeTemplatePath = rootProject.file("README.md.template").absolutePath
+    val readmePath = rootProject.file("README.md").absolutePath
+    val versionFilePath = rootProject.file("versions.properties").absolutePath
+
+    inputs.file(readmeTemplatePath)
+    outputs.file(readmePath)
+
+    doLast {
+        val version = File(versionFilePath)
+            .readLines()
+            .first { it.startsWith("VERSION=") }
+            .substringAfter("=")
+
+        val content = File(readmeTemplatePath).readText().replace(
+            oldValue = "\$VERSION",
+            newValue = version
+        )
+
+        File(readmePath).writeText(content)
+    }
+}
+
+tasks.build {
+    dependsOn("generateReadme")
+}
+
 mavenPublishing {
     // Define coordinates for the published artifact
     coordinates(
         groupId = "io.github.giovanniandreuzza",
         artifactId = "nimbus",
-        version = "1.0.2"
+        version = properties.getVersion()
     )
 
     // Configure POM metadata for the published artifact
@@ -99,3 +132,15 @@ mavenPublishing {
     // Enable GPG signing for all publications
     signAllPublications()
 }
+
+fun loadProperties() = rootProject.file("versions.properties").let {
+    if (!it.exists()) {
+        throw FileNotFoundException("File ${it.absolutePath} not found")
+    }
+
+    Properties().also { properties ->
+        properties.load(it.inputStream())
+    }
+}
+
+fun Properties.getVersion() = getProperty("VERSION") ?: "1.0.0"

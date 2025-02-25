@@ -1,4 +1,28 @@
 package io.github.giovanniandreuzza.nimbus.core.domain.value_objects
 
-class FileSize {
+import io.github.giovanniandreuzza.explicitarchitecture.domain.ValueObject
+
+/**
+ * File size.
+ *
+ * @param value File size.
+ * @author Giovanni Andreuzza
+ */
+internal class FileSize private constructor(val value: Long) : ValueObject() {
+
+    companion object {
+        /**
+         * Create a new file size.
+         *
+         * @param size File size.
+         * @return [FileSize] value object.
+         */
+        fun create(size: Long): FileSize {
+            return FileSize(size)
+        }
+    }
+
+    override fun toString(): String {
+        return "FileSize(value='$value')"
+    }
 }

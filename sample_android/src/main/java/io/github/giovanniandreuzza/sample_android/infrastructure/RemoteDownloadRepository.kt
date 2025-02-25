@@ -1,7 +1,12 @@
 package io.github.giovanniandreuzza.sample_android.infrastructure
 
+import io.github.giovanniandreuzza.explicitarchitecture.shared.Failure
+import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
+import io.github.giovanniandreuzza.explicitarchitecture.shared.Success
+import io.github.giovanniandreuzza.nimbus.api.NimbusDownloadRepository
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadStream
-import io.github.giovanniandreuzza.nimbus.core.ports.DownloadRepository
+import io.github.giovanniandreuzza.nimbus.core.errors.GetFileSizeFailed
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
 import io.github.giovanniandreuzza.sample_android.framework.retrofit.AppEndpoint
 import okio.source
 import kotlin.text.toLong
@@ -12,23 +17,36 @@ import kotlin.text.toLong
  * @param appEndpoint App Endpoint.
  * @author Giovanni Andreuzza
  */
-class RemoteDownloadRepository(private val appEndpoint: AppEndpoint) : DownloadRepository {
+class RemoteDownloadRepository(private val appEndpoint: AppEndpoint) : NimbusDownloadRepository {
 
-    override suspend fun getFileSize(fileUrl: String): Long {
-        return appEndpoint.getFileSize(fileUrl).headers()["Content-Length"]?.toLong() ?: 0
+    override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeFailed> {
+        try {
+            val fileSize = appEndpoint.getFileSize(fileUrl).headers()["Content-Length"]?.toLong()
+            return Success(fileSize ?: 0)
+        } catch (e: Exception) {
+            return Failure(GetFileSizeFailed(e.message ?: "Content-Length not found"))
+        }
     }
 
-    override suspend fun downloadFile(fileUrl: String, offset: Long?): DownloadStream {
-        val range = "bytes=${offset ?: 0}-"
-        val fileStream = appEndpoint.downloadApp(fileUrl, range)
+    override suspend fun downloadFile(
+        fileUrl: String,
+        offset: Long?
+    ): KResult<DownloadStream, StartDownloadErrors.StartDownloadFailed> {
+        try {
+            val range = "bytes=${offset ?: 0}-"
+            val fileStream = appEndpoint.downloadApp(fileUrl, range)
 
-        fileStream.body()?.let {
-            val fileSize = it.contentLength() + (offset ?: 0)
-            return DownloadStream(
-                it.byteStream().source(),
-                fileSize,
-                offset ?: 0
-            )
-        } ?: throw Exception("File not found")
+            return fileStream.body()?.let {
+                val fileSize = it.contentLength() + (offset ?: 0)
+                val downloadStream = DownloadStream(
+                    it.byteStream().source(),
+                    fileSize,
+                    offset ?: 0
+                )
+                Success(downloadStream)
+            } ?: Failure(StartDownloadErrors.StartDownloadFailed("Download body missing"))
+        } catch (e: Exception) {
+            return Failure(StartDownloadErrors.StartDownloadFailed(e.message ?: "Download failed"))
+        }
     }
 }

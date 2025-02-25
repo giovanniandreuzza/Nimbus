@@ -1,5 +1,6 @@
 package io.github.giovanniandreuzza.nimbus.core.application.dtos
 
+import io.github.giovanniandreuzza.explicitarchitecture.application.Application
 import okio.Source
 
 /**
@@ -14,4 +15,4 @@ public data class DownloadStream(
     val source: Source,
     val contentLength: Long,
     val downloadedBytes: Long
-)
+) : Application

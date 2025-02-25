@@ -1,114 +1,159 @@
 package io.github.giovanniandreuzza.nimbus.infrastructure
 
-import io.github.giovanniandreuzza.nimbus.api.DownloadCallback
-import io.github.giovanniandreuzza.nimbus.api.FileCallback
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadInfoDTO
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadStream
-import io.github.giovanniandreuzza.nimbus.core.errors.DownloadInfoNotFound
+import io.github.giovanniandreuzza.explicitarchitecture.shared.Failure
+import io.github.giovanniandreuzza.explicitarchitecture.shared.Success
+import io.github.giovanniandreuzza.explicitarchitecture.shared.isFailure
+import io.github.giovanniandreuzza.nimbus.api.NimbusDownloadRepository
+import io.github.giovanniandreuzza.nimbus.api.NimbusFileRepository
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
+import io.github.giovanniandreuzza.nimbus.core.ports.DownloadCallback
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadRepository
-import io.github.giovanniandreuzza.nimbus.shared.utils.Either
 import io.github.giovanniandreuzza.nimbus.shared.utils.getDownloadProgress
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okio.buffer
 import okio.use
 
 /**
- * Download Adapter.
+ * Okio Download Adapter.
  *
- * @param fileCallback File Callback
+ * @param concurrencyLimit Concurrency Limit
+ * @param downloadScope Coroutine Scope
+ * @param ioDispatcher Coroutine IO Dispatcher
  * @param downloadCallback Download Callback
+ * @param nimbusFileRepository Nimbus File Repository
+ * @param nimbusDownloadRepository Nimbus Download Repository
  * @author Giovanni Andreuzza
  */
-internal class DownloadAdapter(
-    private val dispatcher: CoroutineDispatcher,
-    private val fileCallback: FileCallback,
-    private val downloadCallback: DownloadCallback
+internal class OkioDownloadAdapter(
+    concurrencyLimit: Int,
+    private val downloadScope: CoroutineScope,
+    private val ioDispatcher: CoroutineDispatcher,
+    private val downloadCallback: DownloadCallback,
+    private val nimbusFileRepository: NimbusFileRepository,
+    private val nimbusDownloadRepository: NimbusDownloadRepository
 ) : DownloadRepository {
 
     private companion object {
         const val DEFAULT_BUFFER_SIZE: Long = 8 * 1024
     }
 
-    override suspend fun startDownload(
-        downloadInfo: DownloadInfoDTO,
-        onProgress: (Double) -> Unit
-    ): Either<Unit, DownloadInfoNotFound> {
-        try {
-            val sinkResult = fileCallback.getFileSink(downloadInfo.filePath)
+    private val semaphore = Semaphore(concurrencyLimit)
+    private val downloadJobs = mutableMapOf<String, Job>()
 
-            if (sinkResult is Either.Failure) {
-                return Either.Failure(DownloadInfoNotFound(downloadInfo.filePath))
-            }
+    override fun startDownload(downloadTask: DownloadTaskDTO): Boolean {
+        val downloadId = downloadTask.id
 
-            val sink = (sinkResult as Either.Success).value
+        if (downloadJobs.containsKey(downloadId)) {
+            return false
+        }
 
-            val downloadStream = getDownloadStream(
-                downloadInfo.fileUrl,
-                downloadInfo.filePath,
-                downloadInfo.fileSize
-            ) ?: return Either.Success(Unit)
+        val coroutineHandler = CoroutineExceptionHandler { _, throwable ->
+            downloadCallback.onDownloadFailed(
+                id = downloadId,
+                error = StartDownloadErrors.StartDownloadFailed(
+                    throwable.message ?: "Unknown error"
+                )
+            )
+        }
 
-            val source = downloadStream.source
-            val contentLength = downloadStream.contentLength
-            var progressBytes = downloadStream.downloadedBytes
+        downloadJobs[downloadId] = downloadScope.launch(coroutineHandler) {
+            semaphore.withPermit {
+                val bytesAlreadyDownloaded = getBytesAlreadyDownloadedAmount(
+                    filePath = downloadTask.filePath
+                )
 
-            withContext(dispatcher) {
-                sink.buffer().use { output ->
-                    source.buffer().use { input ->
-                        while (!input.exhausted()) {
-                            ensureActive()
+                if (bytesAlreadyDownloaded == downloadTask.fileSize) {
+                    downloadCallback.onDownloadFinished(downloadId)
+                    return@launch
+                }
 
-                            val bytesRead = input.read(output.buffer, DEFAULT_BUFFER_SIZE)
+                val sinkResult = nimbusFileRepository.getFileSink(
+                    filePath = downloadTask.filePath,
+                    hasToAppend = true
+                )
 
-                            if (bytesRead > 0) {
-                                progressBytes += bytesRead
+                if (sinkResult.isFailure()) {
+                    downloadCallback.onDownloadFailed(
+                        id = downloadId,
+                        error = StartDownloadErrors.StartDownloadFailed(
+                            sinkResult.error.message
+                        )
+                    )
+                    return@launch
+                }
 
-                                val downloadProgress =
-                                    getDownloadProgress(progressBytes, contentLength)
+                val downloadStreamResult = nimbusDownloadRepository.downloadFile(
+                    fileUrl = downloadTask.fileUrl,
+                    offset = bytesAlreadyDownloaded
+                )
 
-                                onProgress(downloadProgress)
+                if (downloadStreamResult.isFailure()) {
+                    downloadCallback.onDownloadFailed(
+                        id = downloadId,
+                        error = downloadStreamResult.error
+                    )
+                    return@launch
+                }
 
-                                output.emit()
+                val source = downloadStreamResult.value.source
+                val contentLength = downloadStreamResult.value.contentLength
+                var progressBytes = downloadStreamResult.value.downloadedBytes
+
+                withContext(ioDispatcher) {
+                    sinkResult.value.buffer().use { output ->
+                        source.buffer().use { input ->
+                            while (!input.exhausted()) {
+                                ensureActive()
+
+                                val bytesRead = input.read(output.buffer, DEFAULT_BUFFER_SIZE)
+
+                                if (bytesRead > 0) {
+                                    progressBytes += bytesRead
+
+                                    val downloadProgress = getDownloadProgress(
+                                        downloadedBytes = progressBytes,
+                                        fileSize = contentLength
+                                    )
+
+                                    downloadCallback.onDownloadProgress(
+                                        id = downloadId,
+                                        progress = downloadProgress
+                                    )
+
+                                    output.emit()
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            return Either.Success(Unit)
-        } catch (_: Exception) {
-            return Either.Failure(DownloadInfoNotFound(downloadInfo.filePath))
+                downloadCallback.onDownloadFinished(downloadId)
+            }
         }
+
+        return true
+    }
+
+    override fun stopDownload(downloadId: String) {
+        downloadJobs[downloadId]?.cancel()
+        downloadJobs.remove(downloadId)
     }
 
     /* Private Methods */
 
-    private suspend fun getDownloadStream(
-        fileUrl: String,
-        filePath: String,
-        fileSize: Long
-    ): DownloadStream? {
-        if (!fileCallback.exists(filePath)) {
-            return downloadCallback.downloadFile(fileUrl, 0)
-        }
-
-        val bytesAlreadyDownloadedAmount = getBytesAlreadyDownloadedAmount(filePath)
-
-        if (bytesAlreadyDownloadedAmount == fileSize) {
-            return null
-        }
-
-        return downloadCallback.downloadFile(fileUrl, bytesAlreadyDownloadedAmount)
-    }
-
     private fun getBytesAlreadyDownloadedAmount(filePath: String): Long {
-        val fileSizeResult = fileCallback.getFileSize(filePath)
-
-        return when (fileSizeResult) {
-            is Either.Failure -> 0
-            is Either.Success -> fileSizeResult.value
+        return when (val fileSizeResult = nimbusFileRepository.getFileSize(filePath)) {
+            is Failure -> 0
+            is Success -> fileSizeResult.value
         }
     }
 }
