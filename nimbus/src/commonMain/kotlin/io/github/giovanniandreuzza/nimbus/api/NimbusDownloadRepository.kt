@@ -1,9 +1,9 @@
 package io.github.giovanniandreuzza.nimbus.api
 
-import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadStream
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
-import io.github.giovanniandreuzza.nimbus.core.errors.GetFileSizeFailed
+import io.github.giovanniandreuzza.nimbus.frameworks.downloadmanager.errors.GetFileSizeFailed
 
 /**
  * Nimbus Download Repository.

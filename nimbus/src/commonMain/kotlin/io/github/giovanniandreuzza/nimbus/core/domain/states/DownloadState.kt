@@ -1,10 +1,13 @@
 package io.github.giovanniandreuzza.nimbus.core.domain.states
 
+import io.github.giovanniandreuzza.explicitarchitecture.core.domain.IsDomain
+
 /**
  * Download State.
  *
  * @author Giovanni Andreuzza
  */
+@IsDomain
 public sealed class DownloadState {
 
     /**

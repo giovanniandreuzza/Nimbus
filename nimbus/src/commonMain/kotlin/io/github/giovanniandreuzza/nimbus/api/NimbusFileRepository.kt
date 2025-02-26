@@ -1,8 +1,8 @@
 package io.github.giovanniandreuzza.nimbus.api
 
-import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
-import io.github.giovanniandreuzza.nimbus.core.errors.FileCreationFailed
-import io.github.giovanniandreuzza.nimbus.core.errors.FileNotFound
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
+import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.errors.FileCreationFailed
+import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.errors.FileNotFound
 import okio.Sink
 import okio.Source
 

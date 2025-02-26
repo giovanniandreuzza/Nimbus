@@ -1,6 +1,7 @@
 package io.github.giovanniandreuzza.nimbus.core.domain.value_objects
 
-import io.github.giovanniandreuzza.explicitarchitecture.domain.ValueObject
+import io.github.giovanniandreuzza.explicitarchitecture.core.domain.valueobjects.IsValueObject
+import io.github.giovanniandreuzza.explicitarchitecture.core.domain.valueobjects.ValueObject
 
 /**
  * File size.
@@ -8,6 +9,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.domain.ValueObject
  * @param value File size.
  * @author Giovanni Andreuzza
  */
+@IsValueObject
 internal class FileSize private constructor(val value: Long) : ValueObject() {
 
     companion object {

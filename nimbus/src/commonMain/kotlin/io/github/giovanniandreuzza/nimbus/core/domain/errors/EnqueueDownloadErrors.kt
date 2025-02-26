@@ -1,6 +1,7 @@
 package io.github.giovanniandreuzza.nimbus.core.domain.errors
 
-import io.github.giovanniandreuzza.explicitarchitecture.shared.KError
+import io.github.giovanniandreuzza.explicitarchitecture.core.domain.errors.IsDomainError
+import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
 
 /**
@@ -10,6 +11,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
  * @param message Error message.
  * @author Giovanni Andreuzza
  */
+@IsDomainError
 public sealed class EnqueueDownloadErrors(
     override val code: String,
     override val message: String
@@ -20,6 +22,7 @@ public sealed class EnqueueDownloadErrors(
      *
      * @param downloadRequest The download request.
      */
+    @IsDomainError
     public data class DownloadAlreadyEnqueued(
         val downloadRequest: DownloadRequest
     ) : EnqueueDownloadErrors(
@@ -32,6 +35,7 @@ public sealed class EnqueueDownloadErrors(
      *
      * @param downloadRequest The download request.
      */
+    @IsDomainError
     public data class DownloadAlreadyStarted(
         val downloadRequest: DownloadRequest
     ) : EnqueueDownloadErrors(
@@ -44,6 +48,7 @@ public sealed class EnqueueDownloadErrors(
      *
      * @param downloadRequest The download request.
      */
+    @IsDomainError
     public data class DownloadIsPaused(
         val downloadRequest: DownloadRequest
     ) : EnqueueDownloadErrors(
@@ -56,6 +61,7 @@ public sealed class EnqueueDownloadErrors(
      *
      * @param cause The cause.
      */
+    @IsDomainError
     public data class DownloadFailed(
         override val cause: String
     ) : EnqueueDownloadErrors(
@@ -68,6 +74,7 @@ public sealed class EnqueueDownloadErrors(
      *
      * @param downloadRequest The download request.
      */
+    @IsDomainError
     public data class DownloadAlreadyCompleted(
         val downloadRequest: DownloadRequest
     ) : EnqueueDownloadErrors(
@@ -80,6 +87,7 @@ public sealed class EnqueueDownloadErrors(
      *
      * @param cause The cause.
      */
+    @IsDomainError
     public data class GetFileSizeFailed(override val cause: String) : EnqueueDownloadErrors(
         code = "get_file_size_failed",
         message = "Get File Size Failed."

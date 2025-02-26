@@ -1,18 +1,20 @@
 package io.github.giovanniandreuzza.nimbus.core.ports
 
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.ports.IsPort
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
 
 /**
- * Download Callback.
+ * Download Progress Callback.
  *
  * @author Giovanni Andreuzza
  */
-internal interface DownloadCallback {
+@IsPort
+internal interface DownloadProgressCallback {
 
     suspend fun onDownloadProgress(id: String, progress: Double)
 
     fun onDownloadFailed(id: String, error: StartDownloadErrors)
 
-    fun onDownloadFinished(id: String)
+    suspend fun onDownloadFinished(id: String)
 
 }

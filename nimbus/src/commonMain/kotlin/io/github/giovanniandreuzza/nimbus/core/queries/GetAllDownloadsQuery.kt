@@ -1,14 +1,15 @@
 package io.github.giovanniandreuzza.nimbus.core.queries
 
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.Empty
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.queries.IsQuery
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.usecases.UseCase
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetAllDownloadsResponse
 
 /**
  * Get All Downloads Query.
  *
  * @author Giovanni Andreuzza
  */
-internal interface GetAllDownloadsQuery {
+@IsQuery
+internal interface GetAllDownloadsQuery : UseCase<Empty, GetAllDownloadsResponse, Nothing>
 
-    suspend fun execute(): Map<String, DownloadTaskDTO>
-
-}

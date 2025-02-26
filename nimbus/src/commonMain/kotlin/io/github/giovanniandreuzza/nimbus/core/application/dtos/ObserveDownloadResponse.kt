@@ -1,6 +1,7 @@
 package io.github.giovanniandreuzza.nimbus.core.application.dtos
 
-import io.github.giovanniandreuzza.explicitarchitecture.application.Application
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.Dto
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.IsDto
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import kotlinx.coroutines.flow.Flow
 
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.Flow
  * @param downloadFlow the download flow.
  * @author Giovanni Andreuzza
  */
+@IsDto
 public data class ObserveDownloadResponse(
     val downloadFlow: Flow<DownloadState>
-) : Application
+) : Dto

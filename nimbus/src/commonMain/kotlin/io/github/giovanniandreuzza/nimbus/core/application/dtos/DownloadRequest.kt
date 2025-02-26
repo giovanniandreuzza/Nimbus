@@ -1,6 +1,7 @@
 package io.github.giovanniandreuzza.nimbus.core.application.dtos
 
-import io.github.giovanniandreuzza.explicitarchitecture.application.Application
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.Dto
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.IsDto
 
 /**
  * Download Request.
@@ -10,8 +11,9 @@ import io.github.giovanniandreuzza.explicitarchitecture.application.Application
  * @param fileName File name.
  * @author Giovanni Andreuzza
  */
+@IsDto
 public data class DownloadRequest(
     val fileUrl: String,
     val filePath: String,
     val fileName: String
-) : Application
+) : Dto

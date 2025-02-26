@@ -1,9 +1,10 @@
 package io.github.giovanniandreuzza.nimbus.core.domain.entities
 
-import io.github.giovanniandreuzza.explicitarchitecture.domain.AggregateRoot
-import io.github.giovanniandreuzza.explicitarchitecture.shared.Failure
-import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
-import io.github.giovanniandreuzza.explicitarchitecture.shared.Success
+import io.github.giovanniandreuzza.explicitarchitecture.core.domain.aggregates.AggregateRoot
+import io.github.giovanniandreuzza.explicitarchitecture.core.domain.aggregates.IsAggregateRoot
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.nimbus.core.domain.events.DownloadTaskEvents
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.FileName
@@ -13,6 +14,7 @@ import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.FileUrl
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.PauseDownloadErrors
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.ResumeDownloadErrors
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.UpdateDownloadProgressErrors
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 
 /**
@@ -20,6 +22,7 @@ import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
  *
  * @author Giovanni Andreuzza
  */
+@IsAggregateRoot
 internal class DownloadTask private constructor(
     val fileUrl: FileUrl,
     val filePath: FilePath,
@@ -57,6 +60,25 @@ internal class DownloadTask private constructor(
         val progress = 0.0
         _state = DownloadState.Downloading(progress)
         enqueueEvent(DownloadTaskEvents.DownloadStartedEvent(entityId, version))
+        return Success(Unit)
+    }
+
+    fun updateProgress(progress: Double): KResult<Unit, UpdateDownloadProgressErrors> {
+        if (state !is DownloadState.Downloading) {
+            return Failure(UpdateDownloadProgressErrors.DownloadTaskIsNotDownloading(entityId.id.value))
+        }
+
+        if (progress < (state as DownloadState.Downloading).progress) {
+            return Failure(
+                UpdateDownloadProgressErrors.IncomingProgressIsLowerThanCurrent(
+                    entityId.id.value,
+                    progress
+                )
+            )
+        }
+
+        _state = DownloadState.Downloading(progress)
+        enqueueEvent(DownloadTaskEvents.DownloadProgressUpdatedEvent(entityId, version, progress))
         return Success(Unit)
     }
 

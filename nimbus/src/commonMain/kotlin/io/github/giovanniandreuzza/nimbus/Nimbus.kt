@@ -1,21 +1,27 @@
 package io.github.giovanniandreuzza.nimbus
 
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
 import io.github.giovanniandreuzza.nimbus.api.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.api.NimbusDownloadRepository
 import io.github.giovanniandreuzza.nimbus.api.NimbusFileRepository
+import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
 import io.github.giovanniandreuzza.nimbus.di.init
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.Volatile
 
 /**
  * Nimbus.
  *
- * @param eventBudScope The event bus scope.
- * @param eventBusOnError The event bus on error.
+ * @param domainEventBusScope The domain event bus scope.
+ * @param domainEventBusOnError The domain event bus on error.
  * @param downloadScope The download scope.
  * @param ioDispatcher The IO dispatcher.
  * @param concurrencyLimit The concurrency limit.
@@ -24,8 +30,8 @@ import kotlin.concurrent.Volatile
  * @author Giovanni Andreuzza
  */
 public class Nimbus private constructor(
-    eventBudScope: CoroutineScope,
-    eventBusOnError: (Throwable) -> Unit,
+    domainEventBusScope: CoroutineScope,
+    domainEventBusOnError: (Throwable) -> Unit,
     downloadScope: CoroutineScope,
     ioDispatcher: CoroutineDispatcher,
     concurrencyLimit: Int,
@@ -33,10 +39,12 @@ public class Nimbus private constructor(
     nimbusFileRepository: NimbusFileRepository,
     downloadManagerPath: String
 ) {
+    private val mutex = Mutex()
+    private var isInitialized: Boolean = false
 
-    private val nimbusAPI: NimbusAPI = init(
-        eventBusScope = eventBudScope,
-        eventBusOnError = eventBusOnError,
+    private val downloadController = init(
+        domainEventBusScope = domainEventBusScope,
+        domainEventBusOnError = domainEventBusOnError,
         downloadScope = downloadScope,
         ioDispatcher = ioDispatcher,
         concurrencyLimit = concurrencyLimit,
@@ -50,8 +58,8 @@ public class Nimbus private constructor(
         private var instance: Nimbus? = null
 
         public class Builder {
-            private var eventBusScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-            private var eventBusOnError: (Throwable) -> Unit = {}
+            private var domainEventBusScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            private var domainEventBusOnError: (Throwable) -> Unit = {}
             private var downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             private var ioDispatcher = Dispatchers.IO
             private var concurrencyLimit = 1
@@ -59,11 +67,11 @@ public class Nimbus private constructor(
             private var nimbusFileRepository: NimbusFileRepository? = null
             private var downloadManagerPath: String? = null
 
-            public fun withEventBusScope(eventBusScope: CoroutineScope): Builder =
-                apply { this.eventBusScope = eventBusScope }
+            public fun withDomainEventBusScope(domainEventBusScope: CoroutineScope): Builder =
+                apply { this.domainEventBusScope = domainEventBusScope }
 
-            public fun withEventBusOnError(eventBusOnError: (Throwable) -> Unit): Builder =
-                apply { this.eventBusOnError = eventBusOnError }
+            public fun withDomainEventBusOnError(domainEventBusOnError: (Throwable) -> Unit): Builder =
+                apply { this.domainEventBusOnError = domainEventBusOnError }
 
             public fun withDownloadScope(downloadScope: CoroutineScope): Builder =
                 apply { this.downloadScope = downloadScope }
@@ -83,15 +91,15 @@ public class Nimbus private constructor(
             public fun withDownloadManagerPath(downloadManagerPath: String): Builder =
                 apply { this.downloadManagerPath = downloadManagerPath }
 
-            public fun build(): NimbusAPI {
+            public fun build(): Nimbus {
                 if (nimbusDownloadRepository == null || nimbusFileRepository == null || downloadManagerPath == null) {
                     throw IllegalStateException("nimbusDownloadRepository, nimbusFileRepository and downloadManagerPath must be provided")
                 }
 
                 if (instance == null) {
                     instance = Nimbus(
-                        eventBudScope = eventBusScope,
-                        eventBusOnError = eventBusOnError,
+                        domainEventBusScope = domainEventBusScope,
+                        domainEventBusOnError = domainEventBusOnError,
                         downloadScope = downloadScope,
                         ioDispatcher = ioDispatcher,
                         concurrencyLimit = concurrencyLimit,
@@ -101,8 +109,26 @@ public class Nimbus private constructor(
                     )
                 }
 
-                return instance!!.nimbusAPI
+                return instance!!
             }
+        }
+    }
+
+    public suspend fun init(): KResult<NimbusAPI, FailedToLoadDownloadTasks> {
+        return mutex.withLock {
+            if (isInitialized) {
+                return@withLock Success(downloadController)
+            }
+
+            val result = downloadController.loadDownloadTasks()
+
+            if (result.isFailure()) {
+                return@withLock result
+            }
+
+            isInitialized = true
+
+            Success(downloadController)
         }
     }
 }

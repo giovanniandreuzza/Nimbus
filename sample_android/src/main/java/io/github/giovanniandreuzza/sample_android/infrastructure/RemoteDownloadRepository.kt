@@ -1,12 +1,12 @@
 package io.github.giovanniandreuzza.sample_android.infrastructure
 
-import io.github.giovanniandreuzza.explicitarchitecture.shared.Failure
-import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
-import io.github.giovanniandreuzza.explicitarchitecture.shared.Success
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.nimbus.api.NimbusDownloadRepository
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadStream
-import io.github.giovanniandreuzza.nimbus.core.errors.GetFileSizeFailed
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
+import io.github.giovanniandreuzza.nimbus.frameworks.downloadmanager.errors.GetFileSizeFailed
 import io.github.giovanniandreuzza.sample_android.framework.retrofit.AppEndpoint
 import okio.source
 import kotlin.text.toLong

@@ -1,10 +1,11 @@
 package io.github.giovanniandreuzza.nimbus.api
 
-import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadResponse
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetAllDownloadsResponse
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetFileSizeRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetFileSizeResponse
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.ObserveDownloadRequest
@@ -19,8 +20,8 @@ import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErro
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.PauseDownloadErrors
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.ResumeDownloadErrors
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
-import io.github.giovanniandreuzza.nimbus.core.errors.DownloadTaskNotFound
-import io.github.giovanniandreuzza.nimbus.core.errors.GetFileSizeFailed
+import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
+import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeFailed
 
 /**
  * This is the main interface of the Nimbus library.
@@ -52,9 +53,9 @@ public interface NimbusAPI {
     /**
      * Get all downloads.
      *
-     * @return [Map] with the download id as key and the [DownloadTaskDTO] as value.
+     * @return [KResult] with [GetAllDownloadsResponse] if the operation is successful, [Nothing] otherwise.
      */
-    public suspend fun getAllDownloads(): Map<String, DownloadTaskDTO>
+    public suspend fun getAllDownloads(): KResult<GetAllDownloadsResponse, Nothing>
 
     /**
      * Enqueue the download.

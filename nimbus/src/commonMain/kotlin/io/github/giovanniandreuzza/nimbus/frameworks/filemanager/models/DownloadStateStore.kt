@@ -1,7 +1,8 @@
 @file:OptIn(ExperimentalSerializationApi::class)
 
-package io.github.giovanniandreuzza.nimbus.infrastructure.models
+package io.github.giovanniandreuzza.nimbus.frameworks.filemanager.models
 
+import io.github.giovanniandreuzza.explicitarchitecture.frameworks.models.IsFrameworkDto
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.protobuf.ProtoNumber
@@ -12,6 +13,7 @@ import kotlinx.serialization.protobuf.ProtoNumber
  * @author Giovanni Andreuzza
  */
 @Serializable
+@IsFrameworkDto
 internal sealed class DownloadStateStore {
 
     /**

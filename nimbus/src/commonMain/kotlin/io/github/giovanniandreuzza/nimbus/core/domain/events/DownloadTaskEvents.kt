@@ -1,8 +1,9 @@
 package io.github.giovanniandreuzza.nimbus.core.domain.events
 
-import io.github.giovanniandreuzza.explicitarchitecture.domain.DomainEvent
-import io.github.giovanniandreuzza.explicitarchitecture.domain.EntityId
-import io.github.giovanniandreuzza.explicitarchitecture.shared.DateUtils
+import io.github.giovanniandreuzza.explicitarchitecture.core.domain.entities.EntityId
+import io.github.giovanniandreuzza.explicitarchitecture.core.domain.events.DomainEvent
+import io.github.giovanniandreuzza.explicitarchitecture.core.domain.events.IsDomainEvent
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Dates
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import kotlinx.datetime.LocalDateTime
 
@@ -11,8 +12,9 @@ import kotlinx.datetime.LocalDateTime
  *
  * @author Giovanni Andreuzza
  */
+@IsDomainEvent
 internal sealed class DownloadTaskEvents(
-    override val occurredOn: LocalDateTime = DateUtils.now()
+    override val occurredOn: LocalDateTime = Dates.now()
 ) : DomainEvent<DownloadId> {
 
     /**
@@ -21,6 +23,7 @@ internal sealed class DownloadTaskEvents(
      * @param aggregateId The Aggregate Id.
      * @param version The version.
      */
+    @IsDomainEvent
     data class DownloadEnqueuedEvent(
         override val aggregateId: EntityId<DownloadId>,
         override val version: Int
@@ -31,11 +34,29 @@ internal sealed class DownloadTaskEvents(
     }
 
     /**
+     * Download Progress Updated Event.
+     *
+     * @param aggregateId The Aggregate Id.
+     * @param version The version.
+     */
+    @IsDomainEvent
+    data class DownloadProgressUpdatedEvent(
+        override val aggregateId: EntityId<DownloadId>,
+        override val version: Int,
+        val progress: Double
+    ) : DownloadTaskEvents() {
+        override fun toString(): String {
+            return "DownloadProgressUpdatedEvent(aggregateId=$aggregateId, version=$version, occurredOn=$occurredOn, progress=$progress)"
+        }
+    }
+
+    /**
      * Download Started Event.
      *
      * @param aggregateId The Aggregate Id.
      * @param version The version.
      */
+    @IsDomainEvent
     data class DownloadStartedEvent(
         override val aggregateId: EntityId<DownloadId>,
         override val version: Int
@@ -52,6 +73,7 @@ internal sealed class DownloadTaskEvents(
      * @param version The version.
      * @param progress Download progress.
      */
+    @IsDomainEvent
     data class DownloadPausedEvent(
         override val aggregateId: EntityId<DownloadId>,
         override val version: Int,
@@ -69,6 +91,7 @@ internal sealed class DownloadTaskEvents(
      * @param version The version.
      * @param progress Download progress.
      */
+    @IsDomainEvent
     data class DownloadResumedEvent(
         override val aggregateId: EntityId<DownloadId>,
         override val version: Int,
@@ -87,6 +110,7 @@ internal sealed class DownloadTaskEvents(
      * @param errorCode The error code.
      * @param errorMessage The error message.
      */
+    @IsDomainEvent
     data class DownloadFailedEvent(
         override val aggregateId: EntityId<DownloadId>,
         override val version: Int,
@@ -104,6 +128,7 @@ internal sealed class DownloadTaskEvents(
      * @param aggregateId The Aggregate Id.
      * @param version The version.
      */
+    @IsDomainEvent
     data class DownloadCanceledEvent(
         override val aggregateId: EntityId<DownloadId>,
         override val version: Int,
@@ -119,6 +144,7 @@ internal sealed class DownloadTaskEvents(
      * @param aggregateId The Aggregate Id.
      * @param version The version.
      */
+    @IsDomainEvent
     data class DownloadFinishedEvent(
         override val aggregateId: EntityId<DownloadId>,
         override val version: Int,
