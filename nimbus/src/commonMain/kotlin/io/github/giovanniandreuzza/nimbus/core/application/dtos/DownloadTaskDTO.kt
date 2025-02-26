@@ -1,6 +1,8 @@
 package io.github.giovanniandreuzza.nimbus.core.application.dtos
 
-import io.github.giovanniandreuzza.explicitarchitecture.application.Application
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.Dto
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.IsDto
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.mappers.IsApplicationMapper
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 
@@ -16,6 +18,7 @@ import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
  * @param version The version.
  * @author Giovanni Andreuzza
  */
+@IsDto
 public data class DownloadTaskDTO(
     val id: String,
     val fileName: String,
@@ -24,7 +27,7 @@ public data class DownloadTaskDTO(
     val fileSize: Long,
     val state: DownloadState,
     val version: Int
-) : Application {
+) : Dto {
 
     internal companion object {
         /**
@@ -33,6 +36,7 @@ public data class DownloadTaskDTO(
          * @param downloadTask The download task.
          * @return The DownloadTaskDTO.
          */
+        @IsApplicationMapper
         fun fromDomain(downloadTask: DownloadTask): DownloadTaskDTO {
             return DownloadTaskDTO(
                 id = downloadTask.entityId.id.value,
@@ -50,6 +54,7 @@ public data class DownloadTaskDTO(
          *
          * @return The DownloadTask.
          */
+        @IsApplicationMapper
         fun DownloadTaskDTO.toDomain(): DownloadTask {
             return DownloadTask.create(
                 fileName = fileName,

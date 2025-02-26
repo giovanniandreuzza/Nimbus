@@ -1,6 +1,7 @@
 package io.github.giovanniandreuzza.nimbus.core.application.dtos
 
-import io.github.giovanniandreuzza.explicitarchitecture.application.Application
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.Dto
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.IsDto
 
 /**
  * Resume download request.
@@ -8,6 +9,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.application.Application
  * @param downloadId The download id.
  * @author Giovanni Andreuzza
  */
+@IsDto
 public data class ResumeDownloadRequest(
     val downloadId: String
-) : Application
+) : Dto

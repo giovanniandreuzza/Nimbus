@@ -1,11 +1,12 @@
 package io.github.giovanniandreuzza.nimbus.core.application.usecases
 
-import io.github.giovanniandreuzza.explicitarchitecture.shared.Failure
-import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
-import io.github.giovanniandreuzza.explicitarchitecture.shared.Success
-import io.github.giovanniandreuzza.explicitarchitecture.shared.events.Event
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.usecases.IsUseCase
+import io.github.giovanniandreuzza.explicitarchitecture.core.domain.events.DomainEvent
 import io.github.giovanniandreuzza.explicitarchitecture.shared.events.EventBus
-import io.github.giovanniandreuzza.explicitarchitecture.shared.isFailure
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO.Companion.toDomain
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.ResumeDownloadRequest
@@ -19,21 +20,22 @@ import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 /**
  * Resume Download Use Case.
  *
- * @param eventBus The event bus.
+ * @param domainEventBus The event bus.
  * @param downloadRepository The download repository.
  * @param downloadTaskRepository The download task repository.
  * @author Giovanni Andreuzza
  */
+@IsUseCase
 internal class ResumeDownloadUseCase(
-    private val eventBus: EventBus<Event>,
+    private val domainEventBus: EventBus<DomainEvent<DownloadId>>,
     private val downloadRepository: DownloadRepository,
     private val downloadTaskRepository: DownloadTaskRepository,
 ) : ResumeDownloadCommand {
 
     override suspend fun execute(
-        params: ResumeDownloadRequest
+        request: ResumeDownloadRequest
     ): KResult<ResumeDownloadResponse, ResumeDownloadErrors> {
-        val downloadId = DownloadId.create(params.downloadId)
+        val downloadId = DownloadId.create(request.downloadId)
 
         val downloadTaskResult = downloadTaskRepository.getDownloadTask(downloadId.value)
 
@@ -57,7 +59,7 @@ internal class ResumeDownloadUseCase(
             return Failure(ResumeDownloadErrors.ResumeDownloadFailed(result.error.message))
         }
 
-        eventBus.publishAll(downloadTask.dequeueEvents())
+        domainEventBus.publishAll(downloadTask.dequeueEvents())
 
         downloadRepository.startDownload(
             downloadTask = DownloadTaskDTO.fromDomain(downloadTask),

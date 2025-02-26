@@ -59,7 +59,7 @@ Add `nimbus` to your `build.gradle` dependencies.
 
 ```
 dependencies {
-    implementation 'io.github.giovanniandreuzza:nimbus:1.1.0'
+    implementation 'io.github.giovanniandreuzza:nimbus:1.3.0'
 }
 ```
 

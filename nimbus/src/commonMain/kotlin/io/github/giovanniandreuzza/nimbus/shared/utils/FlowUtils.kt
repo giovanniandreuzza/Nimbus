@@ -1,5 +1,6 @@
 package io.github.giovanniandreuzza.nimbus.shared.utils
 
+import io.github.giovanniandreuzza.explicitarchitecture.shared.IsShared
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.transformWhile
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.transformWhile
  * @param predicate The predicate.
  * @return The new flow.
  */
+@IsShared
 public fun <T> Flow<T>.takeUntil(predicate: (T) -> Boolean): Flow<T> = transformWhile {
     emit(it)
     !predicate(it)
@@ -22,6 +24,7 @@ public fun <T> Flow<T>.takeUntil(predicate: (T) -> Boolean): Flow<T> = transform
  * @param value The value.
  * @return True if the value was emitted, false otherwise.
  */
+@IsShared
 public fun <Key, Value> MutableMap<Key, MutableSharedFlow<Value>>.emit(
     key: Key,
     value: Value

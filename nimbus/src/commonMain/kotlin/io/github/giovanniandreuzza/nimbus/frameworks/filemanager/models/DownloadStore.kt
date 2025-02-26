@@ -1,5 +1,6 @@
-package io.github.giovanniandreuzza.nimbus.infrastructure.models
+package io.github.giovanniandreuzza.nimbus.frameworks.filemanager.models
 
+import io.github.giovanniandreuzza.explicitarchitecture.frameworks.models.IsFrameworkDto
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.protobuf.ProtoNumber
@@ -12,6 +13,7 @@ import kotlinx.serialization.protobuf.ProtoNumber
  */
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
+@IsFrameworkDto
 internal data class DownloadStore(
     @ProtoNumber(1)
     val downloads: MutableMap<String, DownloadTaskStore> = mutableMapOf()

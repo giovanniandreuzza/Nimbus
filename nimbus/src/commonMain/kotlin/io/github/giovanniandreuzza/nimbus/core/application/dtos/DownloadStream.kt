@@ -1,6 +1,7 @@
 package io.github.giovanniandreuzza.nimbus.core.application.dtos
 
-import io.github.giovanniandreuzza.explicitarchitecture.application.Application
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.Dto
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.IsDto
 import okio.Source
 
 /**
@@ -11,8 +12,9 @@ import okio.Source
  * @param downloadedBytes The downloaded bytes.
  * @author Giovanni Andreuzza
  */
+@IsDto
 public data class DownloadStream(
     val source: Source,
     val contentLength: Long,
     val downloadedBytes: Long
-) : Application
+) : Dto

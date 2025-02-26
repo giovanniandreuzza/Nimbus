@@ -3,7 +3,6 @@ package io.github.giovanniandreuzza.sample_android.di
 import io.github.giovanniandreuzza.nimbus.Nimbus
 import io.github.giovanniandreuzza.nimbus.api.NimbusDownloadRepository
 import io.github.giovanniandreuzza.nimbus.api.NimbusFileRepository
-import io.github.giovanniandreuzza.nimbus.api.NimbusAPI
 import io.github.giovanniandreuzza.sample_android.framework.retrofit.AppEndpoint
 import io.github.giovanniandreuzza.sample_android.infrastructure.LocalNimbusFileRepository
 import io.github.giovanniandreuzza.sample_android.infrastructure.RemoteDownloadRepository
@@ -43,14 +42,14 @@ val appModule = module {
 
     factory<NimbusFileRepository> { LocalNimbusFileRepository() }
 
-    single<NimbusAPI> {
+    single<Nimbus> {
         val folder = File(androidApplication().filesDir, "test").also {
             it.mkdirs()
         }
 
         Nimbus.Companion.Builder()
-            .withEventBusScope(CoroutineScope(SupervisorJob() + Dispatchers.Default))
-            .withEventBusOnError {
+            .withDomainEventBusScope(CoroutineScope(SupervisorJob() + Dispatchers.Default))
+            .withDomainEventBusOnError {
                 Timber.e("EventBus error: $it")
             }
             .withDownloadScope(CoroutineScope(SupervisorJob() + Dispatchers.IO))
@@ -62,5 +61,5 @@ val appModule = module {
             .build()
     }
 
-    viewModel { MainViewModel(nimbusAPI = get()) }
+    viewModel { MainViewModel(nimbus = get()) }
 }

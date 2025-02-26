@@ -1,11 +1,11 @@
 package io.github.giovanniandreuzza.sample_android.infrastructure
 
-import io.github.giovanniandreuzza.explicitarchitecture.shared.Failure
-import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
-import io.github.giovanniandreuzza.explicitarchitecture.shared.Success
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.nimbus.api.NimbusFileRepository
-import io.github.giovanniandreuzza.nimbus.core.errors.FileCreationFailed
-import io.github.giovanniandreuzza.nimbus.core.errors.FileNotFound
+import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.errors.FileCreationFailed
+import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.errors.FileNotFound
 import okio.Sink
 import okio.Source
 import okio.sink

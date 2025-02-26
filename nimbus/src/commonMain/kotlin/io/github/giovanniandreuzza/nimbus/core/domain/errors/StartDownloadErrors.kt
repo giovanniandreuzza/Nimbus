@@ -1,6 +1,7 @@
 package io.github.giovanniandreuzza.nimbus.core.domain.errors
 
-import io.github.giovanniandreuzza.explicitarchitecture.shared.KError
+import io.github.giovanniandreuzza.explicitarchitecture.core.domain.errors.IsDomainError
+import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 
 /**
  * Start Download Errors.
@@ -9,6 +10,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.KError
  * @param message Error message.
  * @author Giovanni Andreuzza
  */
+@IsDomainError
 public sealed class StartDownloadErrors(
     override val code: String,
     override val message: String
@@ -19,6 +21,7 @@ public sealed class StartDownloadErrors(
      *
      * @param downloadId The download ID.
      */
+    @IsDomainError
     public data class DownloadTaskNotFound(
         val downloadId: String
     ) : StartDownloadErrors(
@@ -31,6 +34,7 @@ public sealed class StartDownloadErrors(
      *
      * @param downloadId The download ID.
      */
+    @IsDomainError
     public data class DownloadIsNotEnqueued(
         val downloadId: String
     ) : StartDownloadErrors(
@@ -43,6 +47,7 @@ public sealed class StartDownloadErrors(
      *
      * @param downloadId The download ID.
      */
+    @IsDomainError
     public data class DownloadAlreadyStarted(
         val downloadId: String
     ) : StartDownloadErrors(
@@ -55,6 +60,7 @@ public sealed class StartDownloadErrors(
      *
      * @param cause The cause.
      */
+    @IsDomainError
     public data class StartDownloadFailed(
         override val cause: String
     ) : StartDownloadErrors(

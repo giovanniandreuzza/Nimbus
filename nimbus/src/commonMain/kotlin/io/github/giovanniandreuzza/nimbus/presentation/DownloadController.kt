@@ -1,11 +1,13 @@
 package io.github.giovanniandreuzza.nimbus.presentation
 
-import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.Empty
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.nimbus.api.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadResponse
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetAllDownloadsResponse
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetFileSizeRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetFileSizeResponse
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.ObserveDownloadRequest
@@ -25,8 +27,10 @@ import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErro
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.PauseDownloadErrors
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.ResumeDownloadErrors
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
-import io.github.giovanniandreuzza.nimbus.core.errors.DownloadTaskNotFound
-import io.github.giovanniandreuzza.nimbus.core.errors.GetFileSizeFailed
+import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
+import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
+import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeFailed
+import io.github.giovanniandreuzza.nimbus.core.commands.LoadDownloadTasksCommand
 import io.github.giovanniandreuzza.nimbus.core.queries.GetAllDownloadsQuery
 import io.github.giovanniandreuzza.nimbus.core.queries.GetDownloadTaskQuery
 import io.github.giovanniandreuzza.nimbus.core.queries.GetFileSizeQuery
@@ -35,6 +39,7 @@ import io.github.giovanniandreuzza.nimbus.core.queries.ObserveDownloadQuery
 /**
  * Download Controller.
  *
+ * @param loadDownloadTasksCommand The load download tasks command.
  * @param getDownloadTaskQuery The get download state query.
  * @param getAllDownloadsQuery The get all downloads query.
  * @param getFileSizeQuery The get file size query.
@@ -47,6 +52,7 @@ import io.github.giovanniandreuzza.nimbus.core.queries.ObserveDownloadQuery
  * @author Giovanni Andreuzza
  */
 internal class DownloadController(
+    private val loadDownloadTasksCommand: LoadDownloadTasksCommand,
     private val getDownloadTaskQuery: GetDownloadTaskQuery,
     private val getAllDownloadsQuery: GetAllDownloadsQuery,
     private val getFileSizeQuery: GetFileSizeQuery,
@@ -57,6 +63,10 @@ internal class DownloadController(
     private val resumeDownloadCommand: ResumeDownloadCommand,
     private val cancelDownloadCommand: CancelDownloadCommand
 ) : NimbusAPI {
+
+    suspend fun loadDownloadTasks(): KResult<Empty, FailedToLoadDownloadTasks> {
+        return loadDownloadTasksCommand.execute(Empty())
+    }
 
     override suspend fun getFileSize(
         request: GetFileSizeRequest
@@ -70,8 +80,8 @@ internal class DownloadController(
         return getDownloadTaskQuery.execute(request)
     }
 
-    override suspend fun getAllDownloads(): Map<String, DownloadTaskDTO> {
-        return getAllDownloadsQuery.execute()
+    override suspend fun getAllDownloads(): KResult<GetAllDownloadsResponse, Nothing> {
+        return getAllDownloadsQuery.execute(Empty())
     }
 
     override suspend fun enqueueDownload(

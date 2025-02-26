@@ -1,12 +1,13 @@
 package io.github.giovanniandreuzza.nimbus.core.application.usecases
 
-import io.github.giovanniandreuzza.explicitarchitecture.shared.Failure
-import io.github.giovanniandreuzza.explicitarchitecture.shared.KResult
-import io.github.giovanniandreuzza.explicitarchitecture.shared.Success
-import io.github.giovanniandreuzza.explicitarchitecture.shared.events.Event
+import io.github.giovanniandreuzza.explicitarchitecture.core.application.usecases.IsUseCase
+import io.github.giovanniandreuzza.explicitarchitecture.core.domain.events.DomainEvent
 import io.github.giovanniandreuzza.explicitarchitecture.shared.events.EventBus
-import io.github.giovanniandreuzza.explicitarchitecture.shared.isFailure
-import io.github.giovanniandreuzza.explicitarchitecture.shared.isSuccess
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isSuccess
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO.Companion.toDomain
@@ -22,24 +23,25 @@ import io.github.giovanniandreuzza.nimbus.core.queries.GetFileSizeQuery
 /**
  * Enqueue Download Use Case.
  *
- * @param eventBus The event bus.
+ * @param domainEventBus The event bus.
  * @param getFileSizeQuery The get file size query.
  * @param downloadTaskRepository The download task repository.
  * @author Giovanni Andreuzza
  */
+@IsUseCase
 internal class EnqueueDownloadUseCase(
-    private val eventBus: EventBus<Event>,
+    private val domainEventBus: EventBus<DomainEvent<DownloadId>>,
     private val getFileSizeQuery: GetFileSizeQuery,
     private val downloadTaskRepository: DownloadTaskRepository
 ) : EnqueueDownloadCommand {
 
     override suspend fun execute(
-        params: DownloadRequest
+        request: DownloadRequest
     ): KResult<DownloadTaskDTO, EnqueueDownloadErrors> {
         val downloadId = DownloadId.create(
-            fileUrl = params.fileUrl,
-            filePath = params.filePath,
-            fileName = params.fileName
+            fileUrl = request.fileUrl,
+            filePath = request.filePath,
+            fileName = request.fileName
         )
 
         val downloadTaskResult = downloadTaskRepository.getDownloadTask(downloadId.value)
@@ -48,13 +50,13 @@ internal class EnqueueDownloadUseCase(
             when (val state = downloadTaskResult.value.toDomain().state) {
                 DownloadState.Enqueued -> Failure(
                     EnqueueDownloadErrors.DownloadAlreadyEnqueued(
-                        params
+                        request
                     )
                 )
 
                 is DownloadState.Downloading -> Failure(
                     EnqueueDownloadErrors.DownloadAlreadyStarted(
-                        params
+                        request
                     )
                 )
 
@@ -66,20 +68,20 @@ internal class EnqueueDownloadUseCase(
 
                 is DownloadState.Paused -> Failure(
                     EnqueueDownloadErrors.DownloadIsPaused(
-                        params
+                        request
                     )
                 )
 
                 DownloadState.Finished -> Failure(
                     EnqueueDownloadErrors.DownloadAlreadyCompleted(
-                        params
+                        request
                     )
                 )
             }
         }
 
         val getFileSizeRequest = GetFileSizeRequest(
-            fileUrl = params.fileUrl
+            fileUrl = request.fileUrl
         )
 
         val fileSizeResult = getFileSizeQuery.execute(getFileSizeRequest)
@@ -89,9 +91,9 @@ internal class EnqueueDownloadUseCase(
         }
 
         val downloadTask = DownloadTask.create(
-            fileUrl = params.fileUrl,
-            filePath = params.filePath,
-            fileName = params.fileName,
+            fileUrl = request.fileUrl,
+            filePath = request.filePath,
+            fileName = request.fileName,
             fileSize = fileSizeResult.value.fileSize
         )
 
@@ -103,7 +105,7 @@ internal class EnqueueDownloadUseCase(
             return Failure(EnqueueDownloadErrors.DownloadFailed(result.error.message))
         }
 
-        eventBus.publishAll(downloadTask.dequeueEvents())
+        domainEventBus.publishAll(downloadTask.dequeueEvents())
 
         return Success(downloadTaskDTO)
     }
