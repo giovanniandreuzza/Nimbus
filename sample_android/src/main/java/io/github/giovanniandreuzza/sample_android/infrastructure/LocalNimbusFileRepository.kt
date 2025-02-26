@@ -3,7 +3,7 @@ package io.github.giovanniandreuzza.sample_android.infrastructure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
-import io.github.giovanniandreuzza.nimbus.api.NimbusFileRepository
+import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.ports.NimbusFileRepository
 import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.errors.FileCreationFailed
 import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.errors.FileNotFound
 import okio.Sink

@@ -3,9 +3,9 @@ package io.github.giovanniandreuzza.nimbus
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
-import io.github.giovanniandreuzza.nimbus.api.NimbusAPI
-import io.github.giovanniandreuzza.nimbus.api.NimbusDownloadRepository
-import io.github.giovanniandreuzza.nimbus.api.NimbusFileRepository
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
+import io.github.giovanniandreuzza.nimbus.frameworks.downloadmanager.ports.NimbusDownloadRepository
+import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.ports.NimbusFileRepository
 import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
 import io.github.giovanniandreuzza.nimbus.di.init
 import kotlinx.coroutines.CoroutineDispatcher

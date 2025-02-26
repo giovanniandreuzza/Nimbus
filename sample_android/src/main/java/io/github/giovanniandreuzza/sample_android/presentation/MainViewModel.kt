@@ -6,7 +6,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.asSucce
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isSuccess
 import io.github.giovanniandreuzza.nimbus.Nimbus
-import io.github.giovanniandreuzza.nimbus.api.NimbusAPI
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.ObserveDownloadRequest

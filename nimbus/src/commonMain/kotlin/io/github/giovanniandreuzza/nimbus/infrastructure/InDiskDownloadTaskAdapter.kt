@@ -16,30 +16,18 @@ import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.models.Download
 import io.github.giovanniandreuzza.nimbus.infrastructure.mappers.DownloadTaskStoreMappers.toDTO
 import io.github.giovanniandreuzza.nimbus.infrastructure.mappers.DownloadTaskStoreMappers.toStore
 import io.github.giovanniandreuzza.nimbus.shared.utils.getDownloadProgress
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.ExperimentalSerializationApi
-import kotlinx.serialization.decodeFromByteArray
-import kotlinx.serialization.encodeToByteArray
-import kotlinx.serialization.protobuf.ProtoBuf
-import okio.Sink
-import okio.Source
-import okio.buffer
-import okio.use
 
 /**
  * In Disk Download Task Adapter.
  *
- * @param ioDispatcher The IO dispatcher.
  * @param downloadManagerPath The download manager path.
  * @param fileManager The nimbus file manager.
  * @author Giovanni Andreuzza
  */
 internal class InDiskDownloadTaskAdapter(
-    private val ioDispatcher: CoroutineDispatcher,
     private val downloadManagerPath: String,
     private val fileManager: NimbusFileManager,
 ) : DownloadTaskRepository {
@@ -83,7 +71,7 @@ internal class InDiskDownloadTaskAdapter(
                 return@withLock Failure(DownloadTaskNotFound(sourceResult.error.toString()))
             }
 
-            val downloadStore = readDownloadStoreFromFile(sourceResult.value)
+            val downloadStore = fileManager.readDownloadStoreFromFile(sourceResult.value)
 
             val downloadTask = downloadStore.downloads[id]?.toDTO()
 
@@ -103,7 +91,7 @@ internal class InDiskDownloadTaskAdapter(
                 return@withLock emptyMap()
             }
 
-            val downloadStore = readDownloadStoreFromFile(sourceResult.value)
+            val downloadStore = fileManager.readDownloadStoreFromFile(sourceResult.value)
 
             downloadStore.downloads.mapValues { downloadTask ->
                 downloadTask.value.toDTO().let {
@@ -133,7 +121,7 @@ internal class InDiskDownloadTaskAdapter(
                 return@withLock Failure(DownloadTaskNotFound(sourceResult.error.toString()))
             }
 
-            val downloadStore = readDownloadStoreFromFile(sourceResult.value)
+            val downloadStore = fileManager.readDownloadStoreFromFile(sourceResult.value)
 
             val storedVersion = downloadStore.downloads[downloadTask.id]?.version ?: -1
 
@@ -145,7 +133,7 @@ internal class InDiskDownloadTaskAdapter(
                     hasToAppend = false
                 ).asSuccess().value
 
-                saveDownloadStoreToFile(downloadStore, sink)
+                fileManager.saveDownloadStoreToFile(downloadStore, sink)
             }
 
             Success(Unit)
@@ -164,7 +152,7 @@ internal class InDiskDownloadTaskAdapter(
                 return@withLock Failure(DownloadTaskNotFound(sourceResult.error.toString()))
             }
 
-            val downloadStore = readDownloadStoreFromFile(sourceResult.value)
+            val downloadStore = fileManager.readDownloadStoreFromFile(sourceResult.value)
 
             if (!downloadStore.downloads.containsKey(id)) {
                 return@withLock Failure(DownloadTaskNotFound())
@@ -183,37 +171,13 @@ internal class InDiskDownloadTaskAdapter(
                 hasToAppend = false
             ).asSuccess().value
 
-            saveDownloadStoreToFile(downloadStore, sink)
+            fileManager.saveDownloadStoreToFile(downloadStore, sink)
 
             Success(true)
         }
     }
 
     /* Private Methods */
-
-    @OptIn(ExperimentalSerializationApi::class)
-    private suspend fun readDownloadStoreFromFile(source: Source): DownloadStore {
-        return withContext(ioDispatcher) {
-            try {
-                source.buffer().use { source ->
-                    val bytes = source.readByteArray()
-                    ProtoBuf.decodeFromByteArray(bytes)
-                }
-            } catch (_: Exception) {
-                DownloadStore()
-            }
-        }
-    }
-
-    @OptIn(ExperimentalSerializationApi::class)
-    private suspend fun saveDownloadStoreToFile(store: DownloadStore, sink: Sink) {
-        return withContext(ioDispatcher) {
-            val encodedData = ProtoBuf.encodeToByteArray(store)
-            sink.buffer().use { sink ->
-                sink.write(encodedData)
-            }
-        }
-    }
 
     private suspend fun syncWithFile(
         downloadTask: DownloadTaskDTO,
@@ -232,7 +196,7 @@ internal class InDiskDownloadTaskAdapter(
                 hasToAppend = false
             ).asSuccess().value
             downloadStore.downloads.remove(downloadTask.id)
-            saveDownloadStoreToFile(downloadStore, sink)
+            fileManager.saveDownloadStoreToFile(downloadStore, sink)
             return null
         }
 

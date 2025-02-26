@@ -4,8 +4,8 @@ import io.github.giovanniandreuzza.explicitarchitecture.core.domain.events.Domai
 import io.github.giovanniandreuzza.explicitarchitecture.di.IsDi
 import io.github.giovanniandreuzza.explicitarchitecture.infrastructure.adapters.EventBusAdapter
 import io.github.giovanniandreuzza.explicitarchitecture.shared.events.EventBus
-import io.github.giovanniandreuzza.nimbus.api.NimbusDownloadRepository
-import io.github.giovanniandreuzza.nimbus.api.NimbusFileRepository
+import io.github.giovanniandreuzza.nimbus.frameworks.downloadmanager.ports.NimbusDownloadRepository
+import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.ports.NimbusFileRepository
 import io.github.giovanniandreuzza.nimbus.core.application.services.DownloadProgressService
 import io.github.giovanniandreuzza.nimbus.core.application.usecases.CancelDownloadUseCase
 import io.github.giovanniandreuzza.nimbus.core.application.usecases.EnqueueDownloadUseCase
@@ -72,6 +72,7 @@ internal fun init(
     domainEventBus.start(onError = domainEventBusOnError)
 
     val nimbusFileManager = NimbusFileManager(
+        ioDispatcher = ioDispatcher,
         nimbusFileRepository = nimbusFileRepository
     )
 
@@ -82,7 +83,6 @@ internal fun init(
     val inMemoryDownloadTaskRepository: DownloadTaskRepository = InMemoryDownloadTaskAdapter()
 
     val inDiskDownloadTaskRepository: DownloadTaskRepository = InDiskDownloadTaskAdapter(
-        ioDispatcher = ioDispatcher,
         downloadManagerPath = downloadManagerPath,
         fileManager = nimbusFileManager
     )
