@@ -1,5 +1,6 @@
-package io.github.giovanniandreuzza.nimbus.api
+package io.github.giovanniandreuzza.nimbus.presentation
 
+import io.github.giovanniandreuzza.explicitarchitecture.presentation.IsPresentation
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadResponse
@@ -28,6 +29,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeFai
  *
  * @author Giovanni Andreuzza
  */
+@IsPresentation
 public interface NimbusAPI {
 
     /**

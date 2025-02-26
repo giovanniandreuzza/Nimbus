@@ -1,5 +1,6 @@
-package io.github.giovanniandreuzza.nimbus.api
+package io.github.giovanniandreuzza.nimbus.frameworks.filemanager.ports
 
+import io.github.giovanniandreuzza.explicitarchitecture.frameworks.IsFramework
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.errors.FileCreationFailed
 import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.errors.FileNotFound
@@ -11,6 +12,7 @@ import okio.Source
  *
  * @author Giovanni Andreuzza
  */
+@IsFramework
 public interface NimbusFileRepository {
 
     /**

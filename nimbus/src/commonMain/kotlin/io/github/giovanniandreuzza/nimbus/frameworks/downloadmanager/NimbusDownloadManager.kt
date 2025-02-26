@@ -2,10 +2,10 @@ package io.github.giovanniandreuzza.nimbus.frameworks.downloadmanager
 
 import io.github.giovanniandreuzza.explicitarchitecture.frameworks.IsFramework
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
-import io.github.giovanniandreuzza.nimbus.api.NimbusDownloadRepository
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadStream
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
 import io.github.giovanniandreuzza.nimbus.frameworks.downloadmanager.errors.GetFileSizeFailed
+import io.github.giovanniandreuzza.nimbus.frameworks.downloadmanager.ports.NimbusDownloadRepository
 
 /**
  * Nimbus Download Manager.

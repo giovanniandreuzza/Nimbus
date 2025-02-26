@@ -1,5 +1,6 @@
-package io.github.giovanniandreuzza.nimbus.api
+package io.github.giovanniandreuzza.nimbus.frameworks.downloadmanager.ports
 
+import io.github.giovanniandreuzza.explicitarchitecture.frameworks.IsFramework
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadStream
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
@@ -10,6 +11,7 @@ import io.github.giovanniandreuzza.nimbus.frameworks.downloadmanager.errors.GetF
  *
  * @author Giovanni Andreuzza
  */
+@IsFramework
 public interface NimbusDownloadRepository {
 
     /**

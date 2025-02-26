@@ -2,7 +2,6 @@ package io.github.giovanniandreuzza.nimbus.presentation
 
 import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.Empty
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
-import io.github.giovanniandreuzza.nimbus.api.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadResponse
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
