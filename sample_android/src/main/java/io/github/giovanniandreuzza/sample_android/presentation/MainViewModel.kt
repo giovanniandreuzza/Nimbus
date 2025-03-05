@@ -29,7 +29,7 @@ class MainViewModel(
     private val nimbus: Nimbus
 ) : ViewModel() {
 
-    private val url = "https://uiuiui.storage.clo.ru/files/workshop-35/35_783436035.mp4"
+    private val url = "https://storage.googleapis.com/screens_contents/test/video_portrait_long.mp4"
     private val name1 = "video1.mp4"
     private val name2 = "video2.mp4"
     private val name3 = "video3.mp4"

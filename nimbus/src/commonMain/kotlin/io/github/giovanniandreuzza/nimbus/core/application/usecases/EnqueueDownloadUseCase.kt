@@ -1,8 +1,6 @@
 package io.github.giovanniandreuzza.nimbus.core.application.usecases
 
 import io.github.giovanniandreuzza.explicitarchitecture.core.application.usecases.IsUseCase
-import io.github.giovanniandreuzza.explicitarchitecture.core.domain.events.DomainEvent
-import io.github.giovanniandreuzza.explicitarchitecture.shared.events.EventBus
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
@@ -23,14 +21,12 @@ import io.github.giovanniandreuzza.nimbus.core.queries.GetFileSizeQuery
 /**
  * Enqueue Download Use Case.
  *
- * @param domainEventBus The event bus.
  * @param getFileSizeQuery The get file size query.
  * @param downloadTaskRepository The download task repository.
  * @author Giovanni Andreuzza
  */
 @IsUseCase
 internal class EnqueueDownloadUseCase(
-    private val domainEventBus: EventBus<DomainEvent<DownloadId>>,
     private val getFileSizeQuery: GetFileSizeQuery,
     private val downloadTaskRepository: DownloadTaskRepository
 ) : EnqueueDownloadCommand {
@@ -104,8 +100,6 @@ internal class EnqueueDownloadUseCase(
         if (result.isFailure()) {
             return Failure(EnqueueDownloadErrors.DownloadFailed(result.error.message))
         }
-
-        domainEventBus.publishAll(downloadTask.dequeueEvents())
 
         return Success(downloadTaskDTO)
     }

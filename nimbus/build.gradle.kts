@@ -10,10 +10,10 @@ plugins {
     alias(libs.plugins.kotlinSerialization)
 }
 
-val properties = loadProperties()
+val localProperties = loadProperties()
 
 group = "io.github.giovanniandreuzza"
-version = properties.getVersion()
+version = localProperties.getVersion()
 
 kotlin {
     explicitApi()
@@ -22,7 +22,7 @@ kotlin {
     androidTarget {
         publishLibraryVariants("release")
         compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_11)
+            jvmTarget.set(JvmTarget.JVM_1_8)
         }
     }
 
@@ -54,8 +54,8 @@ android {
     namespace = "io.github.giovanniandreuzza.nimbus"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
     defaultConfig {
         minSdk = libs.versions.android.minSdk.get().toInt()
@@ -94,7 +94,7 @@ mavenPublishing {
     coordinates(
         groupId = "io.github.giovanniandreuzza",
         artifactId = "nimbus",
-        version = properties.getVersion()
+        version = localProperties.getVersion()
     )
 
     // Configure POM metadata for the published artifact
