@@ -1,8 +1,6 @@
 package io.github.giovanniandreuzza.nimbus.core.application.usecases
 
 import io.github.giovanniandreuzza.explicitarchitecture.core.application.usecases.IsUseCase
-import io.github.giovanniandreuzza.explicitarchitecture.core.domain.events.DomainEvent
-import io.github.giovanniandreuzza.explicitarchitecture.shared.events.EventBus
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
@@ -20,14 +18,12 @@ import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 /**
  * Start Download Use Case.
  *
- * @param domainEventBus The event bus.
  * @param downloadRepository The download repository.
  * @param downloadTaskRepository The download task repository.
  * @author Giovanni Andreuzza
  */
 @IsUseCase
 internal class StartDownloadUseCase(
-    private val domainEventBus: EventBus<DomainEvent<DownloadId>>,
     private val downloadRepository: DownloadRepository,
     private val downloadTaskRepository: DownloadTaskRepository
 ) : StartDownloadCommand {
@@ -58,8 +54,6 @@ internal class StartDownloadUseCase(
         if (result.isFailure()) {
             return Failure(StartDownloadErrors.StartDownloadFailed(result.error.message))
         }
-
-        domainEventBus.publishAll(downloadTask.dequeueEvents())
 
         downloadRepository.startDownload(
             downloadTask = DownloadTaskDTO.fromDomain(downloadTask),

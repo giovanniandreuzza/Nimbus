@@ -30,7 +30,7 @@ internal class DownloadTask private constructor(
     val fileSize: FileSize,
     private var _state: DownloadState,
     version: Int
-) : AggregateRoot<DownloadId>(
+) : AggregateRoot<DownloadId, DownloadTaskEvents>(
     id = DownloadId.create(fileUrl.value, filePath.value, fileName.value),
     version = version
 ) {

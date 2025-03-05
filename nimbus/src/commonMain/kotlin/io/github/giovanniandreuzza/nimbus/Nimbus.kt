@@ -20,8 +20,6 @@ import kotlin.concurrent.Volatile
 /**
  * Nimbus.
  *
- * @param domainEventBusScope The domain event bus scope.
- * @param domainEventBusOnError The domain event bus on error.
  * @param downloadScope The download scope.
  * @param ioDispatcher The IO dispatcher.
  * @param concurrencyLimit The concurrency limit.
@@ -30,27 +28,27 @@ import kotlin.concurrent.Volatile
  * @author Giovanni Andreuzza
  */
 public class Nimbus private constructor(
-    domainEventBusScope: CoroutineScope,
-    domainEventBusOnError: (Throwable) -> Unit,
     downloadScope: CoroutineScope,
     ioDispatcher: CoroutineDispatcher,
     concurrencyLimit: Int,
     nimbusDownloadRepository: NimbusDownloadRepository,
     nimbusFileRepository: NimbusFileRepository,
-    downloadManagerPath: String
+    downloadManagerPath: String,
+    downloadBufferSize: Long,
+    downloadNotifyEveryBytes: Long
 ) {
     private val mutex = Mutex()
     private var isInitialized: Boolean = false
 
     private val downloadController = init(
-        domainEventBusScope = domainEventBusScope,
-        domainEventBusOnError = domainEventBusOnError,
         downloadScope = downloadScope,
         ioDispatcher = ioDispatcher,
         concurrencyLimit = concurrencyLimit,
         nimbusDownloadRepository = nimbusDownloadRepository,
         nimbusFileRepository = nimbusFileRepository,
-        downloadManagerPath = downloadManagerPath
+        downloadManagerPath = downloadManagerPath,
+        downloadBufferSize = downloadBufferSize,
+        downloadNotifyEveryBytes = downloadNotifyEveryBytes
     )
 
     public companion object {
@@ -58,20 +56,14 @@ public class Nimbus private constructor(
         private var instance: Nimbus? = null
 
         public class Builder {
-            private var domainEventBusScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-            private var domainEventBusOnError: (Throwable) -> Unit = {}
             private var downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             private var ioDispatcher = Dispatchers.IO
             private var concurrencyLimit = 1
             private var nimbusDownloadRepository: NimbusDownloadRepository? = null
             private var nimbusFileRepository: NimbusFileRepository? = null
             private var downloadManagerPath: String? = null
-
-            public fun withDomainEventBusScope(domainEventBusScope: CoroutineScope): Builder =
-                apply { this.domainEventBusScope = domainEventBusScope }
-
-            public fun withDomainEventBusOnError(domainEventBusOnError: (Throwable) -> Unit): Builder =
-                apply { this.domainEventBusOnError = domainEventBusOnError }
+            private var downloadBufferSize: Long = 8 * 1024L
+            private var downloadNotifyEveryBytes: Long = 16 * 32 * 1024L
 
             public fun withDownloadScope(downloadScope: CoroutineScope): Builder =
                 apply { this.downloadScope = downloadScope }
@@ -91,6 +83,12 @@ public class Nimbus private constructor(
             public fun withDownloadManagerPath(downloadManagerPath: String): Builder =
                 apply { this.downloadManagerPath = downloadManagerPath }
 
+            public fun withDownloadBufferSize(downloadBufferSize: Long): Builder =
+                apply { this.downloadBufferSize = downloadBufferSize }
+
+            public fun withDownloadNotifyEveryBytes(downloadNotifyEveryBytes: Long): Builder =
+                apply { this.downloadNotifyEveryBytes = downloadNotifyEveryBytes }
+
             public fun build(): Nimbus {
                 if (nimbusDownloadRepository == null || nimbusFileRepository == null || downloadManagerPath == null) {
                     throw IllegalStateException("nimbusDownloadRepository, nimbusFileRepository and downloadManagerPath must be provided")
@@ -98,14 +96,14 @@ public class Nimbus private constructor(
 
                 if (instance == null) {
                     instance = Nimbus(
-                        domainEventBusScope = domainEventBusScope,
-                        domainEventBusOnError = domainEventBusOnError,
                         downloadScope = downloadScope,
                         ioDispatcher = ioDispatcher,
                         concurrencyLimit = concurrencyLimit,
                         nimbusDownloadRepository = nimbusDownloadRepository!!,
                         nimbusFileRepository = nimbusFileRepository!!,
-                        downloadManagerPath = downloadManagerPath!!
+                        downloadManagerPath = downloadManagerPath!!,
+                        downloadBufferSize = downloadBufferSize,
+                        downloadNotifyEveryBytes = downloadNotifyEveryBytes
                     )
                 }
 

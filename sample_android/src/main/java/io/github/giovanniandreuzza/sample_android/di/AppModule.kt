@@ -15,7 +15,6 @@ import org.koin.android.ext.koin.androidApplication
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
 import retrofit2.Retrofit
-import timber.log.Timber
 import java.io.File
 
 /**
@@ -48,10 +47,6 @@ val appModule = module {
         }
 
         Nimbus.Companion.Builder()
-            .withDomainEventBusScope(CoroutineScope(SupervisorJob() + Dispatchers.Default))
-            .withDomainEventBusOnError {
-                Timber.e("EventBus error: $it")
-            }
             .withDownloadScope(CoroutineScope(SupervisorJob() + Dispatchers.IO))
             .withIODispatcher(Dispatchers.IO)
             .withConcurrencyLimit(5)

@@ -44,8 +44,6 @@ import kotlinx.coroutines.CoroutineScope
 /**
  * Initialize the Download Controller.
  *
- * @param domainEventBusScope The domain event bus scope.
- * @param domainEventBusOnError The domain event bus on error.
  * @param downloadScope The download scope.
  * @param ioDispatcher The IO dispatcher.
  * @param concurrencyLimit The concurrency limit.
@@ -57,19 +55,15 @@ import kotlinx.coroutines.CoroutineScope
  */
 @IsDi
 internal fun init(
-    domainEventBusScope: CoroutineScope,
-    domainEventBusOnError: (Throwable) -> Unit,
     downloadScope: CoroutineScope,
     ioDispatcher: CoroutineDispatcher,
     concurrencyLimit: Int,
     nimbusDownloadRepository: NimbusDownloadRepository,
     nimbusFileRepository: NimbusFileRepository,
-    downloadManagerPath: String
+    downloadManagerPath: String,
+    downloadBufferSize: Long,
+    downloadNotifyEveryBytes: Long
 ): DownloadController {
-    val domainEventBus: EventBus<DomainEvent<DownloadId>> = EventBusAdapter(
-        eventBusScope = domainEventBusScope
-    )
-    domainEventBus.start(onError = domainEventBusOnError)
 
     val nimbusFileManager = NimbusFileManager(
         ioDispatcher = ioDispatcher,
@@ -94,17 +88,17 @@ internal fun init(
 
     val downloadProgressCallback: DownloadProgressCallback = DownloadProgressService(
         downloadProgressScope = downloadScope,
-        downloadTaskRepository = downloadTaskRepository,
-        domainEventBus = domainEventBus
+        downloadTaskRepository = downloadTaskRepository
     )
 
     val downloadRepository: DownloadRepository = OkioDownloadAdapter(
         concurrencyLimit = concurrencyLimit,
         downloadScope = downloadScope,
-        ioDispatcher = ioDispatcher,
         downloadProgressCallback = downloadProgressCallback,
         fileManager = nimbusFileManager,
-        downloadManager = nimbusDownloadManager
+        downloadManager = nimbusDownloadManager,
+        bufferSize = downloadBufferSize,
+        notifyEveryBytes = downloadNotifyEveryBytes
     )
 
     val loadDownloadTasksCommand: LoadDownloadTasksCommand = LoadDownloadTasksUseCase(
@@ -126,13 +120,11 @@ internal fun init(
     )
 
     val enqueueDownloadCommand: EnqueueDownloadCommand = EnqueueDownloadUseCase(
-        domainEventBus = domainEventBus,
         getFileSizeQuery = getFileSizeQuery,
         downloadTaskRepository = downloadTaskRepository
     )
 
     val startDownloadCommand: StartDownloadCommand = StartDownloadUseCase(
-        domainEventBus = domainEventBus,
         downloadRepository = downloadRepository,
         downloadTaskRepository = downloadTaskRepository
     )
@@ -142,19 +134,16 @@ internal fun init(
     )
 
     val pauseDownloadCommand: PauseDownloadCommand = PauseDownloadUseCase(
-        domainEventBus = domainEventBus,
         downloadRepository = downloadRepository,
         downloadTaskRepository = downloadTaskRepository
     )
 
     val resumeDownloadCommand: ResumeDownloadCommand = ResumeDownloadUseCase(
-        domainEventBus = domainEventBus,
         downloadRepository = downloadRepository,
         downloadTaskRepository = downloadTaskRepository
     )
 
     val cancelDownloadCommand: CancelDownloadCommand = CancelDownloadUseCase(
-        domainEventBus = domainEventBus,
         downloadRepository = downloadRepository,
         downloadTaskRepository = downloadTaskRepository
     )
