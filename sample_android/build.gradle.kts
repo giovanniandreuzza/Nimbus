@@ -70,6 +70,14 @@ dependencies {
     implementation(libs.okhttp3)
     implementation(libs.okhttp3.logging.interceptor)
 
+    // Ktor
+    implementation(libs.ktor)
+    implementation(libs.ktor.okhttp)
+    implementation(libs.ktor.cio)
+    implementation(libs.ktor.logging)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.serialization)
+
     // Retrofit2
     implementation(libs.retrofit2)
     implementation(libs.retrofit2.serialization)

@@ -2,9 +2,9 @@ package io.github.giovanniandreuzza.nimbus.frameworks.downloadmanager.ports
 
 import io.github.giovanniandreuzza.explicitarchitecture.frameworks.IsFramework
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadStream
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
 import io.github.giovanniandreuzza.nimbus.frameworks.downloadmanager.errors.GetFileSizeFailed
+import okio.Source
 
 /**
  * Nimbus Download Repository.
@@ -32,5 +32,5 @@ public interface NimbusDownloadRepository {
     public suspend fun downloadFile(
         fileUrl: String,
         offset: Long?
-    ): KResult<DownloadStream, StartDownloadErrors.StartDownloadFailed>
+    ): KResult<Source, StartDownloadErrors.StartDownloadFailed>
 }
