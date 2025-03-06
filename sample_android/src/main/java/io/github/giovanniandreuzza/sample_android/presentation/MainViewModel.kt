@@ -6,7 +6,6 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.asSucce
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isSuccess
 import io.github.giovanniandreuzza.nimbus.Nimbus
-import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.ObserveDownloadRequest
@@ -14,6 +13,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.dtos.PauseDownloadReq
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.ResumeDownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.StartDownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.io.File
@@ -29,7 +29,7 @@ class MainViewModel(
     private val nimbus: Nimbus
 ) : ViewModel() {
 
-    private val url = "https://storage.googleapis.com/screens_contents/test/video_portrait_long.mp4"
+    private val url = "https://uiuiui.storage.clo.ru/files/workshop-35/35_783436035.mp4"
     private val name1 = "video1.mp4"
     private val name2 = "video2.mp4"
     private val name3 = "video3.mp4"
@@ -269,7 +269,7 @@ class MainViewModel(
                         }
 
                         is DownloadState.Downloading -> {
-                            Timber.d("Downloading 1: ${downloadState.progress}")
+//                            Timber.d("Downloading 1: ${downloadState.progress}")
                         }
 
                         is DownloadState.Paused -> {

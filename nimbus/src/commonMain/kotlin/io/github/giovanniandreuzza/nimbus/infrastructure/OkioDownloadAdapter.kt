@@ -72,6 +72,7 @@ internal class OkioDownloadAdapter(
                     throwable.message ?: "Unknown error"
                 )
             )
+            downloadJobs.remove(downloadId)
         }
 
         downloadJobs[downloadId] = downloadScope.launch(coroutineHandler) {
@@ -100,22 +101,22 @@ internal class OkioDownloadAdapter(
                     return@launch
                 }
 
-                val downloadStreamResult = downloadManager.downloadFile(
+                val sourceResult = downloadManager.downloadFile(
                     fileUrl = downloadTask.fileUrl,
                     offset = bytesAlreadyDownloaded
                 )
 
-                if (downloadStreamResult.isFailure()) {
+                if (sourceResult.isFailure()) {
                     downloadProgressCallback.onDownloadFailed(
                         id = downloadId,
-                        error = downloadStreamResult.error
+                        error = sourceResult.error
                     )
                     return@launch
                 }
 
-                val source = downloadStreamResult.value.source
-                val contentLength = downloadStreamResult.value.contentLength
-                var progressBytes = downloadStreamResult.value.downloadedBytes
+                val source = sourceResult.value
+                val contentLength = downloadTask.fileSize
+                var progressBytes = bytesAlreadyDownloaded
 
                 sinkResult.value.buffer().use { output ->
                     source.buffer().use { input ->
@@ -151,9 +152,9 @@ internal class OkioDownloadAdapter(
                 }
 
                 downloadProgressCallback.onDownloadFinished(downloadId)
+                downloadJobs.remove(downloadId)
             }
         }
-
         return true
     }
 

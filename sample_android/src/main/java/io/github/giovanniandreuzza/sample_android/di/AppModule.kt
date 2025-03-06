@@ -3,9 +3,10 @@ package io.github.giovanniandreuzza.sample_android.di
 import io.github.giovanniandreuzza.nimbus.Nimbus
 import io.github.giovanniandreuzza.nimbus.frameworks.downloadmanager.ports.NimbusDownloadRepository
 import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.ports.NimbusFileRepository
+import io.github.giovanniandreuzza.sample_android.framework.ktor.KtorClient
 import io.github.giovanniandreuzza.sample_android.framework.retrofit.AppEndpoint
 import io.github.giovanniandreuzza.sample_android.infrastructure.LocalNimbusFileRepository
-import io.github.giovanniandreuzza.sample_android.infrastructure.RemoteDownloadRepository
+import io.github.giovanniandreuzza.sample_android.infrastructure.RetrofitDownloadRepository
 import io.github.giovanniandreuzza.sample_android.presentation.MainViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +38,13 @@ val appModule = module {
         Retrofit.Builder().baseUrl("https://www.google.com").build().create(AppEndpoint::class.java)
     }
 
-    factory<NimbusDownloadRepository> { RemoteDownloadRepository(appEndpoint = get()) }
+    single<KtorClient> {
+        KtorClient()
+    }
+
+    factory<NimbusDownloadRepository> { RetrofitDownloadRepository(appEndpoint = get()) }
+
+//    factory<NimbusDownloadRepository> { KtorDownloadRepository(ktorClient = get()) }
 
     factory<NimbusFileRepository> { LocalNimbusFileRepository() }
 
@@ -53,6 +60,8 @@ val appModule = module {
             .withNimbusDownloadRepository(get())
             .withNimbusFileRepository(get())
             .withDownloadManagerPath(folder.path + File.separator + "download_manager")
+            .withDownloadBufferSize(8 * 1024L)
+            .withDownloadNotifyEveryBytes(8 * 64 * 1024L)
             .build()
     }
 
