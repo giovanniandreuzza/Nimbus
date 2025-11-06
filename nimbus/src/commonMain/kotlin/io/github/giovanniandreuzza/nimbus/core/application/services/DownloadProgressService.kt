@@ -1,10 +1,10 @@
 package io.github.giovanniandreuzza.nimbus.core.application.services
 
 import io.github.giovanniandreuzza.explicitarchitecture.core.application.services.IsApplicationService
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO.Companion.toDomain
-import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.getOr
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onSuccess
+import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
+import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import kotlinx.coroutines.CoroutineScope
@@ -24,53 +24,31 @@ internal class DownloadProgressService(
 ) : DownloadProgressCallback {
 
     override suspend fun onDownloadProgress(id: String, progress: Double) {
-        val downloadTaskResult = downloadTaskRepository.getDownloadTask(id)
-
-        if (downloadTaskResult.isFailure()) {
+        val downloadId = DownloadId.create(id)
+        val downloadTask = downloadTaskRepository.getDownloadTask(downloadId).getOr {
             return
         }
-
-        val downloadTask = downloadTaskResult.value.toDomain()
-
-        downloadTask.updateProgress(progress)
-
-        downloadTaskRepository.saveDownloadProgress(
-            DownloadTaskDTO.fromDomain(downloadTask)
-        )
+        downloadTask.updateProgress(progress).onSuccess {
+            downloadTaskRepository.updateDownloadProgress(downloadTask)
+        }
     }
 
-    override fun onDownloadFailed(id: String, error: StartDownloadErrors) {
+    override fun onDownloadFailed(id: String, error: DownloadError) {
         downloadProgressScope.launch {
-            val downloadTaskResult = downloadTaskRepository.getDownloadTask(id)
-
-            if (downloadTaskResult.isFailure()) {
+            val downloadTask = downloadTaskRepository.getDownloadTask(DownloadId.create(id)).getOr {
                 return@launch
             }
-
-            val downloadTask = downloadTaskResult.value.toDomain()
-
-            downloadTask.fail(error.code, error.message)
-
-            downloadTaskRepository.saveDownloadTask(
-                DownloadTaskDTO.fromDomain(downloadTask)
-            )
+            downloadTask.fail(error)
+            downloadTaskRepository.saveDownloadTask(downloadTask)
         }
     }
 
     override suspend fun onDownloadFinished(id: String) {
-        val downloadTaskResult = downloadTaskRepository.getDownloadTask(id)
-
-        if (downloadTaskResult.isFailure()) {
+        val downloadTask = downloadTaskRepository.getDownloadTask(DownloadId.create(id)).getOr {
             return
         }
-
-        val downloadTask = downloadTaskResult.value.toDomain()
-
         downloadTask.finish()
-
-        downloadTaskRepository.saveDownloadTask(
-            DownloadTaskDTO.fromDomain(downloadTask)
-        )
+        downloadTaskRepository.saveDownloadTask(downloadTask)
     }
 
 }

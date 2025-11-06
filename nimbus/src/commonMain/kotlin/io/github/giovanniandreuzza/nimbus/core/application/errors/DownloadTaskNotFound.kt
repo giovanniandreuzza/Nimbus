@@ -10,10 +10,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
  * @author Giovanni Andreuzza
  */
 @IsApplicationError
-public data class DownloadTaskNotFound(
-    val error: String? = null
-) : KError(
+public data object DownloadTaskNotFound : KError(
     code = "download_task_not_found",
     message = "Download Task Not Found.",
-    cause = error
 )

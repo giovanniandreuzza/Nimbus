@@ -2,6 +2,7 @@ package io.github.giovanniandreuzza.nimbus.core.domain.entities
 
 import io.github.giovanniandreuzza.explicitarchitecture.core.domain.aggregates.AggregateRoot
 import io.github.giovanniandreuzza.explicitarchitecture.core.domain.aggregates.IsAggregateRoot
+import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
@@ -24,6 +25,7 @@ import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
  */
 @IsAggregateRoot
 internal class DownloadTask private constructor(
+    id: DownloadId,
     val fileUrl: FileUrl,
     val filePath: FilePath,
     val fileName: FileName,
@@ -31,34 +33,48 @@ internal class DownloadTask private constructor(
     private var _state: DownloadState,
     version: Int
 ) : AggregateRoot<DownloadId, DownloadTaskEvents>(
-    id = DownloadId.create(fileUrl.value, filePath.value, fileName.value),
+    id = id,
     version = version
 ) {
 
     val state: DownloadState
         get() = _state
 
-    init {
-        if (_state is DownloadState.Enqueued && version == 0) {
-            enqueueEvent(DownloadTaskEvents.DownloadEnqueuedEvent(entityId, version))
-        }
+    private fun create() {
+        enqueueEvent(DownloadTaskEvents.DownloadEnqueuedEvent(entityId, version))
     }
 
     fun start(): KResult<Unit, StartDownloadErrors> {
         if (state !is DownloadState.Enqueued) {
             return when (state) {
+                is DownloadState.Enqueued -> throw IllegalStateException("Unreachable state")
+
                 is DownloadState.Downloading -> Failure(
                     StartDownloadErrors.DownloadAlreadyStarted(
                         entityId.id.value
                     )
                 )
 
-                else -> Failure(StartDownloadErrors.DownloadIsNotEnqueued(entityId.id.value))
+                is DownloadState.Paused -> Failure(
+                    StartDownloadErrors.DownloadIsPaused(
+                        entityId.id.value
+                    )
+                )
+
+                is DownloadState.Failed -> Failure(
+                    StartDownloadErrors.DownloadAlreadyFailed(
+                        entityId.id.value
+                    )
+                )
+
+                is DownloadState.Finished -> Failure(
+                    StartDownloadErrors.DownloadAlreadyFinished(
+                        entityId.id.value
+                    )
+                )
             }
         }
-
-        val progress = 0.0
-        _state = DownloadState.Downloading(progress)
+        _state = DownloadState.Downloading(0.0)
         enqueueEvent(DownloadTaskEvents.DownloadStartedEvent(entityId, version))
         return Success(Unit)
     }
@@ -129,14 +145,13 @@ internal class DownloadTask private constructor(
         return Success(Unit)
     }
 
-    fun fail(errorCode: String, errorMessage: String) {
-        _state = DownloadState.Failed(errorCode, errorMessage)
+    fun fail(error: KError) {
+        _state = DownloadState.Failed(error)
         enqueueEvent(
             DownloadTaskEvents.DownloadFailedEvent(
                 entityId,
                 version,
-                errorCode,
-                errorMessage
+                error
             )
         )
     }
@@ -151,13 +166,50 @@ internal class DownloadTask private constructor(
     }
 
     override fun toString(): String {
-        return "DownloadTask(entityId=$entityId, version=$version, fileUrl=$fileUrl, filePath=$filePath, fileName=$fileName, fileSize=$fileSize, state=$_state)"
+        return "DownloadTask(id=${entityId.id}, version=$version, fileUrl=$fileUrl, filePath=$filePath, fileName=$fileName, fileSize=$fileSize, state=$_state)"
     }
 
     companion object {
         /**
          * Create a new download task.
          *
+         * @param id Download ID.
+         * @param fileUrl URL to download.
+         * @param filePath Path to save the file.
+         * @param fileName file name.
+         * @param fileSize file size.
+         * @return [DownloadTask] aggregate root.
+         */
+        fun create(
+            id: String,
+            fileUrl: String,
+            filePath: String,
+            fileName: String,
+            fileSize: Long
+        ): DownloadTask {
+            val id = DownloadId.create(id)
+            val fileUrl = FileUrl.create(fileUrl)
+            val filePath = FilePath.create(filePath)
+            val fileName = FileName.create(fileName)
+            val fileSize = FileSize.create(fileSize)
+
+            return DownloadTask(
+                id = id,
+                fileUrl = fileUrl,
+                filePath = filePath,
+                fileName = fileName,
+                fileSize = fileSize,
+                _state = DownloadState.Enqueued,
+                version = 0
+            ).apply {
+                create()
+            }
+        }
+
+        /**
+         * Create a new download task.
+         *
+         * @param id Download ID.
          * @param fileUrl URL to download.
          * @param filePath Path to save the file.
          * @param fileName file name.
@@ -166,24 +218,27 @@ internal class DownloadTask private constructor(
          * @param version aggregate version.
          * @return [DownloadTask] aggregate root.
          */
-        fun create(
+        fun restore(
+            id: String,
             fileUrl: String,
             filePath: String,
             fileName: String,
             fileSize: Long,
-            state: DownloadState = DownloadState.Enqueued,
-            version: Int = 0
+            state: DownloadState,
+            version: Int
         ): DownloadTask {
-            val fileUrlVO = FileUrl.create(fileUrl)
-            val filePathVO = FilePath.create(filePath)
-            val fileNameVO = FileName.create(fileName)
-            val fileSizeVO = FileSize.create(fileSize)
+            val id = DownloadId.create(id)
+            val fileUrl = FileUrl.create(fileUrl)
+            val filePath = FilePath.create(filePath)
+            val fileName = FileName.create(fileName)
+            val fileSize = FileSize.create(fileSize)
 
             return DownloadTask(
-                fileUrl = fileUrlVO,
-                filePath = filePathVO,
-                fileName = fileNameVO,
-                fileSize = fileSizeVO,
+                id = id,
+                fileUrl = fileUrl,
+                filePath = filePath,
+                fileName = fileName,
+                fileSize = fileSize,
                 _state = state,
                 version = version
             )

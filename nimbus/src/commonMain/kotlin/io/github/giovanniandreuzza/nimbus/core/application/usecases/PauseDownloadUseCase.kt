@@ -4,59 +4,48 @@ import io.github.giovanniandreuzza.explicitarchitecture.core.application.usecase
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO.Companion.toDomain
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.getOr
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.PauseDownloadRequest
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.PauseDownloadResponse
 import io.github.giovanniandreuzza.nimbus.core.commands.PauseDownloadCommand
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.PauseDownloadErrors
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
-import io.github.giovanniandreuzza.nimbus.core.ports.DownloadRepository
+import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
+import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
 
 /**
  * Pause download use case.
  *
- * @param downloadRepository The download repository.
+ * @param idProviderPort The id provider port.
+ * @param downloadPort The download repository.
  * @param downloadTaskRepository The download task repository.
  * @author Giovanni Andreuzza
  */
 @IsUseCase
 internal class PauseDownloadUseCase(
-    private val downloadRepository: DownloadRepository,
+    private val idProviderPort: IdProviderPort,
+    private val downloadPort: DownloadPort,
     private val downloadTaskRepository: DownloadTaskRepository
 ) : PauseDownloadCommand {
 
-    override suspend fun execute(
-        request: PauseDownloadRequest
-    ): KResult<PauseDownloadResponse, PauseDownloadErrors> {
-        val downloadId = DownloadId.create(request.downloadId)
+    override suspend fun invoke(request: PauseDownloadRequest): KResult<Unit, PauseDownloadErrors> {
+        val id = idProviderPort.generateUniqueId(request.fileUrl)
 
-        val downloadTaskResult = downloadTaskRepository.getDownloadTask(downloadId.value)
-
-        if (downloadTaskResult.isFailure()) {
-            return Failure(PauseDownloadErrors.DownloadTaskNotFound(downloadId.value))
+        val downloadTask = downloadTaskRepository.getDownloadTask(DownloadId.create(id)).getOr {
+            return Failure(PauseDownloadErrors.DownloadTaskNotFound(id))
         }
 
-        val downloadTask = downloadTaskResult.value.toDomain()
-
-        downloadRepository.stopDownload(downloadId.value)
-
-        val isPaused = downloadTask.pause()
-
-        if (isPaused.isFailure()) {
-            return Failure(isPaused.error)
+        downloadTask.pause().onFailure {
+            return Failure(it)
         }
 
-        val result = downloadTaskRepository.saveDownloadTask(
-            DownloadTaskDTO.fromDomain(downloadTask)
-        )
+        downloadPort.stopDownload(id)
 
-        if (result.isFailure()) {
-            return Failure(PauseDownloadErrors.PauseDownloadFailed(result.error.message))
+        downloadTaskRepository.saveDownloadTask(downloadTask).onFailure {
+            return Failure(PauseDownloadErrors.PauseDownloadFailed(it))
         }
 
-        return Success(PauseDownloadResponse())
+        return Success(Unit)
     }
 }

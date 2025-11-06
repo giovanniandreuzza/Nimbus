@@ -10,7 +10,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.core.domain.valueobjects
  * @author Giovanni Andreuzza
  */
 @IsValueObject
-internal class FileSize private constructor(val value: Long) : ValueObject() {
+internal class FileSize private constructor(value: Long) : ValueObject<Long>(value) {
 
     companion object {
         /**

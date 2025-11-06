@@ -1,3 +1,6 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -6,12 +9,12 @@ plugins {
 
 android {
     namespace = "io.github.giovanniandreuzza.sample_android"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "io.github.giovanniandreuzza.sample_android"
         minSdk = 21
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
 
@@ -36,8 +39,14 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_1_8.toString()
+    tasks.withType<KotlinJvmCompile>().configureEach {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_1_8)
+            freeCompilerArgs.addAll(
+                "-opt-in=kotlin.RequiresOptIn",
+                "-Xjvm-default=all-compatibility"
+            )
+        }
     }
 
     buildFeatures {
@@ -46,7 +55,8 @@ android {
 }
 
 dependencies {
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+    // Desugaring
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     // AndroidX
     implementation(libs.core.ktx)
@@ -69,6 +79,9 @@ dependencies {
     // OkHttp3
     implementation(libs.okhttp3)
     implementation(libs.okhttp3.logging.interceptor)
+
+    // LeakCanary
+    debugImplementation(libs.leakcanary)
 
     // Ktor
     implementation(libs.ktor)

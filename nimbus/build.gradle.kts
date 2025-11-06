@@ -1,4 +1,3 @@
-import com.vanniktech.maven.publish.SonatypeHost
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.io.FileNotFoundException
 import java.util.Properties
@@ -37,28 +36,27 @@ kotlin {
         }
     }
 
-    linuxX64()
-
     sourceSets {
         commonMain.dependencies {
-            api(libs.kotlinx.coroutines.core)
-            api(libs.kotlinx.serialization.protobuf)
-            api(libs.kotlinx.datetime)
-            api(libs.okio)
+            implementation(libs.kotlinx.serialization.protobuf)
+            implementation(libs.kotlinx.io)
+            implementation(libs.ktor)
+            implementation(libs.ktor.cio)
             api(libs.explicitarchitecture)
+            implementation(libs.hash.sha2)
         }
     }
 }
 
 android {
     namespace = "io.github.giovanniandreuzza.nimbus"
-    compileSdk = libs.versions.android.compileSdk.get().toInt()
+    compileSdk = 36
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
     defaultConfig {
-        minSdk = libs.versions.android.minSdk.get().toInt()
+        minSdk = 21
     }
 }
 
@@ -127,7 +125,7 @@ mavenPublishing {
     }
 
     // Configure publishing to Maven Central
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    publishToMavenCentral()
 
     // Enable GPG signing for all publications
     signAllPublications()

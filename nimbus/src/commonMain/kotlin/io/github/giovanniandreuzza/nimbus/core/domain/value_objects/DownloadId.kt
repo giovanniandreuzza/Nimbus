@@ -10,7 +10,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.core.domain.valueobjects
  * @author Giovanni Andreuzza
  */
 @IsValueObject
-internal class DownloadId private constructor(val value: String) : ValueObject() {
+internal class DownloadId private constructor(value: String) : ValueObject<String>(value) {
 
     companion object {
         /**
@@ -21,19 +21,6 @@ internal class DownloadId private constructor(val value: String) : ValueObject()
          */
         fun create(id: String): DownloadId {
             return DownloadId(id)
-        }
-
-        /**
-         * Create a new Download ID.
-         *
-         * @param fileUrl File URL.
-         * @param filePath File path.
-         * @param fileName File name.
-         * @return [DownloadId] value object.
-         */
-        fun create(fileUrl: String, filePath: String, fileName: String): DownloadId {
-            val idToHash = "$fileUrl|$filePath|$fileName"
-            return DownloadId(idToHash.hashCode().toUInt().toString(16))
         }
     }
 

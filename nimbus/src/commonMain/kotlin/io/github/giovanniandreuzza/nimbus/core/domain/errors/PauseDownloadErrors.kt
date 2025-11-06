@@ -8,12 +8,14 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
  *
  * @param code Error code.
  * @param message Error message.
+ * @param cause Error cause.
  * @author Giovanni Andreuzza
  */
 @IsDomainError
 public sealed class PauseDownloadErrors(
     override val code: String,
-    override val message: String
+    override val message: String,
+    override val cause: KError? = null
 ) : KError(code, message) {
 
     /**
@@ -62,9 +64,10 @@ public sealed class PauseDownloadErrors(
      */
     @IsDomainError
     public data class PauseDownloadFailed(
-        override val cause: String
+        override val cause: KError
     ) : PauseDownloadErrors(
         code = "pause_download_failed",
-        message = "Pause Download Failed."
+        message = "Pause Download Failed.",
+        cause = cause
     )
 }

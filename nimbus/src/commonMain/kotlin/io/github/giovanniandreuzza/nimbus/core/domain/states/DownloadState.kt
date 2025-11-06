@@ -1,6 +1,7 @@
 package io.github.giovanniandreuzza.nimbus.core.domain.states
 
 import io.github.giovanniandreuzza.explicitarchitecture.core.domain.IsDomain
+import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 
 /**
  * Download State.
@@ -32,10 +33,9 @@ public sealed class DownloadState {
     /**
      * Failed state.
      *
-     * @param errorCode Error code.
-     * @param errorMessage Error message.
+     * @param error The Error.
      */
-    public data class Failed(val errorCode: String, val errorMessage: String) : DownloadState()
+    public data class Failed(val error: KError) : DownloadState()
 
     /**
      * Finished state.

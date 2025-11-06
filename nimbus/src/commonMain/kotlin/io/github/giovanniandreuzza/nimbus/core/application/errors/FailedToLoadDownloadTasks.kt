@@ -10,7 +10,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
  * @author Giovanni Andreuzza
  */
 @IsApplicationError
-public data class FailedToLoadDownloadTasks(val error: String) : KError(
+public data class FailedToLoadDownloadTasks(val error: KError) : KError(
     code = "failed_to_load_download_tasks",
     message = "Failed to load download tasks",
     cause = error

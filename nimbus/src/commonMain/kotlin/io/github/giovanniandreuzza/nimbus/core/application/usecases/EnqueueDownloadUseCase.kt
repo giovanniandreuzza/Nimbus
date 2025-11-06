@@ -4,103 +4,92 @@ import io.github.giovanniandreuzza.explicitarchitecture.core.application.usecase
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isSuccess
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.getOr
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onSuccess
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO.Companion.toDomain
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.EnqueueDownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetFileSizeRequest
+import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
 import io.github.giovanniandreuzza.nimbus.core.commands.EnqueueDownloadCommand
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErrors
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErrors.ConnectionError
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErrors.DownloadAlreadyCompleted
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErrors.DownloadAlreadyEnqueued
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErrors.DownloadAlreadyStarted
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErrors.DownloadFailed
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErrors.DownloadIsPaused
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErrors.PermanentError
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErrors.ResourceNotFound
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErrors.TemporaryError
+import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErrors.UnexpectedError
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
+import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
 import io.github.giovanniandreuzza.nimbus.core.queries.GetFileSizeQuery
 
 /**
  * Enqueue Download Use Case.
  *
+ * @param idProviderPort The id provider port.
  * @param getFileSizeQuery The get file size query.
  * @param downloadTaskRepository The download task repository.
  * @author Giovanni Andreuzza
  */
 @IsUseCase
 internal class EnqueueDownloadUseCase(
+    private val idProviderPort: IdProviderPort,
     private val getFileSizeQuery: GetFileSizeQuery,
     private val downloadTaskRepository: DownloadTaskRepository
 ) : EnqueueDownloadCommand {
 
-    override suspend fun execute(
-        request: DownloadRequest
+    override suspend fun invoke(
+        request: EnqueueDownloadRequest
     ): KResult<DownloadTaskDTO, EnqueueDownloadErrors> {
-        val downloadId = DownloadId.create(
-            fileUrl = request.fileUrl,
-            filePath = request.filePath,
-            fileName = request.fileName
-        )
+        val id = idProviderPort.generateUniqueId(request.fileUrl)
 
-        val downloadTaskResult = downloadTaskRepository.getDownloadTask(downloadId.value)
+        downloadTaskRepository.getDownloadTask(DownloadId.create(id)).onSuccess {
+            when (val state = it.state) {
+                DownloadState.Enqueued -> Failure(DownloadAlreadyEnqueued)
 
-        if (downloadTaskResult.isSuccess()) {
-            when (val state = downloadTaskResult.value.toDomain().state) {
-                DownloadState.Enqueued -> Failure(
-                    EnqueueDownloadErrors.DownloadAlreadyEnqueued(
-                        request
-                    )
-                )
+                is DownloadState.Downloading -> Failure(DownloadAlreadyStarted)
 
-                is DownloadState.Downloading -> Failure(
-                    EnqueueDownloadErrors.DownloadAlreadyStarted(
-                        request
-                    )
-                )
+                is DownloadState.Paused -> Failure(DownloadIsPaused)
 
-                is DownloadState.Failed -> Failure(
-                    EnqueueDownloadErrors.DownloadFailed(
-                        state.errorMessage
-                    )
-                )
+                is DownloadState.Failed -> Failure(DownloadFailed(state.error))
 
-                is DownloadState.Paused -> Failure(
-                    EnqueueDownloadErrors.DownloadIsPaused(
-                        request
-                    )
-                )
-
-                DownloadState.Finished -> Failure(
-                    EnqueueDownloadErrors.DownloadAlreadyCompleted(
-                        request
-                    )
-                )
+                DownloadState.Finished -> Failure(DownloadAlreadyCompleted)
             }
         }
 
-        val getFileSizeRequest = GetFileSizeRequest(
-            fileUrl = request.fileUrl
-        )
+        val getFileSizeRequest = GetFileSizeRequest(fileUrl = request.fileUrl)
 
-        val fileSizeResult = getFileSizeQuery.execute(getFileSizeRequest)
-
-        if (fileSizeResult.isFailure()) {
-            return Failure(EnqueueDownloadErrors.GetFileSizeFailed(fileSizeResult.error.message))
+        val fileSizeResponse = getFileSizeQuery(getFileSizeRequest).getOr {
+            return Failure(
+                when (it) {
+                    is GetFileSizeError.TemporaryError -> TemporaryError(it.cause)
+                    GetFileSizeError.ResourceNotFound -> ResourceNotFound
+                    is GetFileSizeError.PermanentError -> PermanentError(it.cause)
+                    is GetFileSizeError.UnexpectedError -> UnexpectedError(it.cause)
+                }
+            )
         }
 
         val downloadTask = DownloadTask.create(
+            id = id,
             fileUrl = request.fileUrl,
             filePath = request.filePath,
             fileName = request.fileName,
-            fileSize = fileSizeResult.value.fileSize
+            fileSize = fileSizeResponse.fileSize
         )
 
-        val downloadTaskDTO = DownloadTaskDTO.fromDomain(downloadTask)
-
-        val result = downloadTaskRepository.saveDownloadTask(downloadTaskDTO)
-
-        if (result.isFailure()) {
-            return Failure(EnqueueDownloadErrors.DownloadFailed(result.error.message))
+        downloadTaskRepository.saveDownloadTask(downloadTask).onFailure {
+            return Failure(DownloadFailed(it))
         }
 
+        val downloadTaskDTO = DownloadTaskDTO.fromDomain(downloadTask)
         return Success(downloadTaskDTO)
     }
 }
