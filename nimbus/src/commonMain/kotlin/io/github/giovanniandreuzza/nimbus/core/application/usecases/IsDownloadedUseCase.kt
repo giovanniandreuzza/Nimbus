@@ -27,6 +27,6 @@ internal class IsDownloadedUseCase(
         val downloadTask = downloadTaskRepository.getDownloadTask(DownloadId.create(id)).getOr {
             return false
         }
-        return downloadTask == DownloadState.Finished
+        return downloadTask.state is DownloadState.Finished
     }
 }
