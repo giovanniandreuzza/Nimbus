@@ -2,58 +2,47 @@ package io.github.giovanniandreuzza.nimbus.core.domain.errors
 
 import io.github.giovanniandreuzza.explicitarchitecture.core.domain.errors.IsDomainError
 import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
 
 /**
  * Enqueue Download Errors.
  *
  * @param code Error code.
  * @param message Error message.
+ * @param cause Error cause.
  * @author Giovanni Andreuzza
  */
 @IsDomainError
 public sealed class EnqueueDownloadErrors(
     override val code: String,
-    override val message: String
-) : KError(code, message) {
+    override val message: String,
+    override val cause: KError? = null
+) : KError(code, message, cause) {
 
     /**
      * Download Already Enqueued.
-     *
-     * @param downloadRequest The download request.
      */
     @IsDomainError
-    public data class DownloadAlreadyEnqueued(
-        val downloadRequest: DownloadRequest
-    ) : EnqueueDownloadErrors(
+    public data object DownloadAlreadyEnqueued : EnqueueDownloadErrors(
         code = "download_already_enqueued",
-        message = "Download Already Enqueued. Download Request: $downloadRequest"
+        message = "Download Already Enqueued."
     )
 
     /**
      * Download Already Started.
-     *
-     * @param downloadRequest The download request.
      */
     @IsDomainError
-    public data class DownloadAlreadyStarted(
-        val downloadRequest: DownloadRequest
-    ) : EnqueueDownloadErrors(
+    public data object DownloadAlreadyStarted : EnqueueDownloadErrors(
         code = "download_already_started",
-        message = "Download Already Started. Download Request: $downloadRequest"
+        message = "Download Already Started."
     )
 
     /**
      * Download Is Paused.
-     *
-     * @param downloadRequest The download request.
      */
     @IsDomainError
-    public data class DownloadIsPaused(
-        val downloadRequest: DownloadRequest
-    ) : EnqueueDownloadErrors(
+    public data object DownloadIsPaused : EnqueueDownloadErrors(
         code = "download_is_paused",
-        message = "Download Is Paused. Download Request: $downloadRequest"
+        message = "Download Is Paused."
     )
 
     /**
@@ -63,33 +52,86 @@ public sealed class EnqueueDownloadErrors(
      */
     @IsDomainError
     public data class DownloadFailed(
-        override val cause: String
+        override val cause: KError
     ) : EnqueueDownloadErrors(
         code = "download_failed",
-        message = "Download Failed."
+        message = "Download Failed.",
+        cause = cause
     )
 
     /**
      * Download Already Completed.
-     *
-     * @param downloadRequest The download request.
      */
     @IsDomainError
-    public data class DownloadAlreadyCompleted(
-        val downloadRequest: DownloadRequest
-    ) : EnqueueDownloadErrors(
+    public data object DownloadAlreadyCompleted : EnqueueDownloadErrors(
         code = "download_already_completed",
-        message = "Download Already Completed. Download Request: $downloadRequest"
+        message = "Download Already Completed."
     )
 
     /**
-     * Get File Size Failed.
+     * Connection Error.
      *
      * @param cause The cause.
      */
     @IsDomainError
-    public data class GetFileSizeFailed(override val cause: String) : EnqueueDownloadErrors(
-        code = "get_file_size_failed",
-        message = "Get File Size Failed."
+    public data class ConnectionError(
+        override val cause: KError? = null
+    ) : EnqueueDownloadErrors(
+        code = "connection_error",
+        message = "Connection Error.",
+        cause = cause
+    )
+
+    /**
+     * Resource Not Found.
+     *
+     * @param cause The cause.
+     */
+    @IsDomainError
+    public data object ResourceNotFound : EnqueueDownloadErrors(
+        code = "resource_not_found",
+        message = "Resource Not Found."
+    )
+
+    /**
+     * Temporary Error.
+     *
+     * @param cause The cause.
+     */
+    @IsDomainError
+    public data class TemporaryError(
+        override val cause: KError? = null
+    ) : EnqueueDownloadErrors(
+        code = "temporary_error",
+        message = "Temporary Error.",
+        cause = cause
+    )
+
+    /**
+     * Permanent Error.
+     *
+     * @param cause The cause.
+     */
+    @IsDomainError
+    public data class PermanentError(
+        override val cause: KError? = null
+    ) : EnqueueDownloadErrors(
+        code = "permanent_error",
+        message = "Permanent Error.",
+        cause = cause
+    )
+
+    /**
+     * Unexpected Error.
+     *
+     * @param cause The cause.
+     */
+    @IsDomainError
+    public data class UnexpectedError(
+        override val cause: KError? = null
+    ) : EnqueueDownloadErrors(
+        code = "unexpected_error",
+        message = "An unexpected error occurred.",
+        cause = cause
     )
 }

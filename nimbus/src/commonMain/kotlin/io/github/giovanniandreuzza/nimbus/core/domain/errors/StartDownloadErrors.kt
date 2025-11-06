@@ -8,13 +8,15 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
  *
  * @param code Error code.
  * @param message Error message.
+ * @param cause Error cause.
  * @author Giovanni Andreuzza
  */
 @IsDomainError
 public sealed class StartDownloadErrors(
     override val code: String,
-    override val message: String
-) : KError(code, message) {
+    override val message: String,
+    override val cause: KError? = null
+) : KError(code, message, cause) {
 
     /**
      * Download Task Not Found.
@@ -56,15 +58,108 @@ public sealed class StartDownloadErrors(
     )
 
     /**
+     * Download Is Paused.
+     *
+     * @param downloadId The download ID.
+     */
+    @IsDomainError
+    public data class DownloadIsPaused(
+        val downloadId: String
+    ) : StartDownloadErrors(
+        code = "download_is_paused",
+        message = "Download Is Paused. Download ID: $downloadId"
+    )
+
+    /**
+     * Download Already Failed.
+     *
+     * @param downloadId The download ID.
+     */
+    @IsDomainError
+    public data class DownloadAlreadyFailed(
+        val downloadId: String
+    ) : StartDownloadErrors(
+        code = "download_already_failed",
+        message = "Download Already Failed. Download ID: $downloadId"
+    )
+
+    /**
+     * Download Already Finished.
+     *
+     * @param downloadId The download ID.
+     */
+    @IsDomainError
+    public data class DownloadAlreadyFinished(
+        val downloadId: String
+    ) : StartDownloadErrors(
+        code = "download_already_finished",
+        message = "Download Already Finished. Download ID: $downloadId"
+    )
+
+    /**
      * Download Already Resumed.
      *
      * @param cause The cause.
      */
     @IsDomainError
     public data class StartDownloadFailed(
-        override val cause: String
+        override val cause: KError
     ) : StartDownloadErrors(
         code = "download_failed",
-        message = "Download Failed."
+        message = "Download Failed.",
+        cause = cause
+    )
+
+    /**
+     * Resource Not Found.
+     *
+     * @param cause The cause.
+     */
+    @IsDomainError
+    public data object ResourceNotFound : StartDownloadErrors(
+        code = "resource_not_found",
+        message = "Resource Not Found."
+    )
+
+    /**
+     * Temporary Error.
+     *
+     * @param cause The cause.
+     */
+    @IsDomainError
+    public data class TemporaryError(
+        override val cause: KError? = null
+    ) : StartDownloadErrors(
+        code = "temporary_error",
+        message = "Temporary Error.",
+        cause = cause
+    )
+
+    /**
+     * Permanent Error.
+     *
+     * @param cause The cause.
+     */
+    @IsDomainError
+    public data class PermanentError(
+        override val cause: KError? = null
+    ) : StartDownloadErrors(
+        code = "permanent_error",
+        message = "Permanent Error.",
+        cause = cause
+    )
+
+    /**
+     * Unexpected Error.
+     *
+     * @param cause The cause.
+     */
+    @IsDomainError
+    public data class UnexpectedError(
+        override val cause: KError? = null
+    ) : StartDownloadErrors(
+        code = "unexpected_error",
+        message = "An unexpected error occurred while getting file size.",
+        cause = cause
     )
 }

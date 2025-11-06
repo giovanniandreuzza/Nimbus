@@ -2,10 +2,11 @@ package io.github.giovanniandreuzza.nimbus.core.ports
 
 import io.github.giovanniandreuzza.explicitarchitecture.core.application.ports.IsPort
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
 import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
+import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
+import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -18,16 +19,16 @@ internal interface DownloadTaskRepository {
 
     suspend fun loadDownloadTasks(): KResult<Unit, FailedToLoadDownloadTasks>
 
-    suspend fun getDownloadTask(id: String): KResult<DownloadTaskDTO, DownloadTaskNotFound>
+    suspend fun getDownloadTask(id: DownloadId): KResult<DownloadTask, DownloadTaskNotFound>
 
-    suspend fun getAllDownloadTask(): Map<String, DownloadTaskDTO>
+    suspend fun getAllDownloadTask(): Map<DownloadId, DownloadTask>
 
-    fun observeDownloadState(id: String): KResult<Flow<DownloadState>, DownloadTaskNotFound>
+    fun observeDownloadTask(id: DownloadId): KResult<Flow<DownloadState>, DownloadTaskNotFound>
 
-    suspend fun saveDownloadTask(downloadTask: DownloadTaskDTO): KResult<Unit, DownloadTaskNotFound>
+    suspend fun saveDownloadTask(downloadTask: DownloadTask): KResult<Unit, DownloadTaskNotFound>
 
-    fun saveDownloadProgress(downloadTask: DownloadTaskDTO): KResult<Unit, DownloadTaskNotFound>
+    suspend fun updateDownloadProgress(downloadTask: DownloadTask): KResult<Unit, DownloadTaskNotFound>
 
-    suspend fun deleteDownloadTask(id: String): KResult<Boolean, DownloadTaskNotFound>
+    suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, DownloadTaskNotFound>
 
 }

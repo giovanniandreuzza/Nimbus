@@ -1,9 +1,7 @@
 package io.github.giovanniandreuzza.nimbus.core.application.usecases
 
-import io.github.giovanniandreuzza.explicitarchitecture.core.application.dtos.Empty
 import io.github.giovanniandreuzza.explicitarchitecture.core.application.usecases.IsUseCase
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetAllDownloadsResponse
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.queries.GetAllDownloadsQuery
@@ -19,8 +17,8 @@ internal class GetAllDownloadsUseCase(
     private val downloadTaskRepository: DownloadTaskRepository
 ) : GetAllDownloadsQuery {
 
-    override suspend fun execute(request: Empty): KResult<GetAllDownloadsResponse, Nothing> {
-        return Success(GetAllDownloadsResponse(downloadTaskRepository.getAllDownloadTask()))
+    override suspend fun invoke(request: Unit): GetAllDownloadsResponse {
+        return GetAllDownloadsResponse(DownloadTaskDTO.fromDomains(downloadTaskRepository.getAllDownloadTask()))
     }
 
 }

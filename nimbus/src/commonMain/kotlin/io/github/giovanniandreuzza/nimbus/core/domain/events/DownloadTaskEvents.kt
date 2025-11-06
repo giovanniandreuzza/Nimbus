@@ -3,18 +3,21 @@ package io.github.giovanniandreuzza.nimbus.core.domain.events
 import io.github.giovanniandreuzza.explicitarchitecture.core.domain.entities.EntityId
 import io.github.giovanniandreuzza.explicitarchitecture.core.domain.events.DomainEvent
 import io.github.giovanniandreuzza.explicitarchitecture.core.domain.events.IsDomainEvent
+import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Dates
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
-import kotlinx.datetime.LocalDateTime
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
 /**
  * Download Task Events.
  *
  * @author Giovanni Andreuzza
  */
+@OptIn(ExperimentalTime::class)
 @IsDomainEvent
 internal sealed class DownloadTaskEvents(
-    override val occurredOn: LocalDateTime = Dates.now()
+    override val occurredOn: Instant = Dates.now()
 ) : DomainEvent<DownloadId> {
 
     /**
@@ -107,18 +110,16 @@ internal sealed class DownloadTaskEvents(
      *
      * @param aggregateId The Aggregate Id.
      * @param version The version.
-     * @param errorCode The error code.
-     * @param errorMessage The error message.
+     * @param error The error.
      */
     @IsDomainEvent
     data class DownloadFailedEvent(
         override val aggregateId: EntityId<DownloadId>,
         override val version: Int,
-        val errorCode: String,
-        val errorMessage: String
+        val error: KError
     ) : DownloadTaskEvents() {
         override fun toString(): String {
-            return "DownloadFailedEvent(aggregateId=$aggregateId, version=$version, occurredOn=$occurredOn, errorCode=$errorCode, errorMessage=$errorMessage)"
+            return "DownloadFailedEvent(aggregateId=$aggregateId, version=$version, occurredOn=$occurredOn, error=$error)"
         }
     }
 

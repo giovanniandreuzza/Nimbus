@@ -1,13 +1,14 @@
 package io.github.giovanniandreuzza.nimbus
 
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
-import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
-import io.github.giovanniandreuzza.nimbus.frameworks.downloadmanager.ports.NimbusDownloadRepository
-import io.github.giovanniandreuzza.nimbus.frameworks.filemanager.ports.NimbusFileRepository
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
 import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
 import io.github.giovanniandreuzza.nimbus.di.init
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,16 +24,16 @@ import kotlin.concurrent.Volatile
  * @param downloadScope The download scope.
  * @param ioDispatcher The IO dispatcher.
  * @param concurrencyLimit The concurrency limit.
- * @param nimbusDownloadRepository The nimbus download repository.
- * @param nimbusFileRepository The nimbus file repository.
+ * @param nimbusDownloadPort The nimbus download port.
+ * @param nimbusStoragePort The nimbus storage port.
  * @author Giovanni Andreuzza
  */
 public class Nimbus private constructor(
     downloadScope: CoroutineScope,
     ioDispatcher: CoroutineDispatcher,
     concurrencyLimit: Int,
-    nimbusDownloadRepository: NimbusDownloadRepository,
-    nimbusFileRepository: NimbusFileRepository,
+    nimbusDownloadPort: NimbusDownloadPort?,
+    nimbusStoragePort: NimbusStoragePort?,
     downloadManagerPath: String,
     downloadBufferSize: Long,
     downloadNotifyEveryBytes: Long
@@ -44,8 +45,8 @@ public class Nimbus private constructor(
         downloadScope = downloadScope,
         ioDispatcher = ioDispatcher,
         concurrencyLimit = concurrencyLimit,
-        nimbusDownloadRepository = nimbusDownloadRepository,
-        nimbusFileRepository = nimbusFileRepository,
+        nimbusDownloadPort = nimbusDownloadPort,
+        nimbusStoragePort = nimbusStoragePort,
         downloadManagerPath = downloadManagerPath,
         downloadBufferSize = downloadBufferSize,
         downloadNotifyEveryBytes = downloadNotifyEveryBytes
@@ -59,8 +60,8 @@ public class Nimbus private constructor(
             private var downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             private var ioDispatcher = Dispatchers.IO
             private var concurrencyLimit = 1
-            private var nimbusDownloadRepository: NimbusDownloadRepository? = null
-            private var nimbusFileRepository: NimbusFileRepository? = null
+            private var nimbusDownloadPort: NimbusDownloadPort? = null
+            private var nimbusStoragePort: NimbusStoragePort? = null
             private var downloadManagerPath: String? = null
             private var downloadBufferSize: Long = 8 * 1024L
             private var downloadNotifyEveryBytes: Long = 16 * 32 * 1024L
@@ -74,11 +75,11 @@ public class Nimbus private constructor(
             public fun withConcurrencyLimit(concurrencyLimit: Int): Builder =
                 apply { this.concurrencyLimit = concurrencyLimit }
 
-            public fun withNimbusDownloadRepository(nimbusDownloadRepository: NimbusDownloadRepository): Builder =
-                apply { this.nimbusDownloadRepository = nimbusDownloadRepository }
+            public fun withNimbusDownloadPort(nimbusDownloadPort: NimbusDownloadPort): Builder =
+                apply { this.nimbusDownloadPort = nimbusDownloadPort }
 
-            public fun withNimbusFileRepository(nimbusFileRepository: NimbusFileRepository): Builder =
-                apply { this.nimbusFileRepository = nimbusFileRepository }
+            public fun withNimbusStoragePort(nimbusStoragePort: NimbusStoragePort): Builder =
+                apply { this.nimbusStoragePort = nimbusStoragePort }
 
             public fun withDownloadManagerPath(downloadManagerPath: String): Builder =
                 apply { this.downloadManagerPath = downloadManagerPath }
@@ -90,8 +91,8 @@ public class Nimbus private constructor(
                 apply { this.downloadNotifyEveryBytes = downloadNotifyEveryBytes }
 
             public fun build(): Nimbus {
-                if (nimbusDownloadRepository == null || nimbusFileRepository == null || downloadManagerPath == null) {
-                    throw IllegalStateException("nimbusDownloadRepository, nimbusFileRepository and downloadManagerPath must be provided")
+                if (downloadManagerPath == null) {
+                    throw IllegalStateException("downloadManagerPath must be provided")
                 }
 
                 if (instance == null) {
@@ -99,8 +100,8 @@ public class Nimbus private constructor(
                         downloadScope = downloadScope,
                         ioDispatcher = ioDispatcher,
                         concurrencyLimit = concurrencyLimit,
-                        nimbusDownloadRepository = nimbusDownloadRepository!!,
-                        nimbusFileRepository = nimbusFileRepository!!,
+                        nimbusDownloadPort = nimbusDownloadPort,
+                        nimbusStoragePort = nimbusStoragePort,
                         downloadManagerPath = downloadManagerPath!!,
                         downloadBufferSize = downloadBufferSize,
                         downloadNotifyEveryBytes = downloadNotifyEveryBytes
@@ -117,15 +118,10 @@ public class Nimbus private constructor(
             if (isInitialized) {
                 return@withLock Success(downloadController)
             }
-
-            val result = downloadController.loadDownloadTasks()
-
-            if (result.isFailure()) {
-                return@withLock result
+            downloadController.loadDownloadTasks().onFailure {
+                return@withLock Failure(it)
             }
-
             isInitialized = true
-
             Success(downloadController)
         }
     }

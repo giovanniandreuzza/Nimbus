@@ -2,18 +2,18 @@ package io.github.giovanniandreuzza.sample_android.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.asSuccess
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.getOr
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isSuccess
-import io.github.giovanniandreuzza.nimbus.Nimbus
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onSuccess
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadRequest
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadRequest
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.EnqueueDownloadRequest
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetDownloadTaskRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.ObserveDownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.PauseDownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.ResumeDownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.StartDownloadRequest
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
-import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
+import io.github.giovanniandreuzza.sample_android.framework.nimbus.NimbusSetup
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.io.File
@@ -26,52 +26,22 @@ import kotlin.system.measureTimeMillis
  * @author Giovanni Andreuzza
  */
 class MainViewModel(
-    private val nimbus: Nimbus
+    private val nimbus: NimbusSetup
 ) : ViewModel() {
 
-    private val url = "https://uiuiui.storage.clo.ru/files/workshop-35/35_783436035.mp4"
-    private val name1 = "video1.mp4"
+    private val url1 =
+        "https://www.psdstack.com/wp-content/uploads/2019/08/copyright-free-images-750x420.jpg"
+    private val url2 = "https://uiuiui.storage.clo.ru/files/workshop-35/35_783436035.mp4"
+    private val url3 =
+        "https://wallpapers.com/images/hd/non-copyrighted-retro-wave-style-s3rhyqiwlu0dlxlz.jpg"
+    private val name1 = "image1.jpg"
     private val name2 = "video2.mp4"
-    private val name3 = "video3.mp4"
-
-    private var id1: String? = null
-    private var id2: String? = null
-    private var id3: String? = null
-
-    private suspend fun getNimbusAPI(): NimbusAPI {
-        val result = nimbus.init()
-        if (result.isFailure()) {
-            throw IllegalStateException("Failed to init nimbus: ${result.error}")
-        }
-        return result.value
-    }
-
-    private suspend fun loadDownloadTasks() {
-        val nimbusAPI = getNimbusAPI()
-
-        val downloads = nimbusAPI.getAllDownloads().asSuccess().value.downloads
-
-        downloads.forEach {
-            when (it.value.fileName) {
-                name1 -> {
-                    id1 = it.key
-                }
-
-                name2 -> {
-                    id2 = it.key
-                }
-
-                name3 -> {
-                    id3 = it.key
-                }
-            }
-        }
-    }
+    private val name3 = "image3.jpg"
 
     init {
         viewModelScope.launch {
             println("MainViewModel init")
-            loadDownloadTasks()
+            nimbus.init()
         }
     }
 
@@ -112,88 +82,69 @@ class MainViewModel(
 
     fun enqueue1(folder: File) {
         viewModelScope.launch {
-            val nimbusAPI = getNimbusAPI()
+            val nimbusAPI = nimbus.client
+            val filePath = folder.path + File.separator + name1
 
-            val filePath1 = folder.path + File.separator + "video1.mp4"
-            val downloadRequest1 = DownloadRequest(url, filePath1, name1)
-
-            val downloadTaskResult = nimbusAPI.getDownloadTask(downloadRequest1)
-
-            if (downloadTaskResult.isSuccess()) {
+            val getDownloadTaskRequest = GetDownloadTaskRequest(url1)
+            nimbusAPI.getDownloadTask(getDownloadTaskRequest).onSuccess {
                 Timber.e("Already enqueued 1")
                 return@launch
             }
 
-            val result = nimbusAPI.enqueueDownload(downloadRequest1)
-
-            if (result.isFailure()) {
-                Timber.e("Failed to enqueue download 1: ${result.error}")
+            val enqueueDownloadRequest = EnqueueDownloadRequest(url1, filePath, name1)
+            nimbusAPI.enqueueDownload(enqueueDownloadRequest).getOr {
+                Timber.e("Failed to enqueue download 1: $it")
                 return@launch
             }
-
-            id1 = result.value.id
+            Timber.i("Enqueued download 1")
         }
     }
 
     fun enqueue2(folder: File) {
         viewModelScope.launch {
-            val nimbusAPI = getNimbusAPI()
+            val nimbusAPI = nimbus.client
+            val filePath = folder.path + File.separator + name2
 
-            val filePath = folder.path + File.separator + "video2.mp4"
-            val downloadRequest = DownloadRequest(url, filePath, name2)
-
-            val downloadTaskResult = nimbusAPI.getDownloadTask(downloadRequest)
-
-            if (downloadTaskResult.isSuccess()) {
-                Timber.d("Already enqueued 2")
+            val getDownloadTaskRequest = GetDownloadTaskRequest(url2)
+            nimbusAPI.getDownloadTask(getDownloadTaskRequest).onSuccess {
+                Timber.e("Already enqueued 2")
                 return@launch
             }
 
-            val result = nimbusAPI.enqueueDownload(downloadRequest)
-
-            if (result.isFailure()) {
-                Timber.e("Failed to enqueue download 2: ${result.error}")
+            val enqueueDownloadRequest = EnqueueDownloadRequest(url2, filePath, name2)
+            nimbusAPI.enqueueDownload(enqueueDownloadRequest).getOr {
+                Timber.e("Failed to enqueue download 2: $it")
                 return@launch
             }
-
-            id2 = result.value.id
+            Timber.i("Enqueued download 2")
         }
     }
 
     fun enqueue3(folder: File) {
         viewModelScope.launch {
-            val nimbusAPI = getNimbusAPI()
+            val nimbusAPI = nimbus.client
+            val filePath = folder.path + File.separator + name3
 
-            val filePath = folder.path + File.separator + "video3.mp4"
-            val downloadRequest = DownloadRequest(url, filePath, name3)
-
-            val downloadTaskResult = nimbusAPI.getDownloadTask(downloadRequest)
-
-            if (downloadTaskResult.isSuccess()) {
-                Timber.d("Already enqueued 3")
+            val getDownloadTaskRequest = GetDownloadTaskRequest(url3)
+            nimbusAPI.getDownloadTask(getDownloadTaskRequest).onSuccess {
+                Timber.e("Already enqueued 3")
                 return@launch
             }
 
-            val result = nimbusAPI.enqueueDownload(downloadRequest)
-
-            if (result.isFailure()) {
-                Timber.e("Failed to enqueue download 3: ${result.error}")
+            val enqueueDownloadRequest = EnqueueDownloadRequest(url3, filePath, name3)
+            nimbusAPI.enqueueDownload(enqueueDownloadRequest).getOr {
+                Timber.e("Failed to enqueue download 3: $it")
                 return@launch
             }
-
-            id3 = result.value.id
+            Timber.i("Enqueued download 3")
         }
     }
 
     fun start1() {
         viewModelScope.launch {
-            if (id1 == null) {
-                return@launch
-            }
+            val nimbusAPI = nimbus.client
 
-            val nimbusAPI = getNimbusAPI()
-
-            val startDownloadRequest = StartDownloadRequest(id1!!)
+            val startDownloadRequest = StartDownloadRequest(url1)
 
             val result = nimbusAPI.startDownload(startDownloadRequest)
 
@@ -208,13 +159,9 @@ class MainViewModel(
 
     fun start2() {
         viewModelScope.launch {
-            if (id2 == null) {
-                return@launch
-            }
+            val nimbusAPI = nimbus.client
 
-            val nimbusAPI = getNimbusAPI()
-
-            val startDownloadRequest = StartDownloadRequest(id2!!)
+            val startDownloadRequest = StartDownloadRequest(url2)
 
             val result = nimbusAPI.startDownload(startDownloadRequest)
 
@@ -229,13 +176,9 @@ class MainViewModel(
 
     fun start3() {
         viewModelScope.launch {
-            if (id3 == null) {
-                return@launch
-            }
+            val nimbusAPI = nimbus.client
 
-            val nimbusAPI = getNimbusAPI()
-
-            val startDownloadRequest = StartDownloadRequest(id3!!)
+            val startDownloadRequest = StartDownloadRequest(url3)
 
             val result = nimbusAPI.startDownload(startDownloadRequest)
 
@@ -249,313 +192,251 @@ class MainViewModel(
     }
 
     private suspend fun observeDownload1() {
-        id1?.let {
-            val observeDownloadRequest = ObserveDownloadRequest(it)
+        val observeDownloadRequest = ObserveDownloadRequest(url1)
 
-            val nimbusAPI = getNimbusAPI()
+        val nimbusAPI = nimbus.client
 
-            val flowResult = nimbusAPI.observeDownload(observeDownloadRequest)
+        val flowResult = nimbusAPI.observeDownload(observeDownloadRequest)
 
-            if (flowResult.isFailure()) {
-                Timber.e("Failed to observe download 1: ${flowResult.error}")
-                return
-            }
+        if (flowResult.isFailure()) {
+            Timber.e("Failed to observe download 1: ${flowResult.error}")
+            return
+        }
 
-            val timeTaken = measureTimeMillis {
-                flowResult.value.downloadFlow.collect { downloadState ->
-                    when (downloadState) {
-                        DownloadState.Enqueued -> {
-                            Timber.d("Enqueued 1")
-                        }
+        val timeTaken = measureTimeMillis {
+            flowResult.value.downloadFlow.collect { downloadState ->
+                when (downloadState) {
+                    DownloadState.Enqueued -> {
+                        Timber.d("Enqueued 1")
+                    }
 
-                        is DownloadState.Downloading -> {
-//                            Timber.d("Downloading 1: ${downloadState.progress}")
-                        }
+                    is DownloadState.Downloading -> {
+                        Timber.d("Downloading 1: ${downloadState.progress}")
+                    }
 
-                        is DownloadState.Paused -> {
-                            Timber.d("Paused 1: ${downloadState.progress}")
-                        }
+                    is DownloadState.Paused -> {
+                        Timber.d("Paused 1: ${downloadState.progress}")
+                    }
 
-                        is DownloadState.Failed -> {
-                            Timber.e("Failed 1: ${downloadState.errorCode}")
-                        }
+                    is DownloadState.Failed -> {
+                        Timber.e("Failed 1: ${downloadState.error}")
+                    }
 
-                        DownloadState.Finished -> {
-                            Timber.d("Finished 1")
-                        }
+                    DownloadState.Finished -> {
+                        Timber.d("Finished 1")
                     }
                 }
             }
-
-            Timber.d("Download 1 finished in $timeTaken ms")
         }
+
+        Timber.d("Download 1 finished in $timeTaken ms")
     }
 
     private suspend fun observeDownload2() {
-        id2?.let {
-            val observeDownloadRequest = ObserveDownloadRequest(it)
+        val observeDownloadRequest = ObserveDownloadRequest(url2)
 
-            val nimbusAPI = getNimbusAPI()
+        val nimbusAPI = nimbus.client
 
-            val flowResult = nimbusAPI.observeDownload(observeDownloadRequest)
+        Timber.d("Observing download 2")
 
-            if (flowResult.isFailure()) {
-                Timber.e("Failed to observe download 2: ${flowResult.error}")
-                return
-            }
+        val flowResult = nimbusAPI.observeDownload(observeDownloadRequest)
 
-            val timeTaken = measureTimeMillis {
-                flowResult.value.downloadFlow.collect { downloadState ->
-                    when (downloadState) {
-                        DownloadState.Enqueued -> {
-                            Timber.d("Enqueued 2")
-                        }
+        if (flowResult.isFailure()) {
+            Timber.e("Failed to observe download 2: ${flowResult.error}")
+            return
+        }
 
-                        is DownloadState.Downloading -> {
-                            Timber.d("Downloading 2: ${downloadState.progress}")
-                        }
+        Timber.d("Successfully got flow for download 2")
 
-                        is DownloadState.Paused -> {
-                            Timber.d("Paused 2: ${downloadState.progress}")
-                        }
+        val timeTaken = measureTimeMillis {
+            flowResult.value.downloadFlow.collect { downloadState ->
+                when (downloadState) {
+                    DownloadState.Enqueued -> {
+                        Timber.d("Enqueued 2")
+                    }
 
-                        is DownloadState.Failed -> {
-                            Timber.e("Failed 2: ${downloadState.errorCode}")
-                        }
+                    is DownloadState.Downloading -> {
+                        Timber.d("Downloading 2: ${downloadState.progress}")
+                    }
 
-                        DownloadState.Finished -> {
-                            Timber.d("Finished 2")
-                        }
+                    is DownloadState.Paused -> {
+                        Timber.d("Paused 2: ${downloadState.progress}")
+                    }
+
+                    is DownloadState.Failed -> {
+                        Timber.e("Failed 2: ${downloadState.error}")
+                    }
+
+                    DownloadState.Finished -> {
+                        Timber.d("Finished 2")
                     }
                 }
             }
-
-            Timber.d("Download 2 finished in $timeTaken ms")
         }
+
+        Timber.d("Download 2 finished in $timeTaken ms")
     }
 
     private suspend fun observeDownload3() {
-        id3?.let {
-            val observeDownloadRequest = ObserveDownloadRequest(it)
+        val observeDownloadRequest = ObserveDownloadRequest(url3)
 
-            val nimbusAPI = getNimbusAPI()
+        val nimbusAPI = nimbus.client
 
-            val flowResult = nimbusAPI.observeDownload(observeDownloadRequest)
+        val flowResult = nimbusAPI.observeDownload(observeDownloadRequest)
 
-            if (flowResult.isFailure()) {
-                Timber.e("Failed to observe download 3: ${flowResult.error}")
-                return
-            }
+        if (flowResult.isFailure()) {
+            Timber.e("Failed to observe download 3: ${flowResult.error}")
+            return
+        }
 
-            val timeTaken = measureTimeMillis {
-                flowResult.value.downloadFlow.collect { downloadState ->
-                    when (downloadState) {
-                        DownloadState.Enqueued -> {
-                            Timber.d("Enqueued 3")
-                        }
+        val timeTaken = measureTimeMillis {
+            flowResult.value.downloadFlow.collect { downloadState ->
+                when (downloadState) {
+                    DownloadState.Enqueued -> {
+                        Timber.d("Enqueued 3")
+                    }
 
-                        is DownloadState.Downloading -> {
-                            Timber.d("Downloading 3: ${downloadState.progress}")
-                        }
+                    is DownloadState.Downloading -> {
+                        Timber.d("Downloading 3: ${downloadState.progress}")
+                    }
 
-                        is DownloadState.Paused -> {
-                            Timber.d("Paused 3: ${downloadState.progress}")
-                        }
+                    is DownloadState.Paused -> {
+                        Timber.d("Paused 3: ${downloadState.progress}")
+                    }
 
-                        is DownloadState.Failed -> {
-                            Timber.e("Failed 3: ${downloadState.errorCode}")
-                        }
+                    is DownloadState.Failed -> {
+                        Timber.e("Failed 3: ${downloadState.error}")
+                    }
 
-                        DownloadState.Finished -> {
-                            Timber.d("Finished 3")
-                        }
+                    DownloadState.Finished -> {
+                        Timber.d("Finished 3")
                     }
                 }
             }
-
-            Timber.d("Download 3 finished in $timeTaken ms")
         }
+
+        Timber.d("Download 3 finished in $timeTaken ms")
     }
 
     fun pause1() {
         viewModelScope.launch {
-            if (id1 == null) {
-                loadDownloadTasks()
-            }
+            val nimbusAPI = nimbus.client
 
-            id1?.let {
-                val nimbusAPI = getNimbusAPI()
+            val pauseDownloadRequest = PauseDownloadRequest(url1)
+            val result = nimbusAPI.pauseDownload(pauseDownloadRequest)
 
-                val pauseDownloadRequest = PauseDownloadRequest(it)
-                val result = nimbusAPI.pauseDownload(pauseDownloadRequest)
-
-                if (result.isFailure()) {
-                    Timber.e("Failed to pause download 1: ${result.error}")
-                }
+            if (result.isFailure()) {
+                Timber.e("Failed to pause download 1: ${result.error}")
             }
         }
     }
 
     fun pause2() {
         viewModelScope.launch {
-            if (id2 == null) {
-                loadDownloadTasks()
-            }
+            val nimbusAPI = nimbus.client
 
-            id2?.let {
-                val nimbusAPI = getNimbusAPI()
+            val pauseDownloadRequest = PauseDownloadRequest(url2)
+            val result = nimbusAPI.pauseDownload(pauseDownloadRequest)
 
-                val pauseDownloadRequest = PauseDownloadRequest(it)
-                val result = nimbusAPI.pauseDownload(pauseDownloadRequest)
-
-                if (result.isFailure()) {
-                    Timber.e("Failed to pause download 2: ${result.error}")
-                }
+            if (result.isFailure()) {
+                Timber.e("Failed to pause download 2: ${result.error}")
             }
         }
     }
 
     fun pause3() {
         viewModelScope.launch {
-            if (id3 == null) {
-                loadDownloadTasks()
-            }
+            val nimbusAPI = nimbus.client
 
-            id3?.let {
-                val nimbusAPI = getNimbusAPI()
+            val pauseDownloadRequest = PauseDownloadRequest(url3)
+            val result = nimbusAPI.pauseDownload(pauseDownloadRequest)
 
-                val pauseDownloadRequest = PauseDownloadRequest(it)
-                val result = nimbusAPI.pauseDownload(pauseDownloadRequest)
-
-                if (result.isFailure()) {
-                    Timber.e("Failed to pause download 3: ${result.error}")
-                }
+            if (result.isFailure()) {
+                Timber.e("Failed to pause download 3: ${result.error}")
             }
         }
     }
 
     fun resume1() {
         viewModelScope.launch {
-            if (id1 == null) {
-                loadDownloadTasks()
+            val nimbusAPI = nimbus.client
+
+            val resumeDownloadRequest = ResumeDownloadRequest(url1)
+            val result = nimbusAPI.resumeDownload(resumeDownloadRequest)
+
+            if (result.isFailure()) {
+                Timber.e("Failed to resume download 1: ${result.error}")
             }
 
-            id1?.let {
-                val nimbusAPI = getNimbusAPI()
-
-                val resumeDownloadRequest = ResumeDownloadRequest(it)
-                val result = nimbusAPI.resumeDownload(resumeDownloadRequest)
-
-                if (result.isFailure()) {
-                    Timber.e("Failed to resume download 1: ${result.error}")
-                }
-
-                observeDownload1()
-            }
+            observeDownload1()
         }
     }
 
     fun resume2() {
         viewModelScope.launch {
-            if (id2 == null) {
-                loadDownloadTasks()
+            val nimbusAPI = nimbus.client
+
+            val resumeDownloadRequest = ResumeDownloadRequest(url2)
+            val result = nimbusAPI.resumeDownload(resumeDownloadRequest)
+
+            if (result.isFailure()) {
+                Timber.e("Failed to resume download 2: ${result.error}")
             }
 
-            id2?.let {
-                val nimbusAPI = getNimbusAPI()
-
-                val resumeDownloadRequest = ResumeDownloadRequest(it)
-                val result = nimbusAPI.resumeDownload(resumeDownloadRequest)
-
-                if (result.isFailure()) {
-                    Timber.e("Failed to resume download 2: ${result.error}")
-                }
-
-                observeDownload2()
-            }
+            observeDownload2()
         }
     }
 
     fun resume3() {
         viewModelScope.launch {
-            if (id3 == null) {
-                loadDownloadTasks()
+            val nimbusAPI = nimbus.client
+
+            val resumeDownloadRequest = ResumeDownloadRequest(url3)
+            val result = nimbusAPI.resumeDownload(resumeDownloadRequest)
+
+            if (result.isFailure()) {
+                Timber.e("Failed to resume download 3: ${result.error}")
             }
 
-            id3?.let {
-                val nimbusAPI = getNimbusAPI()
-
-                val resumeDownloadRequest = ResumeDownloadRequest(it)
-                val result = nimbusAPI.resumeDownload(resumeDownloadRequest)
-
-                if (result.isFailure()) {
-                    Timber.e("Failed to resume download 3: ${result.error}")
-                }
-
-                observeDownload3()
-            }
+            observeDownload3()
         }
     }
 
     fun cancel1() {
         viewModelScope.launch {
-            if (id1 == null) {
-                loadDownloadTasks()
-            }
+            val nimbusAPI = nimbus.client
 
-            id1?.let {
-                val nimbusAPI = getNimbusAPI()
+            val cancelDownloadRequest = CancelDownloadRequest(url1)
+            val result = nimbusAPI.cancelDownload(cancelDownloadRequest)
 
-                val cancelDownloadRequest = CancelDownloadRequest(it)
-                val result = nimbusAPI.cancelDownload(cancelDownloadRequest)
-
-                if (result.isFailure()) {
-                    Timber.e("Failed to cancel download 1: ${result.error}")
-                }
-
-                id1 = null
+            if (result.isFailure()) {
+                Timber.e("Failed to cancel download 1: ${result.error}")
             }
         }
     }
 
     fun cancel2() {
         viewModelScope.launch {
-            if (id2 == null) {
-                loadDownloadTasks()
-            }
+            val nimbusAPI = nimbus.client
 
-            id2?.let {
-                val nimbusAPI = getNimbusAPI()
+            val cancelDownloadRequest = CancelDownloadRequest(url2)
+            val result = nimbusAPI.cancelDownload(cancelDownloadRequest)
 
-                val cancelDownloadRequest = CancelDownloadRequest(it)
-                val result = nimbusAPI.cancelDownload(cancelDownloadRequest)
-
-                if (result.isFailure()) {
-                    Timber.e("Failed to cancel download 2: ${result.error}")
-                }
-
-                id2 = null
+            if (result.isFailure()) {
+                Timber.e("Failed to cancel download 2: ${result.error}")
             }
         }
     }
 
     fun cancel3() {
         viewModelScope.launch {
-            if (id3 == null) {
-                loadDownloadTasks()
-            }
+            val nimbusAPI = nimbus.client
 
-            id3?.let {
-                val nimbusAPI = getNimbusAPI()
+            val cancelDownloadRequest = CancelDownloadRequest(url3)
+            val result = nimbusAPI.cancelDownload(cancelDownloadRequest)
 
-                val cancelDownloadRequest = CancelDownloadRequest(it)
-                val result = nimbusAPI.cancelDownload(cancelDownloadRequest)
-
-                if (result.isFailure()) {
-                    Timber.e("Failed to cancel download 3: ${result.error}")
-                }
-
-                id3 = null
+            if (result.isFailure()) {
+                Timber.e("Failed to cancel download 3: ${result.error}")
             }
         }
     }
