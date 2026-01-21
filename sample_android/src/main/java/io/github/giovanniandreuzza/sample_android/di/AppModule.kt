@@ -1,7 +1,9 @@
 package io.github.giovanniandreuzza.sample_android.di
 
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.sample_android.framework.ktor.KtorClient
+import io.github.giovanniandreuzza.sample_android.framework.nimbus.KtorNimbusAdapter
 import io.github.giovanniandreuzza.sample_android.framework.nimbus.NimbusSetup
-import io.github.giovanniandreuzza.sample_android.framework.retrofit.AppEndpoint
 import io.github.giovanniandreuzza.sample_android.presentation.MainViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -10,7 +12,6 @@ import kotlinx.serialization.json.Json
 import org.koin.android.ext.koin.androidApplication
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
-import retrofit2.Retrofit
 
 /**
  * App Module Dependency Injection.
@@ -28,16 +29,20 @@ val appModule = module {
         }
     }
 
-    single<AppEndpoint> {
-        Retrofit.Builder().baseUrl("https://www.google.com").build().create(AppEndpoint::class.java)
-    }
-
     single<CoroutineScope> {
         CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 
+    single {
+        KtorClient()
+    }
+
+    single<NimbusDownloadPort> {
+        KtorNimbusAdapter(ktorClient = get())
+    }
+
     single<NimbusSetup> {
-        NimbusSetup(context = androidApplication())
+        NimbusSetup(context = androidApplication(), nimbusDownloadPort = get())
     }
 
     viewModel { MainViewModel(nimbus = get()) }

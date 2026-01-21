@@ -19,8 +19,8 @@ import io.github.giovanniandreuzza.nimbus.core.commands.LoadDownloadTasksCommand
 import io.github.giovanniandreuzza.nimbus.core.commands.PauseDownloadCommand
 import io.github.giovanniandreuzza.nimbus.core.commands.ResumeDownloadCommand
 import io.github.giovanniandreuzza.nimbus.core.commands.StartDownloadCommand
-import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
+import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
 import io.github.giovanniandreuzza.nimbus.core.queries.GetAllDownloadsQuery
@@ -29,14 +29,12 @@ import io.github.giovanniandreuzza.nimbus.core.queries.GetFileSizeQuery
 import io.github.giovanniandreuzza.nimbus.core.queries.IsDownloadedQuery
 import io.github.giovanniandreuzza.nimbus.core.queries.ObserveDownloadQuery
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage.LocalNimbusStorageAdapter
-import io.github.giovanniandreuzza.nimbus.frameworks.ktor.KtorClient
-import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.download.KtorNimbusDownloadAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
-import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.DownloadTaskAdapter
-import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.InMemoryDownloadTaskAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.DownloadAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.IdProviderAdapter
+import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.DownloadTaskAdapter
+import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.InMemoryDownloadTaskAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.StoreDownloadTaskAdapter
 import io.github.giovanniandreuzza.nimbus.presentation.DownloadController
 import kotlinx.coroutines.CoroutineDispatcher
@@ -59,16 +57,14 @@ internal fun init(
     downloadScope: CoroutineScope,
     ioDispatcher: CoroutineDispatcher,
     concurrencyLimit: Int,
-    nimbusDownloadPort: NimbusDownloadPort?,
+    nimbusDownloadPort: NimbusDownloadPort,
     nimbusStoragePort: NimbusStoragePort?,
     downloadManagerPath: String,
     downloadBufferSize: Long,
     downloadNotifyEveryBytes: Long
 ): DownloadController {
 
-    val ktorClient = KtorClient()
-
-    val nimbusDownloadPort = nimbusDownloadPort ?: KtorNimbusDownloadAdapter(ktorClient)
+    val nimbusDownloadPort = nimbusDownloadPort
 
     val nimbusStoragePort = nimbusStoragePort ?: LocalNimbusStorageAdapter()
 

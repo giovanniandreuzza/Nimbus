@@ -3,11 +3,15 @@ package io.github.giovanniandreuzza.sample_android.framework.nimbus
 import android.content.Context
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.getOr
 import io.github.giovanniandreuzza.nimbus.Nimbus
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import timber.log.Timber
 import java.io.File
 
-class NimbusSetup(context: Context) {
+class NimbusSetup(
+    context: Context,
+    nimbusDownloadPort: NimbusDownloadPort
+) {
 
     private val nimbus: Nimbus
     lateinit var client: NimbusAPI
@@ -20,6 +24,7 @@ class NimbusSetup(context: Context) {
 
         nimbus = Nimbus.Companion.Builder()
             .withDownloadManagerPath(folder.path + File.separator + "download_manager")
+            .withNimbusDownloadPort(nimbusDownloadPort)
             .withDownloadBufferSize(8 * 1024L)
             .withDownloadNotifyEveryBytes(8 * 64 * 1024L)
             .build()

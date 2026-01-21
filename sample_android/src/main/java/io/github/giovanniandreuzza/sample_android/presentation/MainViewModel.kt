@@ -31,7 +31,7 @@ class MainViewModel(
 
     private val url1 =
         "https://www.psdstack.com/wp-content/uploads/2019/08/copyright-free-images-750x420.jpg"
-    private val url2 = "https://uiuiui.storage.clo.ru/files/workshop-35/35_783436035.mp4"
+    private val url2 = "https://www.shutterstock.com/shutterstock/videos/3819179847/preview/stock-footage-man-working-on-laptop-computer-keyboard-with-graphic-user-interface-gui-hologram-showing-concepts.webm"
     private val url3 =
         "https://wallpapers.com/images/hd/non-copyrighted-retro-wave-style-s3rhyqiwlu0dlxlz.jpg"
     private val name1 = "image1.jpg"

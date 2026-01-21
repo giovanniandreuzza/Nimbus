@@ -32,7 +32,7 @@ public class Nimbus private constructor(
     downloadScope: CoroutineScope,
     ioDispatcher: CoroutineDispatcher,
     concurrencyLimit: Int,
-    nimbusDownloadPort: NimbusDownloadPort?,
+    nimbusDownloadPort: NimbusDownloadPort,
     nimbusStoragePort: NimbusStoragePort?,
     downloadManagerPath: String,
     downloadBufferSize: Long,
@@ -95,12 +95,16 @@ public class Nimbus private constructor(
                     throw IllegalStateException("downloadManagerPath must be provided")
                 }
 
+                if (nimbusDownloadPort == null) {
+                    throw IllegalStateException("nimbusDownloadPort must be provided")
+                }
+
                 if (instance == null) {
                     instance = Nimbus(
                         downloadScope = downloadScope,
                         ioDispatcher = ioDispatcher,
                         concurrencyLimit = concurrencyLimit,
-                        nimbusDownloadPort = nimbusDownloadPort,
+                        nimbusDownloadPort = nimbusDownloadPort!!,
                         nimbusStoragePort = nimbusStoragePort,
                         downloadManagerPath = downloadManagerPath!!,
                         downloadBufferSize = downloadBufferSize,

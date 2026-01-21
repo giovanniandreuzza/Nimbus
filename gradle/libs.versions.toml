@@ -1,12 +1,12 @@
 [versions]
 ## Kotlin
-kotlin = "2.2.20"
+kotlin = "2.2.21"
 
 ## Desugar
 desugar_jdk_libs_version = "2.1.5"
 
 ## Vanniktech-mavenPublish
-vanniktech_mavenPublish_version = "0.34.0"
+vanniktech_mavenPublish_version = "0.35.0"
 
 ## KotlinX - Serialization
 kotlinx_serialization_version = "1.9.0"
@@ -18,11 +18,11 @@ kotlinx_io_version = "0.8.0"
 hash_sha2_version = "0.8.0"
 
 ## Android
-agp = "8.13.0"
+agp = "8.13.1"
 coreKtx = "1.17.0"
-lifecycleRuntimeKtx = "2.9.4"
-activityCompose = "1.11.0"
-composeBom = "2025.10.01"
+lifecycleRuntimeKtx = "2.10.0"
+activityCompose = "1.12.0"
+composeBom = "2025.11.01"
 
 ## Koin
 koin_android_version = "4.1.1"
@@ -31,21 +31,21 @@ koin_android_version = "4.1.1"
 timber_version = "5.0.1"
 
 ## OkHttp3
-okhttp3_version = "5.2.1"
-okhttp3_logging_interceptor_version = "5.2.1"
+okhttp3_version = "5.3.2"
+okhttp3_logging_interceptor_version = "5.3.2"
 
 ## LeakCanary
 leakcanary_version = "2.14"
 
 ## Ktor
-ktor_version = "3.3.1"
+ktor_version = "3.3.2"
 
 ## Retrofit2
 retrofit2_version = "3.0.0"
 retrofit2_serialization_converter_version = "1.0.0"
 
 ## Nimbus
-nimbus_version = "1.4.1"
+nimbus_version = "1.5.3"
 
 ## ExplicitArchitecture
 explicitarchitecture_version = "1.4.0"
@@ -94,10 +94,6 @@ leakcanary = { module = "com.squareup.leakcanary:leakcanary-android", version.re
 ## Ktor
 ktor = { group = "io.ktor", name = "ktor-client-core", version.ref = "ktor_version" }
 ktor_okhttp = { group = "io.ktor", name = "ktor-client-okhttp", version.ref = "ktor_version" }
-ktor_cio = { group = "io.ktor", name = "ktor-client-cio", version.ref = "ktor_version" }
-ktor_logging = { group = "io.ktor", name = "ktor-client-logging", version.ref = "ktor_version" }
-ktor_client_content_negotiation = { group = "io.ktor", name = "ktor-client-content-negotiation", version.ref = "ktor_version" }
-ktor_serialization = { group = "io.ktor", name = "ktor-serialization-kotlinx-json", version.ref = "ktor_version" }
 
 ## Retrofit2
 retrofit2 = { module = "com.squareup.retrofit2:retrofit", version.ref = "retrofit2_version" }

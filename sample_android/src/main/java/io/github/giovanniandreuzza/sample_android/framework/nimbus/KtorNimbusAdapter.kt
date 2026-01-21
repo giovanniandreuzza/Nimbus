@@ -1,33 +1,29 @@
-package io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.download
+package io.github.giovanniandreuzza.sample_android.framework.nimbus
 
+import io.github.giovanniandreuzza.explicitarchitecture.infrastructure.adapters.IsAdapter
 import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
-import io.github.giovanniandreuzza.nimbus.frameworks.ktor.KtorClient
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.sample_android.framework.ktor.KtorClient
 import io.ktor.client.request.head
 import io.ktor.client.request.headers
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.HttpStatusCode
-import io.ktor.utils.io.InternalAPI
-import io.ktor.utils.io.asSource
+import io.ktor.utils.io.jvm.javaio.toInputStream
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import kotlinx.io.Source
+import kotlinx.io.asSource
 import kotlinx.io.buffered
 import kotlin.coroutines.cancellation.CancellationException
 
-/**
- * Ktor Nimbus Download Adapter.
- *
- * @author Giovanni Andreuzza
- */
-internal class KtorNimbusDownloadAdapter(private val ktorClient: KtorClient) : NimbusDownloadPort {
+@IsAdapter
+internal class KtorNimbusAdapter(private val ktorClient: KtorClient) : NimbusDownloadPort {
 
     override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> {
         return withContext(Dispatchers.IO) {
@@ -60,6 +56,7 @@ internal class KtorNimbusDownloadAdapter(private val ktorClient: KtorClient) : N
                     }
 
                     else -> {
+                        println("Unexpected status code: ${response.status.value} - ${response.status.description}")
                         Failure(GetFileSizeError.UnexpectedError())
                     }
                 }
@@ -73,7 +70,6 @@ internal class KtorNimbusDownloadAdapter(private val ktorClient: KtorClient) : N
         }
     }
 
-    @OptIn(InternalAPI::class)
     override suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
@@ -89,7 +85,7 @@ internal class KtorNimbusDownloadAdapter(private val ktorClient: KtorClient) : N
             }.execute { response ->
                 when (response.status.value) {
                     in 200..299 -> {
-                        val source = response.bodyAsChannel().asSource().buffered()
+                        val source = response.bodyAsChannel().toInputStream().asSource().buffered()
                         onSourceOpened(source)
                         Success(Unit)
                     }

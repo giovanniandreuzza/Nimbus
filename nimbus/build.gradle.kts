@@ -21,7 +21,7 @@ kotlin {
     androidTarget {
         publishLibraryVariants("release")
         compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_1_8)
+            jvmTarget.set(JvmTarget.JVM_17)
         }
     }
 
@@ -39,9 +39,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(libs.kotlinx.serialization.protobuf)
-            implementation(libs.kotlinx.io)
-            implementation(libs.ktor)
-            implementation(libs.ktor.cio)
+            api(libs.kotlinx.io)
             api(libs.explicitarchitecture)
             implementation(libs.hash.sha2)
         }
@@ -52,8 +50,8 @@ android {
     namespace = "io.github.giovanniandreuzza.nimbus"
     compileSdk = 36
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     defaultConfig {
         minSdk = 21
