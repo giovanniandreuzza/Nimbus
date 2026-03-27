@@ -16,11 +16,13 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.DeleteFileError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.GetFileSinkError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.GetFileSourceError
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.MoveFileError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.io.IOException
 import kotlinx.io.InternalIoApi
 import kotlinx.io.readByteArray
@@ -38,8 +40,9 @@ internal abstract class StoreManager<T>(
 ) {
     private val protoBuf: ProtoBuf = ProtoBuf
     private val mutex = Mutex()
+    private val tempFilePath: String = "$filePath.tmp"
 
-    internal var data: T? = null
+    protected var data: T? = null
 
     fun isReady(): Boolean = data != null
 
@@ -110,31 +113,24 @@ internal abstract class StoreManager<T>(
     @OptIn(InternalIoApi::class)
     suspend fun store(data: T): KResult<Unit, StoreError> {
         return mutex.withLock {
-            val sink = nimbusStoragePort.sink(path = filePath, hasToAppend = false).getOr {
-                with(it) {
-                    val error = when (this) {
-                        GetFileSinkError.FileNotFound -> StoreError.StoreNotFound
-                        is GetFileSinkError.ReadPermissionDenied -> StoreError.ReadPermissionDenied(
-                            cause
-                        )
-
-                        is GetFileSinkError.WritePermissionDenied -> StoreError.WritePermissionDenied(
-                            cause
-                        )
-                    }
-                    return@withLock Failure(error)
-                }
-            }
-
             try {
                 withContext(dispatcher) {
                     val encodedData = protoBuf.encodeToByteArray(serializer, data)
-                    sink.use { sink ->
-                        sink.write(encodedData)
-                        sink.flush()
+                    // Strict two-phase write: commit happens with atomic move.
+                    writeEncodedDataToPath(tempFilePath, encodedData).getOr {
+                        return@withContext Failure(it)
+                    }
+                    nimbusStoragePort.atomicMove(tempFilePath, filePath).getOr {
+                        return@withContext Failure(it.toStoreError())
                     }
                     Success(Unit)
                 }
+            } catch (e: CancellationException) {
+                // Must be re-thrown — CancellationException is a subclass of
+                // IllegalStateException on the JVM, so without this guard it would
+                // be caught below and silently converted to a StoreFailed failure,
+                // preventing coroutine cancellation from propagating correctly.
+                throw e
             } catch (e: SerializationException) {
                 val error = KError(
                     code = "SerializationException",
@@ -181,45 +177,18 @@ internal abstract class StoreManager<T>(
     @OptIn(InternalIoApi::class)
     suspend fun read(): KResult<T, ReadError> {
         return mutex.withLock {
-            val source = nimbusStoragePort.source(path = filePath).getOr {
-                with(it) {
-                    val error = when (this) {
-                        GetFileSourceError.FileNotFound -> ReadError.StoreNotFound
-                        is GetFileSourceError.ReadPermissionDenied -> ReadError.ReadPermissionDenied(
-                            it
-                        )
-                    }
-                    return@withLock Failure(error)
-                }
+            val primary = readFromPath(filePath)
+            if (primary is Success) {
+                return@withLock primary
             }
 
-            try {
-                withContext(dispatcher) {
-                    val decodedData = source.use { source ->
-                        val encodedData = source.readByteArray()
-                        protoBuf.decodeFromByteArray(serializer, encodedData)
-                    }
-                    Success(decodedData)
-                }
-            } catch (e: SerializationException) {
-                val error = KError(
-                    code = "SerializationException",
-                    message = e.message ?: "Unknown deserialization error"
-                )
-                Failure(ReadError.DeserializationError(error))
-            } catch (e: IllegalArgumentException) {
-                val error = KError(
-                    code = "IllegalArgumentException",
-                    message = e.message ?: "Illegal argument error"
-                )
-                Failure(ReadError.DeserializationError(error))
-            } catch (e: IOException) {
-                val error = KError(
-                    code = "IOException",
-                    message = e.message ?: "Unknown IO error"
-                )
-                Failure(ReadError.IOError(error))
+            // Recovery fallback for interrupted writes.
+            val fallback = readFromPath(tempFilePath)
+            if (fallback is Success) {
+                return@withLock fallback
             }
+
+            primary
         }
     }
 
@@ -284,6 +253,107 @@ internal abstract class StoreManager<T>(
             }
             Success(Unit)
         }
+    }
+
+    @OptIn(InternalIoApi::class)
+    private suspend fun writeEncodedDataToPath(
+        path: String,
+        encodedData: ByteArray
+    ): KResult<Unit, StoreError> {
+        val exists = nimbusStoragePort.exists(path).getOr {
+            return Failure(StoreError.ReadPermissionDenied(it))
+        }
+
+        if (!exists) {
+            nimbusStoragePort.create(path).onFailure { createError ->
+                return when (createError) {
+                    CreateFileError.FileAlreadyExists -> Success(Unit)
+                    is CreateFileError.IOError -> Failure(StoreError.IOError(createError.cause))
+                    is CreateFileError.ReadPermissionDenied ->
+                        Failure(StoreError.ReadPermissionDenied(createError.cause))
+
+                    is CreateFileError.WritePermissionDenied ->
+                        Failure(StoreError.WritePermissionDenied(createError.cause))
+                }
+            }
+        }
+
+        val sink = nimbusStoragePort.sink(path = path, hasToAppend = false).getOr {
+            with(it) {
+                val error = when (this) {
+                    GetFileSinkError.FileNotFound -> StoreError.StoreNotFound
+                    is GetFileSinkError.ReadPermissionDenied -> StoreError.ReadPermissionDenied(cause)
+                    is GetFileSinkError.WritePermissionDenied -> StoreError.WritePermissionDenied(cause)
+                }
+                return Failure(error)
+            }
+        }
+
+        return try {
+            sink.use { out ->
+                out.write(encodedData)
+                out.flush()
+            }
+            Success(Unit)
+        } catch (e: IOException) {
+            val error = KError(
+                code = "IOException",
+                message = e.message ?: "Unknown IO error"
+            )
+            Failure(StoreError.IOError(error))
+        }
+    }
+
+    @OptIn(InternalIoApi::class)
+    private suspend fun readFromPath(path: String): KResult<T, ReadError> {
+        val source = nimbusStoragePort.source(path = path).getOr {
+            with(it) {
+                val error = when (this) {
+                    GetFileSourceError.FileNotFound -> ReadError.StoreNotFound
+                    is GetFileSourceError.ReadPermissionDenied -> ReadError.ReadPermissionDenied(it)
+                }
+                return Failure(error)
+            }
+        }
+
+        return try {
+            withContext(dispatcher) {
+                val decodedData = source.use { source ->
+                    val encodedData = source.readByteArray()
+                    protoBuf.decodeFromByteArray(serializer, encodedData)
+                }
+                Success(decodedData)
+            }
+        } catch (e: SerializationException) {
+            val error = KError(
+                code = "SerializationException",
+                message = e.message ?: "Unknown deserialization error"
+            )
+            Failure(ReadError.DeserializationError(error))
+        } catch (e: IllegalArgumentException) {
+            val error = KError(
+                code = "IllegalArgumentException",
+                message = e.message ?: "Illegal argument error"
+            )
+            Failure(ReadError.DeserializationError(error))
+        } catch (e: IOException) {
+            val error = KError(
+                code = "IOException",
+                message = e.message ?: "Unknown IO error"
+            )
+            Failure(ReadError.IOError(error))
+        }
+    }
+
+    private fun MoveFileError.toStoreError(): StoreError = when (this) {
+        MoveFileError.FileNotFound -> StoreError.StoreNotFound
+        MoveFileError.MoveFailed -> StoreError.StoreFailed(
+            KError(code = "move_failed", message = message)
+        )
+
+        is MoveFileError.IOError -> StoreError.IOError(cause)
+        is MoveFileError.ReadPermissionDenied -> StoreError.ReadPermissionDenied(cause)
+        is MoveFileError.WritePermissionDenied -> StoreError.WritePermissionDenied(cause)
     }
 
     /**

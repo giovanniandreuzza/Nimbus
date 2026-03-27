@@ -19,14 +19,14 @@ public sealed class DownloadState {
     /**
      * Downloading state.
      *
-     * @param progress Download progress.
+     * @param progress Download progress in the range `0.0` (not started) to `100.0` (complete).
      */
     public data class Downloading(val progress: Double) : DownloadState()
 
     /**
      * Paused state.
      *
-     * @param progress Download progress.
+     * @param progress Download progress at the time of pausing, in the range `0.0` to `100.0`.
      */
     public data class Paused(val progress: Double) : DownloadState()
 
@@ -41,4 +41,9 @@ public sealed class DownloadState {
      * Finished state.
      */
     public data object Finished : DownloadState()
+
+    /**
+     * Cancelled state.
+     */
+    public data object Cancelled : DownloadState()
 }

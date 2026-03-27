@@ -1,44 +1,25 @@
 package io.github.giovanniandreuzza.sample_android.framework.nimbus
 
-import android.content.Context
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.getOr
 import io.github.giovanniandreuzza.nimbus.Nimbus
-import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
-import timber.log.Timber
-import java.io.File
+import io.github.giovanniandreuzza.nimbus.ktor.KtorDownloadAdapter
+import io.github.giovanniandreuzza.nimbus.withAndroidContext
+import io.ktor.client.HttpClient
 
-class NimbusSetup(
-    context: Context,
-    nimbusDownloadPort: NimbusDownloadPort
-) {
-
-    private val nimbus: Nimbus
-    lateinit var client: NimbusAPI
-        private set
-
-    init {
-        val folder = File(context.filesDir, "test").also {
-            it.mkdirs()
-        }
-
-        nimbus = Nimbus.Companion.Builder()
-            .withDownloadManagerPath(folder.path + File.separator + "download_manager")
-            .withNimbusDownloadPort(nimbusDownloadPort)
-            .withDownloadBufferSize(8 * 1024L)
-            .withDownloadNotifyEveryBytes(8 * 64 * 1024L)
-            .build()
-    }
-
-    suspend fun init() {
-        if (::client.isInitialized) {
-            Timber.d("Nimbus already initialized")
-            return
-        }
-        client = nimbus.init().getOr {
-            Timber.e("Nimbus initialization failed: ${it.message}")
-            throw Exception("Nimbus initialization failed: ${it.message}")
-        }
-        Timber.d("Nimbus initialized successfully")
-    }
-}
+/**
+ * Convenience factory that builds and immediately initialises [NimbusAPI].
+ *
+ * [Nimbus.init] is non-suspending: it kicks off background IO and returns the
+ * [NimbusAPI] instance straight away. The first actual API call will suspend
+ * briefly if loading is still in progress; all subsequent calls are free.
+ */
+fun buildNimbusApi(
+    context: android.content.Context,
+    httpClient: HttpClient
+): NimbusAPI = Nimbus.Companion.Builder()
+    .withAndroidContext(context)
+    .withNimbusDownloadPort(KtorDownloadAdapter(httpClient))
+    .withConcurrencyLimit(3)
+    .withAutoStart(true)
+    .build()
+    .init()

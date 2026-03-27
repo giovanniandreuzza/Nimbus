@@ -25,7 +25,5 @@ internal data class DownloadTaskStore(
     @ProtoNumber(5)
     val fileSize: Long,
     @ProtoNumber(6)
-    val state: DownloadStateStore,
-    @ProtoNumber(7)
-    val version: Int
+    val state: DownloadStateStore
 )

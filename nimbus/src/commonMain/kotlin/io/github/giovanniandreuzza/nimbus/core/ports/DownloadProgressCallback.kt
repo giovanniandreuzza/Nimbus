@@ -13,7 +13,7 @@ internal interface DownloadProgressCallback {
 
     suspend fun onDownloadProgress(id: String, progress: Double)
 
-    fun onDownloadFailed(id: String, error: DownloadError)
+    suspend fun onDownloadFailed(id: String, error: DownloadError)
 
     suspend fun onDownloadFinished(id: String)
 

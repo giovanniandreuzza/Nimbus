@@ -1,0 +1,320 @@
+# Nimbus
+
+> Kotlin Multiplatform (Android · JVM · iOS) download manager library.
+> Targets: Android minSdk 21, JVM 17, iOS.
+> All errors are returned as typed values — no exceptions thrown across the public API.
+
+## Coordinates
+
+```
+# Core library
+io.github.giovanniandreuzza:nimbus:<version>
+
+# Optional Ktor HTTP adapter (recommended — saves you implementing NimbusDownloadPort)
+io.github.giovanniandreuzza:nimbus-ktor:<version>
+```
+
+## Initialisation (do once, store the result in your DI container)
+
+```kotlin
+// build() + init() — both are plain (non-suspending) functions.
+// init() starts loading persisted tasks in the background and returns NimbusAPI immediately.
+// The first actual API call suspends briefly if loading is still in progress;
+// all subsequent calls proceed without delay once loading has completed.
+val api: NimbusAPI = Nimbus.Builder()
+    .withNimbusDownloadPort(ktorAdapter)      // required — your HTTP client adapter
+    .withDownloadManagerPath(storePath)       // required — path for the metadata store
+    .withConcurrencyLimit(2)                  // optional, default 1
+    .withDownloadBufferSize(8 * 1024L)        // optional, default 8 KB
+    .withDownloadNotifyEveryBytes(512 * 1024L)// optional, default ~512 KB
+    .withMaxRetryAttempts(3)                  // optional, default 3
+    .withRetryBaseDelayMs(500L)               // optional, default 500 ms
+    .withMinReservedDiskBytes(50 * 1024 * 1024L) // optional — disk headroom guard
+    .withAutoStart(true)                      // optional, default false
+    .withNimbusLogger(myLogger)               // optional
+    .build()
+    .init()
+
+// One-liner convenience (equivalent):
+val api: NimbusAPI = Nimbus.Builder()….createAndInit()
+```
+
+If loading fails (e.g. corrupt store), `NimbusError.InitializationFailed` is returned by the
+first API call rather than at `init()` time.
+
+## NimbusAPI — complete method reference
+
+All methods are `suspend` unless noted. All return `KResult<T, NimbusError>` except
+`isDownloaded` (returns `Boolean`) and `getAllDownloads` (returns `List<DownloadTaskDTO>`).
+
+```kotlin
+// Query
+suspend fun isDownloaded(fileUrl: String): Boolean
+suspend fun getFileSize(fileUrl: String): KResult<Long, NimbusError>
+suspend fun getDownloadTask(fileUrl: String): KResult<DownloadTaskDTO, NimbusError>
+suspend fun getAllDownloads(): List<DownloadTaskDTO>
+
+// Lifecycle
+suspend fun enqueueDownload(fileUrl: String, filePath: String, fileName: String): KResult<DownloadTaskDTO, NimbusError>
+suspend fun startDownload(fileUrl: String): KResult<Unit, NimbusError>
+suspend fun observeDownload(fileUrl: String): KResult<Flow<DownloadState>, NimbusError>
+suspend fun pauseDownload(fileUrl: String): KResult<Unit, NimbusError>
+suspend fun resumeDownload(fileUrl: String): KResult<Unit, NimbusError>
+suspend fun cancelDownload(fileUrl: String): KResult<Unit, NimbusError>  // also deletes partial file
+
+// Cleanup
+suspend fun removeDownload(fileUrl: String, deleteAssociatedFile: Boolean = false): KResult<Unit, NimbusError>
+// removeDownload only succeeds when state is Finished or Failed; use cancelDownload for active tasks.
+
+// Auto-start (when withAutoStart(true) is set on the Builder)
+// enqueueDownload automatically fires startDownload in the background — no manual call needed.
+// Any failure from the background start is emitted as NimbusLogEvent.AutoStartFailed and the
+// task stays Enqueued so it can be started manually. Internal transient-error retry
+// (maxRetryAttempts / retryBaseDelayMs) still applies once the download is running.
+
+// Recovery
+suspend fun retryFailedDownload(fileUrl: String): KResult<Unit, NimbusError>
+// Refetches remote size, deletes partial file, resets state to Enqueued. Call startDownload after.
+
+// High-level convenience
+suspend fun ensureDownloaded(fileUrl: String, filePath: String, fileName: String): KResult<Flow<DownloadState>, NimbusError>
+// Handles the full lifecycle automatically:
+//   already finished  → returns flowOf(DownloadState.Finished)
+//   stale finished    → clears metadata, re-downloads
+//   failed            → calls retryFailedDownload, then starts
+//   paused/enqueued   → resumes or starts, returns observeDownload flow
+//   not found         → enqueues, starts, returns observeDownload flow
+```
+
+## DownloadState sealed class
+
+```kotlin
+sealed class DownloadState {
+    data object Enqueued : DownloadState()
+    data class  Downloading(val progress: Double) : DownloadState()  // 0.0–100.0
+    data class  Paused(val progress: Double) : DownloadState()       // 0.0–100.0
+    data class  Failed(val error: KError) : DownloadState()
+    data object Finished : DownloadState()
+}
+```
+
+`observeDownload` returns a `Flow<DownloadState>` that **auto-completes** when the state
+reaches `Finished` or `Failed`. No manual cancellation needed.
+
+## DownloadTaskDTO fields
+
+```kotlin
+data class DownloadTaskDTO(
+    val id: String,        // SHA-256 of fileUrl — stable across sessions
+    val fileName: String,
+    val fileUrl: String,
+    val filePath: String,
+    val fileSize: Long,    // bytes
+    val state: DownloadState,
+    val version: Int
+)
+```
+
+## NimbusError sealed class — exhaustive list
+
+```kotlin
+sealed class NimbusError {
+    // Input validation (before any network call)
+    object InvalidUrl           // fileUrl is not http/https
+    object InvalidPath          // filePath contains ".." traversal component
+    object InvalidFileName      // fileName is blank, ".", "..", or contains / \ \0
+    class  InvalidFileSize      // remote reported size <= 0
+    object DownloadNotFound     // no task registered for this fileUrl
+    class  FilePathInUse(filePath: String)  // another task already targets this filePath
+    class  InsufficientDiskSpace(path: String, requiredBytes: Long, availableBytes: Long)
+
+    // State machine violations
+    class  InvalidState(currentState: DownloadState)  // operation not allowed in this state
+
+    // Initialisation
+    class  InitializationFailed(cause: KError)
+
+    // Network / storage
+    object ResourceNotFound     // HTTP 404
+    class  TemporaryError       // transient; retry is safe
+    class  PermanentError       // non-recoverable
+    class  UnexpectedError      // programmer error / unhandled exception
+}
+```
+
+## KResult usage patterns
+
+```kotlin
+// Unwrap or return early
+val task = api.enqueueDownload(url, path, name).getOr { error ->
+    // error: NimbusError
+    return
+}
+
+// Side-effect on failure only
+api.startDownload(url).onFailure { error -> log(error) }
+
+// Exhaustive fold
+api.getDownloadTask(url).fold(
+    onSuccess = { dto -> show(dto) },
+    onFailure = { error ->
+        when (error) {
+            NimbusError.DownloadNotFound -> showEmpty()
+            is NimbusError.TemporaryError -> showRetry()
+            else -> showError(error)
+        }
+    }
+)
+```
+
+## Common patterns
+
+### Simple download (manual steps)
+
+```kotlin
+// All these calls must happen inside a coroutine.
+api.enqueueDownload(url, filePath, fileName).getOr { return@launch }
+api.startDownload(url).getOr { return@launch }
+api.observeDownload(url).getOr { return@launch }.collect { state ->
+    when (state) {
+        DownloadState.Enqueued         -> { /* waiting */ }
+        is DownloadState.Downloading   -> updateProgress(state.progress)
+        is DownloadState.Paused        -> showPaused(state.progress)
+        is DownloadState.Failed        -> showError(state.error)
+        DownloadState.Finished         -> showDone()
+    }
+}
+```
+
+### One-liner convenience (recommended)
+
+```kotlin
+api.ensureDownloaded(url, filePath, fileName).getOr { return@launch }.collect { state ->
+    when (state) { … }
+}
+```
+
+### Pause and resume
+
+```kotlin
+api.pauseDownload(url).onFailure { log(it) }
+// Later:
+api.resumeDownload(url).getOr { return@launch }
+api.observeDownload(url).getOr { return@launch }.collect { … }
+```
+
+### Retry after failure
+
+```kotlin
+api.retryFailedDownload(url).getOr { return@launch }
+api.startDownload(url).getOr { return@launch }
+api.observeDownload(url).getOr { return@launch }.collect { … }
+```
+
+### Cleanup after finish
+
+```kotlin
+// Remove metadata only (keep file on disk):
+api.removeDownload(url)
+// Remove metadata AND delete file:
+api.removeDownload(url, deleteAssociatedFile = true)
+```
+
+## State machine — valid transitions
+
+```
+Enqueued  ──startDownload──►  Downloading  ──pauseDownload──►  Paused
+                                    │                              │
+                                    │                         resumeDownload
+                                    ▼                              │
+                                Finished ◄─────────────────────────┘
+                                    │
+                                 (error)
+                                    ▼
+                                 Failed  ──retryFailedDownload──► Enqueued
+```
+
+`cancelDownload` is valid from any state and removes both metadata and the partial file.
+`removeDownload` is only valid from `Finished` or `Failed`.
+
+## What Nimbus does NOT do
+
+- Does not validate that `filePath`'s parent directory exists — create it before calling `enqueueDownload`.
+- Does not enforce a process-wide singleton — use your DI container's `single {}` for that.
+- Does not support non-HTTP(S) URLs.
+- Does not resume downloads that were `Enqueued` but never started across sessions —
+  call `startDownload` again after `init()` if you want auto-resume on restart.
+
+## Implementing NimbusDownloadPort (required if not using nimbus-ktor)
+
+```kotlin
+interface NimbusDownloadPort {
+    suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError>
+    suspend fun downloadFile(
+        fileUrl: String,
+        offset: Long,
+        onSourceOpened: suspend (Source) -> Unit
+    ): KResult<Unit, DownloadError>
+}
+```
+
+The `onSourceOpened` lambda receives a `kotlinx.io.Source`. Stream it to the sink Nimbus
+provides internally — do not buffer the entire response in memory.
+
+**HTTP resume contract** (what your implementation must handle):
+- When `offset > 0`, send `Range: bytes=offset-`.
+- Accept **206** with matching `Content-Range` start byte.
+- Reject **200** with a non-empty body when offset > 0 — this would corrupt the file
+  (`DownloadError.InconsistentRangeResponse`).
+- Map **416** → `DownloadError.RangeNotSatisfiable`.
+
+## Using KtorDownloadAdapter (nimbus-ktor artifact)
+
+```kotlin
+// Add dependency: io.github.giovanniandreuzza:nimbus-ktor:<version>
+import io.github.giovanniandreuzza.nimbus.ktor.KtorDownloadAdapter
+
+val adapter = KtorDownloadAdapter(httpClient)   // caller owns HttpClient lifecycle
+
+val api = Nimbus.Builder()
+    .withNimbusDownloadPort(adapter)
+    .withDownloadManagerPath(storePath)
+    .build()
+    .init()
+    .getOr { … }
+```
+
+`KtorDownloadAdapter` handles:
+- `HEAD` for size; falls back to `GET Range: bytes=0-0` + `Content-Range` when `Content-Length` is absent.
+- 206 / 200 / 416 mapping to the typed `DownloadError` hierarchy.
+- `InconsistentRangeResponse` guard for servers that return a full 200 body on a resume request.
+
+## Android — withAndroidContext extension
+
+On Android, you can call `.withAndroidContext(context)` on the Builder to have the storage
+adapter automatically resolve paths relative to the app's files directory.
+
+## Optional: NimbusLogger
+
+```kotlin
+fun interface NimbusLogger {
+    suspend fun log(event: NimbusLogEvent)
+}
+```
+
+`NimbusLogEvent` variants:
+
+```kotlin
+sealed class NimbusLogEvent {
+    data class DownloadEnqueued(val fileUrl: String, val filePath: String, val expectedSizeBytes: Long)
+    data class DownloadStartRequested(val fileUrl: String)
+    data class DownloadFinished(val fileUrl: String)
+    data class DownloadFailed(val fileUrl: String, val error: NimbusError)
+    data class EnsureDownloadedAlreadyComplete(val fileUrl: String)
+    data class EnsureDownloadedStaleFinishedRemoved(val fileUrl: String)
+    data class InsufficientDiskSpace(val fileUrl: String?, val path: String, val requiredBytes: Long, val availableBytes: Long)
+    data class AutoStartFailed(val fileUrl: String, val error: NimbusError)
+}
+```
+
+Implementations should be fast and non-throwing; dispatch to a background dispatcher if needed.

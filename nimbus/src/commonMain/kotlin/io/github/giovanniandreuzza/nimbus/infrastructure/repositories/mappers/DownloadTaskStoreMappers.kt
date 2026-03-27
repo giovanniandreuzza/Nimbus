@@ -27,8 +27,7 @@ internal object DownloadTaskStoreMappers {
             fileUrl = fileUrl,
             filePath = filePath,
             fileSize = fileSize,
-            state = state.toState(),
-            version = version
+            state = state.toState()
         )
     }
 
@@ -57,8 +56,7 @@ internal object DownloadTaskStoreMappers {
             fileUrl = fileUrl.value,
             filePath = filePath.value,
             fileSize = fileSize.value,
-            state = state.toStore(),
-            version = version
+            state = state.toStore()
         )
     }
 }

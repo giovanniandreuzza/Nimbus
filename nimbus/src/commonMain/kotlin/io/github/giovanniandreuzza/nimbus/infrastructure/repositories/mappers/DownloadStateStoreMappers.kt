@@ -27,6 +27,7 @@ internal object DownloadStateStoreMappers {
             is DownloadStateStore.Failed -> DownloadState.Failed(toState())
 
             is DownloadStateStore.Finished -> DownloadState.Finished
+            is DownloadStateStore.Cancelled -> DownloadState.Cancelled
         }
     }
 
@@ -43,6 +44,7 @@ internal object DownloadStateStoreMappers {
             is DownloadState.Paused -> DownloadStateStore.Paused(progress)
             is DownloadState.Failed -> error.toStore()
             is DownloadState.Finished -> DownloadStateStore.Finished
+            is DownloadState.Cancelled -> DownloadStateStore.Cancelled
         }
     }
 

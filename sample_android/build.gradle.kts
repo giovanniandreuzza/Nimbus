@@ -3,7 +3,6 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
 
@@ -39,18 +38,18 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
+    buildFeatures {
+        compose = true
+    }
+
     tasks.withType<KotlinJvmCompile>().configureEach {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
             freeCompilerArgs.addAll(
                 "-opt-in=kotlin.RequiresOptIn",
-                "-Xjvm-default=all-compatibility"
+                "-jvm-default=enable"
             )
         }
-    }
-
-    buildFeatures {
-        compose = true
     }
 }
 
@@ -86,6 +85,7 @@ dependencies {
     // Nimbus
 //    implementation(libs.nimbus)
     implementation(project(":nimbus"))
+    implementation(project(":nimbus-ktor"))
 
     // Test
     testImplementation(libs.junit)
