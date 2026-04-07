@@ -1,11 +1,9 @@
 package io.github.giovanniandreuzza.nimbus.infrastructure.ports
 
-import io.github.giovanniandreuzza.explicitarchitecture.infrastructure.adapters.IsAdapter
 import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.fold
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.getOr
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
@@ -19,30 +17,36 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.shared.utils.getDownloadProgress
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.yield
 import kotlinx.io.InternalIoApi
-import kotlinx.io.buffered
+import kotlinx.io.Sink
+import kotlinx.io.Source
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Download Adapter.
  *
- * @param concurrencyLimit Concurrency Limit
- * @param downloadScope Coroutine Scope
- * @param downloadProgressCallback Download Callback
- * @param nimbusStoragePort Nimbus Storage Port
- * @param nimbusDownloadPort Nimbus Download Port
- * @param bufferSize Buffer Size
- * @param notifyEveryBytes Notify Every Bytes
+ * Drives HTTP downloads concurrently up to [concurrencyLimit] active downloads
+ * at a time. Each download runs in a child coroutine of [downloadScope] and
+ * reports progress via [downloadProgressCallback].
+ *
+ * Job registration uses [CoroutineStart.LAZY] under [jobsMutex] to avoid races
+ * where a second [startDownload] observes no job before the first registers.
+ *
  * @author Giovanni Andreuzza
  */
-@IsAdapter
 internal class DownloadAdapter(
     concurrencyLimit: Int,
     private val downloadScope: CoroutineScope,
@@ -50,10 +54,13 @@ internal class DownloadAdapter(
     private val nimbusStoragePort: NimbusStoragePort,
     private val nimbusDownloadPort: NimbusDownloadPort,
     private val bufferSize: Long,
-    private val notifyEveryBytes: Long
+    private val notifyEveryBytes: Long,
+    private val maxRetryAttempts: Int,
+    private val retryBaseDelayMs: Long
 ) : DownloadPort {
 
     private val semaphore = Semaphore(concurrencyLimit)
+    private val jobsMutex = Mutex()
     private val downloadJobs = mutableMapOf<String, Job>()
 
     override suspend fun getFileSizeToDownload(fileUrl: String): KResult<Long, GetFileSizeError> {
@@ -62,159 +69,311 @@ internal class DownloadAdapter(
 
     @OptIn(InternalIoApi::class)
     override suspend fun startDownload(downloadTask: DownloadTaskDTO): KResult<Unit, DownloadError> {
-        val downloadId = downloadTask.id
+        val id = downloadTask.id
 
-        if (downloadJobs.containsKey(downloadId)) {
+        val quickSize: Long? = when (val r = nimbusStoragePort.size(downloadTask.filePath)) {
+            is Success -> r.value
+            is Failure -> null
+        }
+        if (quickSize != null && quickSize == downloadTask.fileSize) {
+            downloadProgressCallback.onDownloadFinished(id)
             return Success(Unit)
         }
 
-        val bytesAlreadyDownloaded = getBytesAlreadyDownloadedAmount(
-            filePath = downloadTask.filePath
-        )
-
-        if (bytesAlreadyDownloaded == downloadTask.fileSize) {
-            downloadProgressCallback.onDownloadFinished(downloadId)
-            return Success(Unit)
-        }
-
-        nimbusStoragePort.exists(downloadTask.filePath).fold(
-            onSuccess = { exists ->
-                if (!exists) {
-                    nimbusStoragePort.create(downloadTask.filePath).onFailure {
-                        with(it) {
-                            val error = when (this) {
-                                CreateFileError.FileAlreadyExists -> throw IllegalStateException()
-                                is CreateFileError.IOError -> DownloadError.PermanentError(cause)
-                                is CreateFileError.ReadPermissionDenied -> DownloadError.PermanentError(
-                                    cause
-                                )
-
-                                is CreateFileError.WritePermissionDenied -> DownloadError.PermanentError(
-                                    cause
-                                )
-                            }
-                            return Failure(error)
-                        }
-                    }
+        val job = downloadScope.launch(
+            context = createExceptionHandler(id),
+            start = CoroutineStart.LAZY
+        ) {
+            try {
+                semaphore.withPermit {
+                    runDownloadJob(downloadTask, id)
                 }
-            },
-            onFailure = {
-                return Failure(DownloadError.PermanentError(it))
-            }
-        )
-
-        val sink = nimbusStoragePort.sink(
-            path = downloadTask.filePath,
-            hasToAppend = true
-        ).getOr {
-            with(it) {
-                val error = when (this) {
-                    GetFileSinkError.FileNotFound -> DownloadError.TemporaryError(cause)
-                    is GetFileSinkError.ReadPermissionDenied -> DownloadError.PermanentError(cause)
-                    is GetFileSinkError.WritePermissionDenied -> DownloadError.PermanentError(cause)
-                }
-                downloadProgressCallback.onDownloadFailed(
-                    id = downloadId,
-                    error = error
-                )
-                return Failure(error)
+            } finally {
+                removeJob(id)
             }
         }
 
-        val coroutineHandler = CoroutineExceptionHandler { _, throwable ->
-            val error = KError(
-                code = "download_unexpected_error",
-                message = throwable.message ?: "An unexpected error occurred during download.",
-            )
-            downloadProgressCallback.onDownloadFailed(
-                id = downloadId,
-                error = DownloadError.UnexpectedError(error)
-            )
-            downloadJobs.remove(downloadId)
-        }
-
-        downloadJobs[downloadId] = downloadScope.launch(coroutineHandler) {
-            semaphore.withPermit {
-                try {
-                    val contentLength = downloadTask.fileSize
-                    var progressBytes = bytesAlreadyDownloaded
-
-                    nimbusDownloadPort.downloadFile(
-                        fileUrl = downloadTask.fileUrl,
-                        offset = bytesAlreadyDownloaded
-                    ) { source ->
-                        sink.buffered().use { output ->
-                            source.buffered().use { input ->
-                                var counter = 0L
-
-                                while (!input.exhausted() && isActive) {
-                                    val bytesRead = input.readAtMostTo(output.buffer, bufferSize)
-
-                                    if (bytesRead > 0) {
-                                        progressBytes += bytesRead
-                                        counter += bytesRead
-
-                                        output.emit()
-
-                                        if (counter >= notifyEveryBytes) {
-                                            val downloadProgress = getDownloadProgress(
-                                                downloadedBytes = progressBytes,
-                                                fileSize = contentLength
-                                            )
-
-                                            downloadProgressCallback.onDownloadProgress(
-                                                id = downloadId,
-                                                progress = downloadProgress
-                                            )
-
-                                            yield()
-
-                                            counter = 0
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }.onFailure {
-                        downloadProgressCallback.onDownloadFailed(
-                            id = downloadId,
-                            error = it
-                        )
-                        downloadJobs.remove(downloadId)
-                        return@withPermit
-                    }
-
-                    downloadProgressCallback.onDownloadFinished(downloadId)
-                    downloadJobs.remove(downloadId)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    val error = KError(
-                        code = "download_unexpected_error",
-                        message = e.message ?: "An unexpected error occurred during download.",
-                    )
-                    downloadProgressCallback.onDownloadFailed(
-                        id = downloadId,
-                        error = DownloadError.UnexpectedError(error)
-                    )
-                    downloadJobs.remove(downloadId)
-                }
+        jobsMutex.withLock {
+            if (downloadJobs.containsKey(id)) {
+                job.cancel()
+                return Success(Unit)
             }
+            downloadJobs[id] = job
         }
+        job.start()
         return Success(Unit)
     }
 
-    override fun stopDownload(downloadId: String) {
-        downloadJobs[downloadId]?.cancel()
-        downloadJobs.remove(downloadId)
+    override suspend fun stopDownload(downloadId: String) {
+        val job = removeJob(downloadId)
+        job?.cancelAndJoin()
     }
 
-    /* Private Methods */
+    private suspend fun runDownloadJob(
+        downloadTask: DownloadTaskDTO,
+        id: String
+    ) {
+        try {
+            val bytesAlreadyDownloaded = resolvePartialBytesOnDisk(downloadTask, id) ?: return
+            if (!ensureDownloadTargetReady(downloadTask.filePath, id)) return
+            if (!downloadWithRetry(downloadTask, id, bytesAlreadyDownloaded)) return
+            if (!verifyFileIntegrity(downloadTask, id)) return
 
-    private fun getBytesAlreadyDownloadedAmount(filePath: String): Long {
-        return when (val fileSizeResult = nimbusStoragePort.size(filePath)) {
-            is Failure -> 0
-            is Success -> fileSizeResult.value
+            downloadProgressCallback.onDownloadFinished(id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val error = unexpectedDownloadError(e)
+            notifyFailureAndCleanup(id, DownloadError.UnexpectedError(error))
         }
     }
+
+    /**
+     * Resolves how many bytes are already on disk for resume.
+     *
+     * @return `null` if the situation is unreadable or invalid (failure already notified).
+     */
+    private suspend fun resolvePartialBytesOnDisk(
+        downloadTask: DownloadTaskDTO,
+        id: String
+    ): Long? {
+        val exists = nimbusStoragePort.exists(downloadTask.filePath).getOr { error ->
+            notifyFailureAndCleanup(id, DownloadError.LocalFileStateUnreadable(error))
+            return null
+        }
+        if (!exists) return 0L
+
+        val size = nimbusStoragePort.size(downloadTask.filePath).getOr { error ->
+            notifyFailureAndCleanup(id, DownloadError.LocalFileStateUnreadable(error))
+            return null
+        }
+        return when {
+            size > downloadTask.fileSize -> {
+                notifyFailureAndCleanup(
+                    id,
+                    DownloadError.LocalFileOversized(
+                        KError(
+                            "local_file_oversized",
+                            "Local size $size exceeds expected ${downloadTask.fileSize}."
+                        )
+                    )
+                )
+                null
+            }
+            else -> size
+        }
+    }
+
+    /**
+     * Verifies that the file on disk matches the expected size after download.
+     */
+    private suspend fun verifyFileIntegrity(downloadTask: DownloadTaskDTO, id: String): Boolean {
+        val actualSize = when (val r = nimbusStoragePort.size(downloadTask.filePath)) {
+            is Success -> r.value
+            is Failure -> 0L
+        }
+        if (actualSize != downloadTask.fileSize) {
+            val error = KError(
+                code = "file_integrity_error",
+                message = "File size mismatch after download: expected ${downloadTask.fileSize}, got $actualSize"
+            )
+            notifyFailureAndCleanup(id, DownloadError.TemporaryError(error))
+            return false
+        }
+        return true
+    }
+
+    private suspend fun ensureDownloadTargetReady(filePath: String, id: String): Boolean {
+        val exists = nimbusStoragePort.exists(filePath).getOr { error ->
+            notifyFailureAndCleanup(id, DownloadError.PermanentError(error))
+            return false
+        }
+        if (exists) return true
+
+        nimbusStoragePort.create(filePath).onFailure { error ->
+            val mappedError = when (error) {
+                CreateFileError.FileAlreadyExists -> return true
+                is CreateFileError.IOError -> DownloadError.PermanentError(error.cause)
+                is CreateFileError.ReadPermissionDenied -> DownloadError.PermanentError(error.cause)
+                is CreateFileError.WritePermissionDenied -> DownloadError.PermanentError(error.cause)
+            }
+            notifyFailureAndCleanup(id, mappedError)
+            return false
+        }
+        return true
+    }
+
+    private suspend fun truncateLocalFileAfter416(filePath: String, id: String): Boolean {
+        nimbusStoragePort.delete(filePath)
+        nimbusStoragePort.create(filePath).onFailure { error ->
+            val mappedError = when (error) {
+                is CreateFileError.IOError -> DownloadError.PermanentError(error.cause)
+                is CreateFileError.ReadPermissionDenied -> DownloadError.PermanentError(error.cause)
+                is CreateFileError.WritePermissionDenied -> DownloadError.PermanentError(error.cause)
+                CreateFileError.FileAlreadyExists -> DownloadError.TemporaryError(
+                    KError("truncate_race", "Could not truncate file after 416.")
+                )
+            }
+            notifyFailureAndCleanup(id, mappedError)
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Executes the HTTP download with transport-level retry for transient errors.
+     *
+     * ## Two-layer retry strategy
+     *
+     * **Layer 1 — transport retry (this function):** handles transient HTTP/network failures
+     * ([DownloadError.TemporaryError]) with exponential back-off up to [maxRetryAttempts].
+     * The task stays `Downloading` throughout; no state change is visible to callers.
+     * HTTP 416 (Range Not Satisfiable) is handled inline by truncating the local file
+     * and restarting from byte 0.
+     *
+     * **Layer 2 — library-level auto-retry ([io.github.giovanniandreuzza.nimbus.di]):**
+     * fires only when `autoStart = true` and a download reaches [DownloadError] after all
+     * transport retries are exhausted. It transitions the task through
+     * `Failed → Enqueued → Downloading`, re-fetching the remote file size before re-queuing.
+     * This layer is designed for long-lived processes (e.g. kiosk apps) where a file must
+     * eventually be downloaded despite repeated server-side failures.
+     *
+     * The two layers are complementary: Layer 1 is fast (milliseconds of back-off, stays in
+     * memory), while Layer 2 is a full round-trip that resets all state and can recover from
+     * errors that are permanent within a single session (e.g. a server restart changing the
+     * file size).
+     */
+    @OptIn(InternalIoApi::class)
+    private suspend fun downloadWithRetry(
+        downloadTask: DownloadTaskDTO,
+        id: String,
+        initialProgressBytes: Long
+    ): Boolean {
+        var progressBytes = initialProgressBytes
+        val totalFileSize = downloadTask.fileSize
+        var retryAttempt = 0
+
+        downloadLoop@ while (currentCoroutineContext().isActive) {
+            val sink = openSink(downloadTask.filePath, id) ?: return false
+
+            val result = nimbusDownloadPort.downloadFile(
+                fileUrl = downloadTask.fileUrl,
+                offset = progressBytes
+            ) { source ->
+                sink.use { output ->
+                    progressBytes = copySourceToSink(
+                        source = source,
+                        sink = output,
+                        id = id,
+                        totalFileSize = totalFileSize,
+                        initialProgressBytes = progressBytes
+                    )
+                }
+            }
+
+            when (result) {
+                is Success -> {
+                    retryAttempt = 0
+                    break@downloadLoop
+                }
+                is Failure -> {
+                    when (result.error) {
+                        DownloadError.RangeNotSatisfiable -> {
+                            if (!truncateLocalFileAfter416(downloadTask.filePath, id)) return false
+                            progressBytes = 0L
+                            retryAttempt = 0
+                        }
+                        else -> {
+                            val shouldRetry = shouldRetry(
+                                error = result.error,
+                                retryAttempt = retryAttempt,
+                                isStillActive = currentCoroutineContext().isActive
+                            )
+                            if (!shouldRetry) {
+                                notifyFailureAndCleanup(id, result.error)
+                                return false
+                            }
+                            retryAttempt += 1
+                            delay(retryBaseDelayMs * retryAttempt)
+                        }
+                    }
+                }
+            }
+        }
+
+        return true
+    }
+
+    private suspend fun openSink(filePath: String, id: String): Sink? {
+        return nimbusStoragePort.sink(path = filePath, hasToAppend = true).getOr { error ->
+            val mappedError = when (error) {
+                GetFileSinkError.FileNotFound -> DownloadError.TemporaryError(error.cause)
+                is GetFileSinkError.ReadPermissionDenied -> DownloadError.PermanentError(error.cause)
+                is GetFileSinkError.WritePermissionDenied -> DownloadError.PermanentError(error.cause)
+            }
+            notifyFailureAndCleanup(id, mappedError)
+            return null
+        }
+    }
+
+    @OptIn(InternalIoApi::class)
+    private suspend fun copySourceToSink(
+        source: Source,
+        sink: Sink,
+        id: String,
+        totalFileSize: Long,
+        initialProgressBytes: Long
+    ): Long {
+        var progressBytes = initialProgressBytes
+        source.use { input ->
+            var bytesSinceLastProgressUpdate = 0L
+            while (!input.exhausted() && currentCoroutineContext().isActive) {
+                val bytesRead = input.readAtMostTo(sink.buffer, bufferSize)
+                if (bytesRead <= 0) continue
+
+                progressBytes += bytesRead
+                bytesSinceLastProgressUpdate += bytesRead
+                sink.emit()
+
+                if (bytesSinceLastProgressUpdate >= notifyEveryBytes) {
+                    val progress = getDownloadProgress(progressBytes, totalFileSize)
+                    downloadProgressCallback.onDownloadProgress(id, progress)
+                    yield()
+                    bytesSinceLastProgressUpdate = 0L
+                }
+            }
+        }
+        return progressBytes
+    }
+
+    private fun shouldRetry(error: DownloadError, retryAttempt: Int, isStillActive: Boolean): Boolean {
+        return error is DownloadError.TemporaryError &&
+            retryAttempt < maxRetryAttempts &&
+            isStillActive
+    }
+
+    private fun createExceptionHandler(id: String): CoroutineExceptionHandler {
+        return CoroutineExceptionHandler { _, throwable ->
+            val error = unexpectedDownloadError(throwable)
+            downloadScope.launch {
+                notifyFailureAndCleanup(id, DownloadError.UnexpectedError(error))
+            }
+        }
+    }
+
+    private fun unexpectedDownloadError(throwable: Throwable): KError {
+        return KError(
+            code = "download_unexpected_error",
+            message = throwable.message ?: "An unexpected error occurred during download."
+        )
+    }
+
+    private suspend fun notifyFailureAndCleanup(id: String, error: DownloadError) {
+        // Remove the job before notifying so that an auto-retry triggered inside
+        // onDownloadFailed can register a fresh job without seeing the stale one.
+        removeJob(id)
+        downloadProgressCallback.onDownloadFailed(id, error)
+    }
+
+    private suspend fun removeJob(id: String): Job? = jobsMutex.withLock { downloadJobs.remove(id) }
 }

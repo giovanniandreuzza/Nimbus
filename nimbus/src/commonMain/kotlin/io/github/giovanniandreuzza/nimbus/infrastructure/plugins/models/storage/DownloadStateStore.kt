@@ -66,4 +66,10 @@ internal sealed class DownloadStateStore {
      */
     @Serializable
     data object Finished : DownloadStateStore()
+
+    /**
+     * Cancelled state.
+     */
+    @Serializable
+    data object Cancelled : DownloadStateStore()
 }

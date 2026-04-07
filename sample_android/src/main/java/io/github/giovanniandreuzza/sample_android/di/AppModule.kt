@@ -1,16 +1,14 @@
 package io.github.giovanniandreuzza.sample_android.di
 
-import io.github.giovanniandreuzza.sample_android.framework.nimbus.NimbusSetup
-import io.github.giovanniandreuzza.sample_android.framework.retrofit.AppEndpoint
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
+import io.github.giovanniandreuzza.sample_android.framework.ktor.KtorClient
+import io.github.giovanniandreuzza.sample_android.framework.nimbus.buildNimbusApi
 import io.github.giovanniandreuzza.sample_android.presentation.MainViewModel
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.Json
 import org.koin.android.ext.koin.androidApplication
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
-import retrofit2.Retrofit
+import java.io.File
 
 /**
  * App Module Dependency Injection.
@@ -28,17 +26,17 @@ val appModule = module {
         }
     }
 
-    single<AppEndpoint> {
-        Retrofit.Builder().baseUrl("https://www.google.com").build().create(AppEndpoint::class.java)
+    single { KtorClient() }
+
+    single<NimbusAPI> {
+        buildNimbusApi(
+            context = androidApplication(),
+            httpClient = get<KtorClient>().client
+        )
     }
 
-    single<CoroutineScope> {
-        CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    viewModel {
+        val downloadFolder = File(androidApplication().filesDir, "downloads").also { it.mkdirs() }
+        MainViewModel(nimbus = get(), downloadFolder = downloadFolder)
     }
-
-    single<NimbusSetup> {
-        NimbusSetup(context = androidApplication())
-    }
-
-    viewModel { MainViewModel(nimbus = get()) }
 }

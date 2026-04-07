@@ -16,5 +16,5 @@ import kotlinx.serialization.protobuf.ProtoNumber
 @IsFrameworkDto
 internal data class DownloadStore(
     @ProtoNumber(1)
-    val downloads: MutableMap<String, DownloadTaskStore> = mutableMapOf()
+    val downloads: Map<String, DownloadTaskStore> = emptyMap()
 )

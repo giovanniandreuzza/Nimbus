@@ -9,6 +9,13 @@ import kotlinx.io.Source
 /**
  * Nimbus Download Port.
  *
+ * Implementors (e.g. `KtorDownloadAdapter`) **must** return [GetFileSizeError] and [DownloadError]
+ * from the respective methods. Both types are `public` precisely because they are part of the
+ * implementor contract, not because they are part of the public API surface. Callers of
+ * [io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI] never see these types directly —
+ * they are mapped to [io.github.giovanniandreuzza.nimbus.presentation.NimbusError] before crossing
+ * the public boundary.
+ *
  * @author Giovanni Andreuzza
  */
 @IsFramework

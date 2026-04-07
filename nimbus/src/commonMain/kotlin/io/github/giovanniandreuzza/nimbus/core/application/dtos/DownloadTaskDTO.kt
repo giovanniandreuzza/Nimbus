@@ -15,7 +15,6 @@ import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
  * @param filePath The file path.
  * @param fileSize The file size.
  * @param state The download state.
- * @param version The version.
  * @author Giovanni Andreuzza
  */
 @IsDto
@@ -25,8 +24,7 @@ public data class DownloadTaskDTO(
     val fileUrl: String,
     val filePath: String,
     val fileSize: Long,
-    val state: DownloadState,
-    val version: Int
+    val state: DownloadState
 ) {
 
     internal companion object {
@@ -44,8 +42,7 @@ public data class DownloadTaskDTO(
                 fileUrl = downloadTask.fileUrl.value,
                 filePath = downloadTask.filePath.value,
                 fileSize = downloadTask.fileSize.value,
-                state = downloadTask.state,
-                version = downloadTask.version
+                state = downloadTask.state
             )
         }
 

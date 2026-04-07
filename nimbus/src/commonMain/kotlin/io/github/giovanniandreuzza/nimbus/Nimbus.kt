@@ -1,47 +1,54 @@
 package io.github.giovanniandreuzza.nimbus
 
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
-import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
 import io.github.giovanniandreuzza.nimbus.di.init
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlin.concurrent.Volatile
 
 /**
- * Nimbus.
+ * Entry point for the Nimbus download library.
  *
- * @param downloadScope The download scope.
- * @param ioDispatcher The IO dispatcher.
- * @param concurrencyLimit The concurrency limit.
- * @param nimbusDownloadPort The nimbus download port.
- * @param nimbusStoragePort The nimbus storage port.
+ * Build an instance with [Builder], then call [init] once before using the
+ * returned [NimbusAPI].
+ *
+ * **Singleton responsibility belongs to the caller** (e.g., a DI container like
+ * Koin `single {}`). The library does not enforce a process-wide singleton — do
+ * not call [Builder.build] more than once with the same store path.
+ *
+ * ```kotlin
+ * val nimbus = Nimbus.Builder()
+ *     .withNimbusDownloadPort(myDownloadPort)
+ *     .withDownloadManagerPath(cacheDir.path)
+ *     .build()
+ *
+ * val api: NimbusAPI = nimbus.init()
+ * api.enqueueDownload(url, filePath, fileName)
+ * ```
+ *
  * @author Giovanni Andreuzza
  */
 public class Nimbus private constructor(
     downloadScope: CoroutineScope,
     ioDispatcher: CoroutineDispatcher,
     concurrencyLimit: Int,
-    nimbusDownloadPort: NimbusDownloadPort?,
+    nimbusDownloadPort: NimbusDownloadPort,
     nimbusStoragePort: NimbusStoragePort?,
     downloadManagerPath: String,
     downloadBufferSize: Long,
-    downloadNotifyEveryBytes: Long
+    downloadNotifyEveryBytes: Long,
+    maxRetryAttempts: Int,
+    retryBaseDelayMs: Long,
+    minReservedDiskBytes: Long?,
+    autoStart: Boolean,
+    logger: NimbusLogger?
 ) {
-    private val mutex = Mutex()
-    private var isInitialized: Boolean = false
-
-    private val downloadController = init(
+    private val downloadService = init(
         downloadScope = downloadScope,
         ioDispatcher = ioDispatcher,
         concurrencyLimit = concurrencyLimit,
@@ -49,80 +56,141 @@ public class Nimbus private constructor(
         nimbusStoragePort = nimbusStoragePort,
         downloadManagerPath = downloadManagerPath,
         downloadBufferSize = downloadBufferSize,
-        downloadNotifyEveryBytes = downloadNotifyEveryBytes
+        downloadNotifyEveryBytes = downloadNotifyEveryBytes,
+        maxRetryAttempts = maxRetryAttempts,
+        retryBaseDelayMs = retryBaseDelayMs,
+        minReservedDiskBytes = minReservedDiskBytes,
+        autoStart = autoStart,
+        logger = logger
     )
 
     public companion object {
-        @Volatile
-        private var instance: Nimbus? = null
 
         public class Builder {
             private var downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-            private var ioDispatcher = Dispatchers.IO
+            private var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
             private var concurrencyLimit = 1
             private var nimbusDownloadPort: NimbusDownloadPort? = null
             private var nimbusStoragePort: NimbusStoragePort? = null
             private var downloadManagerPath: String? = null
             private var downloadBufferSize: Long = 8 * 1024L
             private var downloadNotifyEveryBytes: Long = 16 * 32 * 1024L
+            private var maxRetryAttempts: Int = 3
+            private var retryBaseDelayMs: Long = 500L
+            private var minReservedDiskBytes: Long? = null
+            private var autoStart: Boolean = false
+            private var logger: NimbusLogger? = null
 
-            public fun withDownloadScope(downloadScope: CoroutineScope): Builder =
-                apply { this.downloadScope = downloadScope }
+            public fun withDownloadScope(scope: CoroutineScope): Builder =
+                apply { downloadScope = scope }
 
-            public fun withIODispatcher(ioDispatcher: CoroutineDispatcher): Builder =
-                apply { this.ioDispatcher = ioDispatcher }
+            public fun withIODispatcher(dispatcher: CoroutineDispatcher): Builder =
+                apply { ioDispatcher = dispatcher }
 
-            public fun withConcurrencyLimit(concurrencyLimit: Int): Builder =
-                apply { this.concurrencyLimit = concurrencyLimit }
+            public fun withConcurrencyLimit(limit: Int): Builder =
+                apply { concurrencyLimit = limit }
 
-            public fun withNimbusDownloadPort(nimbusDownloadPort: NimbusDownloadPort): Builder =
-                apply { this.nimbusDownloadPort = nimbusDownloadPort }
+            public fun withNimbusDownloadPort(port: NimbusDownloadPort): Builder =
+                apply { nimbusDownloadPort = port }
 
-            public fun withNimbusStoragePort(nimbusStoragePort: NimbusStoragePort): Builder =
-                apply { this.nimbusStoragePort = nimbusStoragePort }
+            public fun withNimbusStoragePort(port: NimbusStoragePort): Builder =
+                apply { nimbusStoragePort = port }
 
-            public fun withDownloadManagerPath(downloadManagerPath: String): Builder =
-                apply { this.downloadManagerPath = downloadManagerPath }
+            public fun withDownloadManagerPath(path: String): Builder =
+                apply { downloadManagerPath = path }
 
-            public fun withDownloadBufferSize(downloadBufferSize: Long): Builder =
-                apply { this.downloadBufferSize = downloadBufferSize }
+            public fun withDownloadBufferSize(size: Long): Builder =
+                apply { downloadBufferSize = size }
 
-            public fun withDownloadNotifyEveryBytes(downloadNotifyEveryBytes: Long): Builder =
-                apply { this.downloadNotifyEveryBytes = downloadNotifyEveryBytes }
+            public fun withDownloadNotifyEveryBytes(bytes: Long): Builder =
+                apply { downloadNotifyEveryBytes = bytes }
+
+            public fun withMaxRetryAttempts(attempts: Int): Builder =
+                apply { maxRetryAttempts = attempts }
+
+            public fun withRetryBaseDelayMs(delayMs: Long): Builder =
+                apply { retryBaseDelayMs = delayMs }
+
+            /**
+             * When non-null, requires at least this many bytes to remain free on the destination
+             * volume **after** accounting for bytes still to be written for the download.
+             * When null (default), no free-space check is performed.
+             */
+            public fun withMinReservedDiskBytes(bytes: Long?): Builder =
+                apply {
+                    require(bytes == null || bytes >= 0L) { "minReservedDiskBytes must be null or >= 0" }
+                    minReservedDiskBytes = bytes
+                }
+
+            /**
+             * When `true`, automatically starts a download immediately after [enqueueDownload]
+             * succeeds. The start runs in the background — the caller does not need to call
+             * [NimbusAPI.startDownload] manually. Any [NimbusError] from the background start
+             * is silently logged via [NimbusLogger] as [io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent.AutoStartFailed]
+             * and the task remains in [io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState.Enqueued]
+             * so it can be started manually. Default `false`.
+             */
+            public fun withAutoStart(enabled: Boolean): Builder =
+                apply { autoStart = enabled }
+
+            /** Optional structured logging (e.g. remote diagnostics in unattended devices). */
+            public fun withNimbusLogger(logger: NimbusLogger?): Builder =
+                apply { this.logger = logger }
+
+            public fun createAndInit(): NimbusAPI = build().init()
 
             public fun build(): Nimbus {
-                if (downloadManagerPath == null) {
-                    throw IllegalStateException("downloadManagerPath must be provided")
+                requireNotNull(downloadManagerPath) { "downloadManagerPath must be provided" }
+                requireNotNull(nimbusDownloadPort) { "nimbusDownloadPort must be provided" }
+                require(maxRetryAttempts >= 0) { "maxRetryAttempts must be >= 0" }
+                require(retryBaseDelayMs > 0L) { "retryBaseDelayMs must be > 0" }
+                // When using the default file system storage, the path must be absolute so that
+                // kotlinx.io can open/create it. Relative paths resolve to the process working
+                // directory, which is read-only on Android and iOS.
+                if (nimbusStoragePort == null) {
+                    require(downloadManagerPath!!.isAbsolutePath()) {
+                        "downloadManagerPath must be an absolute path when using the default " +
+                            "file system storage. Got: '${downloadManagerPath}'. " +
+                            "On Android use .withAndroidContext(context), or pass " +
+                            "context.filesDir.absolutePath + \"/subdir\" explicitly. " +
+                            "On iOS use the documents or caches directory absolute path."
+                    }
                 }
 
-                if (instance == null) {
-                    instance = Nimbus(
-                        downloadScope = downloadScope,
-                        ioDispatcher = ioDispatcher,
-                        concurrencyLimit = concurrencyLimit,
-                        nimbusDownloadPort = nimbusDownloadPort,
-                        nimbusStoragePort = nimbusStoragePort,
-                        downloadManagerPath = downloadManagerPath!!,
-                        downloadBufferSize = downloadBufferSize,
-                        downloadNotifyEveryBytes = downloadNotifyEveryBytes
-                    )
-                }
-
-                return instance!!
+                return Nimbus(
+                    downloadScope = downloadScope,
+                    ioDispatcher = ioDispatcher,
+                    concurrencyLimit = concurrencyLimit,
+                    nimbusDownloadPort = nimbusDownloadPort!!,
+                    nimbusStoragePort = nimbusStoragePort,
+                    downloadManagerPath = downloadManagerPath!!,
+                    downloadBufferSize = downloadBufferSize,
+                    downloadNotifyEveryBytes = downloadNotifyEveryBytes,
+                    maxRetryAttempts = maxRetryAttempts,
+                    retryBaseDelayMs = retryBaseDelayMs,
+                    minReservedDiskBytes = minReservedDiskBytes,
+                    autoStart = autoStart,
+                    logger = logger
+                )
             }
         }
     }
 
-    public suspend fun init(): KResult<NimbusAPI, FailedToLoadDownloadTasks> {
-        return mutex.withLock {
-            if (isInitialized) {
-                return@withLock Success(downloadController)
-            }
-            downloadController.loadDownloadTasks().onFailure {
-                return@withLock Failure(it)
-            }
-            isInitialized = true
-            Success(downloadController)
-        }
+    /**
+     * Starts loading persisted tasks in the background and returns [NimbusAPI] immediately.
+     *
+     * The first actual API call will suspend briefly if loading is still in progress —
+     * subsequent calls return without any delay once loading has completed.
+     * Safe to call multiple times; loading is only triggered once.
+     */
+    public fun init(): NimbusAPI {
+        downloadService.startLoad()
+        return downloadService
     }
 }
+
+// Returns true for POSIX absolute paths (/…) and Windows absolute paths (C:\… or \\…).
+private fun String.isAbsolutePath(): Boolean =
+    startsWith("/") ||
+        startsWith("\\\\") ||
+        (length >= 3 && this[1] == ':' && (this[2] == '\\' || this[2] == '/'))

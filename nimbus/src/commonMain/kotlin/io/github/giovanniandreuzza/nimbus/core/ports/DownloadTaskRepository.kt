@@ -1,6 +1,7 @@
 package io.github.giovanniandreuzza.nimbus.core.ports
 
 import io.github.giovanniandreuzza.explicitarchitecture.core.application.ports.IsPort
+import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
 import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
@@ -23,12 +24,14 @@ internal interface DownloadTaskRepository {
 
     suspend fun getAllDownloadTask(): Map<DownloadId, DownloadTask>
 
-    fun observeDownloadTask(id: DownloadId): KResult<Flow<DownloadState>, DownloadTaskNotFound>
+    suspend fun observeDownloadTask(id: DownloadId): KResult<Flow<DownloadState>, DownloadTaskNotFound>
 
-    suspend fun saveDownloadTask(downloadTask: DownloadTask): KResult<Unit, DownloadTaskNotFound>
+    fun observeAllDownloadTasks(): Flow<List<DownloadTask>>
 
-    suspend fun updateDownloadProgress(downloadTask: DownloadTask): KResult<Unit, DownloadTaskNotFound>
+    suspend fun saveDownloadTask(downloadTask: DownloadTask): KResult<Unit, KError>
 
-    suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, DownloadTaskNotFound>
+    suspend fun updateDownloadProgress(downloadTask: DownloadTask): KResult<Unit, KError>
+
+    suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, KError>
 
 }

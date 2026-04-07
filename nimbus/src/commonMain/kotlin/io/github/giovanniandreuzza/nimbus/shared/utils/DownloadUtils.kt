@@ -14,5 +14,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.IsShared
  */
 @IsShared
 internal fun getDownloadProgress(downloadedBytes: Long, fileSize: Long): Double {
-    return ((downloadedBytes * 100.0) / fileSize)
+    if (fileSize <= 0L) return 0.0
+    val raw = (downloadedBytes * 100.0) / fileSize
+    return raw.coerceIn(0.0, 100.0)
 }

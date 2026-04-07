@@ -1,180 +1,109 @@
 package io.github.giovanniandreuzza.nimbus.di
 
-import io.github.giovanniandreuzza.explicitarchitecture.di.IsDi
+import io.github.giovanniandreuzza.nimbus.core.application.DownloadService
 import io.github.giovanniandreuzza.nimbus.core.application.services.DownloadProgressService
-import io.github.giovanniandreuzza.nimbus.core.application.usecases.CancelDownloadUseCase
-import io.github.giovanniandreuzza.nimbus.core.application.usecases.EnqueueDownloadUseCase
-import io.github.giovanniandreuzza.nimbus.core.application.usecases.GetAllDownloadsUseCase
-import io.github.giovanniandreuzza.nimbus.core.application.usecases.GetDownloadTaskUseCase
-import io.github.giovanniandreuzza.nimbus.core.application.usecases.GetFileSizeUseCase
-import io.github.giovanniandreuzza.nimbus.core.application.usecases.IsDownloadedUseCase
-import io.github.giovanniandreuzza.nimbus.core.application.usecases.LoadDownloadTasksUseCase
-import io.github.giovanniandreuzza.nimbus.core.application.usecases.ObserveDownloadUseCase
-import io.github.giovanniandreuzza.nimbus.core.application.usecases.PauseDownloadUseCase
-import io.github.giovanniandreuzza.nimbus.core.application.usecases.ResumeDownloadUseCase
-import io.github.giovanniandreuzza.nimbus.core.application.usecases.StartDownloadUseCase
-import io.github.giovanniandreuzza.nimbus.core.commands.CancelDownloadCommand
-import io.github.giovanniandreuzza.nimbus.core.commands.EnqueueDownloadCommand
-import io.github.giovanniandreuzza.nimbus.core.commands.LoadDownloadTasksCommand
-import io.github.giovanniandreuzza.nimbus.core.commands.PauseDownloadCommand
-import io.github.giovanniandreuzza.nimbus.core.commands.ResumeDownloadCommand
-import io.github.giovanniandreuzza.nimbus.core.commands.StartDownloadCommand
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
-import io.github.giovanniandreuzza.nimbus.core.queries.GetAllDownloadsQuery
-import io.github.giovanniandreuzza.nimbus.core.queries.GetDownloadTaskQuery
-import io.github.giovanniandreuzza.nimbus.core.queries.GetFileSizeQuery
-import io.github.giovanniandreuzza.nimbus.core.queries.IsDownloadedQuery
-import io.github.giovanniandreuzza.nimbus.core.queries.ObserveDownloadQuery
-import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage.LocalNimbusStorageAdapter
-import io.github.giovanniandreuzza.nimbus.frameworks.ktor.KtorClient
-import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.download.KtorNimbusDownloadAdapter
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage.FileSystemNimbusStorageAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
-import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.DownloadTaskAdapter
-import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.InMemoryDownloadTaskAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.DownloadAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.IdProviderAdapter
-import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.StoreDownloadTaskAdapter
-import io.github.giovanniandreuzza.nimbus.presentation.DownloadController
+import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.DownloadRepository
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 /**
- * Initialize the Download Controller.
+ * Holds a mutable reference to a suspend callback, used to break the circular
+ * dependency between [DownloadProgressService] and [DownloadService].
  *
- * @param downloadScope The download scope.
- * @param ioDispatcher The IO dispatcher.
- * @param concurrencyLimit The concurrency limit.
- * @param nimbusDownloadPort The nimbus download port.
- * @param nimbusStoragePort The nimbus storage repository.
- * @param downloadManagerPath The download manager path.
- * @return [DownloadController] The Download Controller.
- * @author Giovanni Andreuzza
+ * [DownloadProgressService] is constructed before [DownloadService], so we pass
+ * this ref immediately and populate [fn] once the service is ready. The lambda
+ * inside [DownloadProgressService] always reads through this ref, so it sees the
+ * final value at call time.
  */
-@IsDi
+internal class AutoRetryRef {
+    var fn: (suspend (fileUrl: String) -> Unit)? = null
+}
+
 internal fun init(
     downloadScope: CoroutineScope,
     ioDispatcher: CoroutineDispatcher,
     concurrencyLimit: Int,
-    nimbusDownloadPort: NimbusDownloadPort?,
+    nimbusDownloadPort: NimbusDownloadPort,
     nimbusStoragePort: NimbusStoragePort?,
     downloadManagerPath: String,
     downloadBufferSize: Long,
-    downloadNotifyEveryBytes: Long
-): DownloadController {
+    downloadNotifyEveryBytes: Long,
+    maxRetryAttempts: Int,
+    retryBaseDelayMs: Long,
+    minReservedDiskBytes: Long?,
+    autoStart: Boolean,
+    logger: NimbusLogger?
+): DownloadService {
+    val storage: NimbusStoragePort = nimbusStoragePort ?: FileSystemNimbusStorageAdapter()
 
-    val ktorClient = KtorClient()
-
-    val nimbusDownloadPort = nimbusDownloadPort ?: KtorNimbusDownloadAdapter(ktorClient)
-
-    val nimbusStoragePort = nimbusStoragePort ?: LocalNimbusStorageAdapter()
-
-    val idProviderPort: IdProviderPort = IdProviderAdapter()
-
-    val inMemoryDownloadTaskRepository: DownloadTaskRepository = InMemoryDownloadTaskAdapter()
-
-    val inDiskDownloadTaskRepository: DownloadTaskRepository = StoreDownloadTaskAdapter(
-        downloadStorePath = downloadManagerPath,
+    val repository: DownloadTaskRepository = DownloadRepository(
+        storePath = downloadManagerPath,
         dispatcher = ioDispatcher,
-        nimbusStoragePort = nimbusStoragePort
+        nimbusStoragePort = storage
     )
 
-    val downloadTaskRepository: DownloadTaskRepository = DownloadTaskAdapter(
-        inMemoryDownloadTaskRepository = inMemoryDownloadTaskRepository,
-        inDiskDownloadTaskRepository = inDiskDownloadTaskRepository
-    )
+    val autoRetryRef = AutoRetryRef()
 
-    val downloadProgressCallback: DownloadProgressCallback = DownloadProgressService(
-        downloadProgressScope = downloadScope,
-        downloadTaskRepository = downloadTaskRepository
+    val progressCallback: DownloadProgressCallback = DownloadProgressService(
+        downloadTaskRepository = repository,
+        logger = logger,
+        onAutoRetry = if (autoStart) { url -> autoRetryRef.fn?.invoke(url) } else null
     )
 
     val downloadPort: DownloadPort = DownloadAdapter(
         concurrencyLimit = concurrencyLimit,
         downloadScope = downloadScope,
-        downloadProgressCallback = downloadProgressCallback,
-        nimbusStoragePort = nimbusStoragePort,
+        downloadProgressCallback = progressCallback,
+        nimbusStoragePort = storage,
         nimbusDownloadPort = nimbusDownloadPort,
         bufferSize = downloadBufferSize,
-        notifyEveryBytes = downloadNotifyEveryBytes
+        notifyEveryBytes = downloadNotifyEveryBytes,
+        maxRetryAttempts = maxRetryAttempts,
+        retryBaseDelayMs = retryBaseDelayMs
     )
 
-    val loadDownloadTasksCommand: LoadDownloadTasksCommand = LoadDownloadTasksUseCase(
-        downloadTaskRepository = downloadTaskRepository
-    )
+    val idProvider: IdProviderPort = IdProviderAdapter()
 
-    val isDownloadedQuery: IsDownloadedQuery = IsDownloadedUseCase(
-        idProviderPort = idProviderPort,
-        downloadTaskRepository = downloadTaskRepository
-    )
-
-    val getDownloadTaskQuery: GetDownloadTaskQuery =
-        GetDownloadTaskUseCase(
-            idProviderPort = idProviderPort,
-            downloadTaskRepository = downloadTaskRepository
-        )
-
-    val getAllDownloadsQuery: GetAllDownloadsQuery =
-        GetAllDownloadsUseCase(
-            downloadTaskRepository = downloadTaskRepository
-        )
-
-    val getFileSizeQuery: GetFileSizeQuery = GetFileSizeUseCase(
-        downloadPort = downloadPort
-    )
-
-    val enqueueDownloadCommand: EnqueueDownloadCommand = EnqueueDownloadUseCase(
-        idProviderPort = idProviderPort,
-        getFileSizeQuery = getFileSizeQuery,
-        downloadTaskRepository = downloadTaskRepository
-    )
-
-    val startDownloadCommand: StartDownloadCommand = StartDownloadUseCase(
-        idProviderPort = idProviderPort,
+    val service = DownloadService(
+        idProvider = idProvider,
         downloadPort = downloadPort,
-        downloadTaskRepository = downloadTaskRepository
+        repository = repository,
+        nimbusStoragePort = storage,
+        minReservedDiskBytes = minReservedDiskBytes,
+        logger = logger,
+        autoStart = autoStart,
+        downloadScope = downloadScope
     )
 
-    val observeDownloadQuery: ObserveDownloadQuery = ObserveDownloadUseCase(
-        idProviderPort = idProviderPort,
-        downloadTaskRepository = downloadTaskRepository
-    )
+    if (autoStart) {
+        autoRetryRef.fn = { url ->
+            // Launched in the background so the failing download coroutine returns from
+            // onDownloadFailed immediately, releases its semaphore permit, and the retry
+            // job is registered only after the original job's `finally` block has run.
+            downloadScope.launch {
+                service.retryFailedDownload(url).onFailure {
+                    logger?.log(NimbusLogEvent.AutoRetryFailed(url, it))
+                    return@launch
+                }
+                service.startDownload(url).onFailure {
+                    logger?.log(NimbusLogEvent.AutoStartFailed(url, it))
+                }
+            }
+        }
+    }
 
-    val pauseDownloadCommand: PauseDownloadCommand = PauseDownloadUseCase(
-        idProviderPort = idProviderPort,
-        downloadPort = downloadPort,
-        downloadTaskRepository = downloadTaskRepository
-    )
-
-    val resumeDownloadCommand: ResumeDownloadCommand = ResumeDownloadUseCase(
-        idProviderPort = idProviderPort,
-        downloadPort = downloadPort,
-        downloadTaskRepository = downloadTaskRepository
-    )
-
-    val cancelDownloadCommand: CancelDownloadCommand = CancelDownloadUseCase(
-        idProviderPort = idProviderPort,
-        downloadPort = downloadPort,
-        downloadTaskRepository = downloadTaskRepository,
-        nimbusStoragePort = nimbusStoragePort
-    )
-
-    val downloadController = DownloadController(
-        loadDownloadTasksCommand = loadDownloadTasksCommand,
-        isDownloadedQuery = isDownloadedQuery,
-        getDownloadTaskQuery = getDownloadTaskQuery,
-        getAllDownloadsQuery = getAllDownloadsQuery,
-        getFileSizeQuery = getFileSizeQuery,
-        enqueueDownloadCommand = enqueueDownloadCommand,
-        startDownloadCommand = startDownloadCommand,
-        observeDownloadQuery = observeDownloadQuery,
-        pauseDownloadCommand = pauseDownloadCommand,
-        resumeDownloadCommand = resumeDownloadCommand,
-        cancelDownloadCommand = cancelDownloadCommand
-    )
-
-    return downloadController
+    return service
 }

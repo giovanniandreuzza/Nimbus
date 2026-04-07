@@ -3,7 +3,7 @@ import java.io.FileNotFoundException
 import java.util.Properties
 
 plugins {
-    alias(libs.plugins.androidLibrary)
+    alias(libs.plugins.androidMultiplatformLibrary)
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.vanniktech.mavenPublish)
     alias(libs.plugins.kotlinSerialization)
@@ -18,10 +18,12 @@ kotlin {
     explicitApi()
 
     jvm()
-    androidTarget {
-        publishLibraryVariants("release")
+    android {
+        namespace = "io.github.giovanniandreuzza.nimbus"
+        compileSdk = 36
+        minSdk = 21
         compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_1_8)
+            jvmTarget.set(JvmTarget.JVM_17)
         }
     }
 
@@ -39,24 +41,10 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(libs.kotlinx.serialization.protobuf)
-            implementation(libs.kotlinx.io)
-            implementation(libs.ktor)
-            implementation(libs.ktor.cio)
+            api(libs.kotlinx.io)
             api(libs.explicitarchitecture)
             implementation(libs.hash.sha2)
         }
-    }
-}
-
-android {
-    namespace = "io.github.giovanniandreuzza.nimbus"
-    compileSdk = 36
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
-    }
-    defaultConfig {
-        minSdk = 21
     }
 }
 

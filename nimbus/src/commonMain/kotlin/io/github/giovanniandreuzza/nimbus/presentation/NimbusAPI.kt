@@ -1,119 +1,134 @@
 package io.github.giovanniandreuzza.nimbus.presentation
 
-import io.github.giovanniandreuzza.explicitarchitecture.presentation.IsPresentation
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.CancelDownloadRequest
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetDownloadTaskRequest
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.EnqueueDownloadRequest
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetAllDownloadsResponse
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetFileSizeRequest
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.GetFileSizeResponse
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.IsDownloadedRequest
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.ObserveDownloadRequest
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.ObserveDownloadResponse
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.PauseDownloadRequest
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.ResumeDownloadRequest
-import io.github.giovanniandreuzza.nimbus.core.application.dtos.StartDownloadRequest
-import io.github.giovanniandreuzza.nimbus.core.domain.errors.EnqueueDownloadErrors
-import io.github.giovanniandreuzza.nimbus.core.domain.errors.PauseDownloadErrors
-import io.github.giovanniandreuzza.nimbus.core.domain.errors.ResumeDownloadErrors
-import io.github.giovanniandreuzza.nimbus.core.domain.errors.StartDownloadErrors
-import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
-import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
+import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
+import kotlinx.coroutines.flow.Flow
 
 /**
- * This is the main interface of the Nimbus library.
+ * Main public API of the Nimbus download library.
+ *
+ * All operations are identified by [fileUrl] — the SHA-256 of the URL is used
+ * internally as a stable task ID, so the same URL always refers to the same task.
+ *
+ * Errors are returned as [NimbusError] values rather than thrown exceptions.
  *
  * @author Giovanni Andreuzza
  */
-@IsPresentation
 public interface NimbusAPI {
 
     /**
-     * Check if the download is already downloaded.
-     *
-     * @param isDownloadedRequest The is downloaded request.
-     * @return true if the operation is successful, false otherwise.
+     * Returns `true` if the download for [fileUrl] has already finished.
      */
-    public suspend fun isDownloaded(isDownloadedRequest: IsDownloadedRequest): Boolean
+    public suspend fun isDownloaded(fileUrl: String): Boolean
 
     /**
-     * Get the file size.
-     *
-     * @param request The get file size request.
-     * @return [KResult] with [GetFileSizeResponse] if the operation is successful, [GetFileSizeError] otherwise.
+     * Fetches the remote file size without starting the download.
      */
-    public suspend fun getFileSize(
-        request: GetFileSizeRequest
-    ): KResult<GetFileSizeResponse, GetFileSizeError>
+    public suspend fun getFileSize(fileUrl: String): KResult<Long, NimbusError>
 
     /**
-     * Get the download state.
-     *
-     * @param request The download request.
-     * @return [KResult] with the [DownloadTaskDTO] if the operation is successful, [DownloadTaskNotFound] otherwise.
+     * Returns the current [DownloadTaskDTO] for [fileUrl].
      */
-    public suspend fun getDownloadTask(
-        request: GetDownloadTaskRequest
-    ): KResult<DownloadTaskDTO, DownloadTaskNotFound>
+    public suspend fun getDownloadTask(fileUrl: String): KResult<DownloadTaskDTO, NimbusError>
 
     /**
-     * Get all downloads.
+     * Returns all known download tasks.
      *
-     * @return [GetAllDownloadsResponse] with all downloads.
+     * Returns [NimbusError.InitializationFailed] if the library failed to load persisted tasks on boot.
      */
-    public suspend fun getAllDownloads(): GetAllDownloadsResponse
+    public suspend fun getAllDownloads(): KResult<List<DownloadTaskDTO>, NimbusError>
 
     /**
-     * Enqueue the download.
+     * Returns a [Flow] that emits the full list of [DownloadTaskDTO] whenever any task state changes.
      *
-     * @param request The download request.
-     * @return [KResult] with [DownloadTaskDTO] if the operation is successful, [EnqueueDownloadErrors] otherwise.
+     * The flow never completes — it stays alive for the lifetime of the repository.
+     * Suitable for driving a list UI that needs to reflect live download progress.
+     */
+    public fun observeAllDownloads(): Flow<List<DownloadTaskDTO>>
+
+    /**
+     * Enqueues a new download.
+     *
+     * Returns [NimbusError.InvalidState] if a task for [fileUrl] already exists.
+     * Returns [NimbusError.InvalidUrl] when URL is not HTTP/HTTPS.
+     * Returns [NimbusError.InvalidPath] or [NimbusError.InvalidFileName] when
+     * filesystem input is unsafe.
      */
     public suspend fun enqueueDownload(
-        request: EnqueueDownloadRequest
-    ): KResult<DownloadTaskDTO, EnqueueDownloadErrors>
+        fileUrl: String,
+        filePath: String,
+        fileName: String
+    ): KResult<DownloadTaskDTO, NimbusError>
 
     /**
-     * Start the download.
-     *
-     * @param request The start download request.
-     * @return [KResult] with [Unit] if the operation is successful, [StartDownloadErrors] otherwise.
+     * Starts a previously enqueued download.
      */
-    public suspend fun startDownload(request: StartDownloadRequest): KResult<Unit, StartDownloadErrors>
+    public suspend fun startDownload(fileUrl: String): KResult<Unit, NimbusError>
 
     /**
-     * Observe the download state.
+     * Returns a [Flow] that emits [DownloadState] updates for [fileUrl].
      *
-     * @param request The observe download request.
-     * @return [KResult] with [ObserveDownloadResponse] if the operation is successful, [DownloadTaskNotFound] otherwise.
+     * **Completion behaviour depends on the autoStart setting:**
+     * - `autoStart = false` (default): the flow completes when the download reaches
+     *   [DownloadState.Finished] **or** [DownloadState.Failed].
+     * - `autoStart = true`: the flow only completes on [DownloadState.Finished].
+     *   A [DownloadState.Failed] emission is followed by the library automatically
+     *   retrying the download, so the flow stays alive and continues emitting through
+     *   the `Failed → Enqueued → Downloading → …` retry cycle.
+     *
+     * Callers relying on flow completion as a terminal signal must account for this
+     * difference when autoStart is enabled.
      */
-    public suspend fun observeDownload(
-        request: ObserveDownloadRequest
-    ): KResult<ObserveDownloadResponse, DownloadTaskNotFound>
+    public suspend fun observeDownload(fileUrl: String): KResult<Flow<DownloadState>, NimbusError>
 
     /**
-     * Pause the download.
-     *
-     * @param request The pause download request.
-     * @return [KResult] with [Unit] if the operation is successful, [PauseDownloadErrors] otherwise.
+     * Pauses an in-progress download. The partial file is kept so the download
+     * can be resumed later.
      */
-    public suspend fun pauseDownload(request: PauseDownloadRequest): KResult<Unit, PauseDownloadErrors>
+    public suspend fun pauseDownload(fileUrl: String): KResult<Unit, NimbusError>
 
     /**
-     * Resume the download.
-     *
-     * @param request The resume download request.
-     * @return [KResult] with [Unit] if the operation is successful, [ResumeDownloadErrors] otherwise.
+     * Resumes a previously paused download.
      */
-    public suspend fun resumeDownload(request: ResumeDownloadRequest): KResult<Unit, ResumeDownloadErrors>
+    public suspend fun resumeDownload(fileUrl: String): KResult<Unit, NimbusError>
 
     /**
-     * Cancel the download.
-     *
-     * @param request The cancel download request.
-     * @return [KResult] with [Unit] if the operation is successful, [DownloadTaskNotFound] otherwise.
+     * Cancels a download and deletes the partial file.
      */
-    public suspend fun cancelDownload(request: CancelDownloadRequest): KResult<Unit, DownloadTaskNotFound>
+    public suspend fun cancelDownload(fileUrl: String): KResult<Unit, NimbusError>
+
+    /**
+     * Removes a finished or failed download from memory and disk.
+     *
+     * Returns [NimbusError.DownloadNotFound] if no task exists for [fileUrl].
+     * Returns [NimbusError.InvalidState] if the download is still active (use [cancelDownload] instead).
+     *
+     * @param deleteAssociatedFile If `true`, also deletes the file at the task's destination path
+     * (useful to reclaim space). Default `false` keeps the file on disk (metadata only removed).
+     */
+    public suspend fun removeDownload(
+        fileUrl: String,
+        deleteAssociatedFile: Boolean = false
+    ): KResult<Unit, NimbusError>
+
+    /**
+     * After a [DownloadState.Failed] task, refetches remote size, updates the task, deletes the
+     * partial file, and resets state to [DownloadState.Enqueued]. Call [startDownload] afterwards.
+     */
+    public suspend fun retryFailedDownload(fileUrl: String): KResult<Unit, NimbusError>
+
+    /**
+     * High-level orchestration: ensures the file for [fileUrl] exists on disk with correct size.
+     *
+     * - If already complete ([isDownloaded]), returns a [Flow] that emits [DownloadState.Finished] once.
+     * - Otherwise enqueues (if needed), repairs failed tasks, removes stale finished metadata,
+     *   applies [min reserved disk][io.github.giovanniandreuzza.nimbus.Nimbus.Builder.withMinReservedDiskBytes]
+     *   when configured, starts or resumes the download, then returns the same [observeDownload] flow.
+     */
+    public suspend fun ensureDownloaded(
+        fileUrl: String,
+        filePath: String,
+        fileName: String
+    ): KResult<Flow<DownloadState>, NimbusError>
 }

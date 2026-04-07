@@ -3,7 +3,6 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
 
@@ -13,7 +12,7 @@ android {
 
     defaultConfig {
         applicationId = "io.github.giovanniandreuzza.sample_android"
-        minSdk = 21
+        minSdk = 23
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -32,25 +31,25 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
 
         // Enable desugaring
         isCoreLibraryDesugaringEnabled = true
     }
 
-    tasks.withType<KotlinJvmCompile>().configureEach {
-        compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_1_8)
-            freeCompilerArgs.addAll(
-                "-opt-in=kotlin.RequiresOptIn",
-                "-Xjvm-default=all-compatibility"
-            )
-        }
-    }
-
     buildFeatures {
         compose = true
+    }
+
+    tasks.withType<KotlinJvmCompile>().configureEach {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+            freeCompilerArgs.addAll(
+                "-opt-in=kotlin.RequiresOptIn",
+                "-jvm-default=enable"
+            )
+        }
     }
 }
 
@@ -76,28 +75,17 @@ dependencies {
     // Timber
     implementation(libs.timber)
 
-    // OkHttp3
-    implementation(libs.okhttp3)
-    implementation(libs.okhttp3.logging.interceptor)
-
     // LeakCanary
     debugImplementation(libs.leakcanary)
 
     // Ktor
     implementation(libs.ktor)
     implementation(libs.ktor.okhttp)
-    implementation(libs.ktor.cio)
-    implementation(libs.ktor.logging)
-    implementation(libs.ktor.client.content.negotiation)
-    implementation(libs.ktor.serialization)
-
-    // Retrofit2
-    implementation(libs.retrofit2)
-    implementation(libs.retrofit2.serialization)
 
     // Nimbus
 //    implementation(libs.nimbus)
     implementation(project(":nimbus"))
+    implementation(project(":nimbus-ktor"))
 
     // Test
     testImplementation(libs.junit)
