@@ -35,7 +35,7 @@ public interface NimbusAPI {
     /**
      * Returns all known download tasks.
      *
-     * Returns [NimbusError.InitializationFailed] if the library failed to load persisted tasks on boot.
+     * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InitializationFailed] if the library failed to load persisted tasks on boot.
      */
     public suspend fun getAllDownloads(): KResult<List<DownloadTaskDTO>, NimbusError>
 
@@ -50,9 +50,9 @@ public interface NimbusAPI {
     /**
      * Enqueues a new download.
      *
-     * Returns [NimbusError.InvalidState] if a task for [fileUrl] already exists.
-     * Returns [NimbusError.InvalidUrl] when URL is not HTTP/HTTPS.
-     * Returns [NimbusError.InvalidPath] or [NimbusError.InvalidFileName] when
+     * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InvalidState] if a task for [fileUrl] already exists.
+     * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InvalidUrl] when URL is not HTTP/HTTPS.
+     * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InvalidPath] or [PermanentNimbusErrorCause.InvalidFileName] when
      * filesystem input is unsafe.
      */
     public suspend fun enqueueDownload(
@@ -101,8 +101,8 @@ public interface NimbusAPI {
     /**
      * Removes a finished or failed download from memory and disk.
      *
-     * Returns [NimbusError.DownloadNotFound] if no task exists for [fileUrl].
-     * Returns [NimbusError.InvalidState] if the download is still active (use [cancelDownload] instead).
+     * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.DownloadNotFound] if no task exists for [fileUrl].
+     * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InvalidState] if the download is still active (use [cancelDownload] instead).
      *
      * @param deleteAssociatedFile If `true`, also deletes the file at the task's destination path
      * (useful to reclaim space). Default `false` keeps the file on disk (metadata only removed).

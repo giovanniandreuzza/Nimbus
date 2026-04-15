@@ -10,9 +10,9 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.DeleteFileError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.DoesFileExistError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.GetFileSinkError
-import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.LocalFileSizeError
-import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.GetUsableSpaceError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.GetFileSourceError
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.GetUsableSpaceError
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.LocalFileSizeError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.MoveFileError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import kotlinx.io.IOException
@@ -72,7 +72,7 @@ internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
         return try {
             val metadata = fileSystem.metadataOrNull(Path(path))
                 ?: return Failure(LocalFileSizeError.FileNotFound)
-            Success(metadata.size ?: return Failure(LocalFileSizeError.FileNotFound))
+            Success(metadata.size)
         } catch (e: IOException) {
             Failure(LocalFileSizeError.ReadPermissionDenied(readPermissionError(e)))
         } catch (t: Throwable) {
@@ -135,7 +135,10 @@ internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
         }
     }
 
-    override fun atomicMove(sourcePath: String, destinationPath: String): KResult<Unit, MoveFileError> {
+    override fun atomicMove(
+        sourcePath: String,
+        destinationPath: String
+    ): KResult<Unit, MoveFileError> {
         return try {
             fileSystem.atomicMove(Path(sourcePath), Path(destinationPath))
             Success(Unit)
@@ -155,8 +158,14 @@ internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
         KError(code = "read_permission_denied", message = cause.message ?: "Read permission denied")
 
     private fun writePermissionError(cause: Throwable): KError =
-        KError(code = "write_permission_denied", message = cause.message ?: "Write permission denied")
+        KError(
+            code = "write_permission_denied",
+            message = cause.message ?: "Write permission denied"
+        )
 
     private fun deletePermissionError(cause: Throwable): KError =
-        KError(code = "delete_permission_denied", message = cause.message ?: "Delete permission denied")
+        KError(
+            code = "delete_permission_denied",
+            message = cause.message ?: "Delete permission denied"
+        )
 }

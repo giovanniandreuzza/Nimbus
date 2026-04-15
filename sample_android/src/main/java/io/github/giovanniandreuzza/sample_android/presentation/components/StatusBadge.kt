@@ -18,26 +18,31 @@ fun StatusBadge(state: DownloadDisplayState, modifier: Modifier = Modifier) {
             MaterialTheme.colorScheme.surfaceVariant,
             MaterialTheme.colorScheme.onSurfaceVariant
         )
+
         DownloadDisplayState.Enqueued -> Triple(
             "Queued",
             MaterialTheme.colorScheme.primaryContainer,
             MaterialTheme.colorScheme.onPrimaryContainer
         )
+
         is DownloadDisplayState.Downloading -> Triple(
             "Downloading",
             MaterialTheme.colorScheme.primary,
             MaterialTheme.colorScheme.onPrimary
         )
+
         is DownloadDisplayState.Paused -> Triple(
             "Paused",
             MaterialTheme.colorScheme.secondaryContainer,
             MaterialTheme.colorScheme.onSecondaryContainer
         )
+
         DownloadDisplayState.Finished -> Triple(
             "Done \u2713",
             Color(0xFF2E7D32),
             Color.White
         )
+
         is DownloadDisplayState.Failed -> Triple(
             "Failed",
             MaterialTheme.colorScheme.errorContainer,

@@ -66,6 +66,7 @@ fun DownloadCard(
                         )
                     }
                 }
+
                 is DownloadDisplayState.Paused -> {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         LinearProgressIndicator(
@@ -80,9 +81,11 @@ fun DownloadCard(
                         )
                     }
                 }
+
                 DownloadDisplayState.Enqueued -> {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
+
                 is DownloadDisplayState.Failed -> {
                     Text(
                         text = state.message,
@@ -92,6 +95,7 @@ fun DownloadCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+
                 else -> {}
             }
 
@@ -104,6 +108,7 @@ fun DownloadCard(
                     DownloadDisplayState.Idle -> {
                         Button(onClick = onEnqueue) { Text("Enqueue") }
                     }
+
                     is DownloadDisplayState.Downloading -> {
                         OutlinedButton(onClick = onPause) { Text("Pause") }
                         OutlinedButton(
@@ -113,6 +118,7 @@ fun DownloadCard(
                             )
                         ) { Text("Cancel") }
                     }
+
                     is DownloadDisplayState.Paused -> {
                         Button(onClick = onResume) { Text("Resume") }
                         OutlinedButton(
@@ -122,11 +128,14 @@ fun DownloadCard(
                             )
                         ) { Text("Cancel") }
                     }
+
                     is DownloadDisplayState.Failed -> {
                         Button(onClick = onRetry) { Text("Retry") }
                     }
+
                     DownloadDisplayState.Enqueued,
-                    DownloadDisplayState.Finished -> {}
+                    DownloadDisplayState.Finished -> {
+                    }
                 }
             }
         }

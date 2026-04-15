@@ -1,9 +1,10 @@
 package io.github.giovanniandreuzza.nimbus.di
 
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
 import io.github.giovanniandreuzza.nimbus.core.application.DownloadService
 import io.github.giovanniandreuzza.nimbus.core.application.services.DownloadProgressService
-import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
+import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage.FileSystemNimbusStorageAdapter
@@ -14,7 +15,6 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.ports.IdProviderAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.DownloadRepository
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch

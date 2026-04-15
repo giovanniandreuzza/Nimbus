@@ -1,12 +1,11 @@
 package io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage
 
-import kotlinx.cinterop.ExperimentalForeignApi
-
 import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.GetUsableSpaceError
+import kotlinx.cinterop.ExperimentalForeignApi
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSFileSystemFreeSize
 import platform.Foundation.NSNumber

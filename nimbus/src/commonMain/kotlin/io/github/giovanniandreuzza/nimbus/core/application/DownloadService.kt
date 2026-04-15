@@ -1,14 +1,13 @@
 package io.github.giovanniandreuzza.nimbus.core.application
 
+import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.getOr
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onSuccess
-import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
-import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
@@ -23,6 +22,7 @@ import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusError
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
+import io.github.giovanniandreuzza.nimbus.presentation.PermanentNimbusErrorCause
 import io.github.giovanniandreuzza.nimbus.shared.utils.takeUntil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -95,7 +95,13 @@ internal class DownloadService(
 
     private suspend fun loadDownloadTasks(): KResult<Unit, NimbusError> {
         repository.loadDownloadTasks().onFailure {
-            return Failure(NimbusError.InitializationFailed(it))
+            return Failure(
+                NimbusError.PermanentError(
+                    PermanentNimbusErrorCause.InitializationFailed(
+                        it
+                    )
+                )
+            )
         }
         return Success(Unit)
     }
@@ -127,7 +133,7 @@ internal class DownloadService(
         withReady {
             val id = idProvider.generateUniqueId(fileUrl)
             val task = repository.getDownloadTask(DownloadId.create(id)).getOr {
-                return@withReady Failure(NimbusError.DownloadNotFound)
+                return@withReady Failure(NimbusError.PermanentError(PermanentNimbusErrorCause.DownloadNotFound))
             }
             Success(DownloadTaskDTO.fromDomain(task))
         }
@@ -147,18 +153,31 @@ internal class DownloadService(
         filePath: String,
         fileName: String
     ): KResult<DownloadTaskDTO, NimbusError> = withReady {
-        validateEnqueueRequest(fileUrl, filePath, fileName).onFailure { return@withReady Failure(it) }
+        validateEnqueueRequest(
+            fileUrl,
+            filePath,
+            fileName
+        ).onFailure { return@withReady Failure(it) }
 
         val id = idProvider.generateUniqueId(fileUrl)
 
         withOperationLock(id) {
             repository.getDownloadTask(DownloadId.create(id)).onSuccess { existing ->
-                return@withOperationLock Failure(NimbusError.InvalidState(existing.state))
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.InvalidState(existing.state)
+                    )
+                )
             }
 
-            val pathBusy = repository.getAllDownloadTask().values.any { it.filePath.value == filePath }
+            val pathBusy =
+                repository.getAllDownloadTask().values.any { it.filePath.value == filePath }
             if (pathBusy) {
-                return@withOperationLock Failure(NimbusError.FilePathInUse(filePath))
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.FilePathInUse(filePath)
+                    )
+                )
             }
 
             val fileSize = downloadPort.getFileSizeToDownload(fileUrl).getOr {
@@ -171,7 +190,8 @@ internal class DownloadService(
                 filePath = filePath,
                 expectedFileSize = fileSize,
                 partialBytesOnDisk = 0L
-            ).getOr { return@withOperationLock Failure(it) }
+            )
+                .getOr { return@withOperationLock Failure(it) }
 
             val task = DownloadTask.create(
                 id = id,
@@ -182,7 +202,11 @@ internal class DownloadService(
             )
 
             repository.saveDownloadTask(task).onFailure {
-                return@withOperationLock Failure(NimbusError.PermanentError(it))
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.StorageError(it)
+                    )
+                )
             }
 
             logger?.log(
@@ -196,7 +220,12 @@ internal class DownloadService(
             if (autoStart) {
                 scope.launch {
                     startDownload(fileUrl).onFailure {
-                        logger?.log(NimbusLogEvent.AutoStartFailed(fileUrl, it))
+                        logger?.log(
+                            NimbusLogEvent.AutoStartFailed(
+                                fileUrl,
+                                it
+                            )
+                        )
                     }
                 }
             }
@@ -209,7 +238,11 @@ internal class DownloadService(
         val id = idProvider.generateUniqueId(fileUrl)
         withOperationLock(id) {
             val task = repository.getDownloadTask(DownloadId.create(id)).getOr {
-                return@withOperationLock Failure(NimbusError.DownloadNotFound)
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.DownloadNotFound
+                    )
+                )
             }
 
             ensureDiskHeadroom(
@@ -236,11 +269,19 @@ internal class DownloadService(
                 else -> false
             }
             if (!transitioned) {
-                return@withOperationLock Failure(NimbusError.InvalidState(task.state))
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.InvalidState(task.state)
+                    )
+                )
             }
 
             repository.saveDownloadTask(task).onFailure {
-                return@withOperationLock Failure(NimbusError.PermanentError(it))
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.StorageError(it)
+                    )
+                )
             }
 
             logger?.log(NimbusLogEvent.DownloadStartRequested(fileUrl))
@@ -256,7 +297,7 @@ internal class DownloadService(
         withReady {
             val id = idProvider.generateUniqueId(fileUrl)
             val flow = repository.observeDownloadTask(DownloadId.create(id)).getOr {
-                return@withReady Failure(NimbusError.DownloadNotFound)
+                return@withReady Failure(NimbusError.PermanentError(PermanentNimbusErrorCause.DownloadNotFound))
             }
             // When autoStart is enabled the library retries automatically after failure,
             // so the flow must stay alive through the Failed → Enqueued → Downloading cycle.
@@ -274,17 +315,29 @@ internal class DownloadService(
         val id = idProvider.generateUniqueId(fileUrl)
         withOperationLock(id) {
             val task = repository.getDownloadTask(DownloadId.create(id)).getOr {
-                return@withOperationLock Failure(NimbusError.DownloadNotFound)
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.DownloadNotFound
+                    )
+                )
             }
 
             if (!task.pause()) {
-                return@withOperationLock Failure(NimbusError.InvalidState(task.state))
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.InvalidState(task.state)
+                    )
+                )
             }
 
             downloadPort.stopDownload(id)
 
             repository.saveDownloadTask(task).onFailure {
-                return@withOperationLock Failure(NimbusError.PermanentError(it))
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.StorageError(it)
+                    )
+                )
             }
 
             Success(Unit)
@@ -295,7 +348,11 @@ internal class DownloadService(
         val id = idProvider.generateUniqueId(fileUrl)
         withOperationLock(id) {
             val task = repository.getDownloadTask(DownloadId.create(id)).getOr {
-                return@withOperationLock Failure(NimbusError.DownloadNotFound)
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.DownloadNotFound
+                    )
+                )
             }
 
             ensureDiskHeadroom(
@@ -317,11 +374,19 @@ internal class DownloadService(
             }
 
             if (!task.resume()) {
-                return@withOperationLock Failure(NimbusError.InvalidState(task.state))
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.InvalidState(task.state)
+                    )
+                )
             }
 
             repository.saveDownloadTask(task).onFailure {
-                return@withOperationLock Failure(NimbusError.PermanentError(it))
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.StorageError(it)
+                    )
+                )
             }
 
             logger?.log(NimbusLogEvent.DownloadStartRequested(fileUrl))
@@ -337,18 +402,30 @@ internal class DownloadService(
         val id = idProvider.generateUniqueId(fileUrl)
         withOperationLock(id) {
             val task = repository.getDownloadTask(DownloadId.create(id)).getOr {
-                return@withOperationLock Failure(NimbusError.DownloadNotFound)
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.DownloadNotFound
+                    )
+                )
             }
 
             downloadPort.stopDownload(id)
             task.cancel()
             repository.updateDownloadProgress(task)
             repository.deleteDownloadTask(DownloadId.create(id)).onFailure {
-                return@withOperationLock Failure(NimbusError.PermanentError(it))
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.StorageError(it)
+                    )
+                )
             }
             nimbusStoragePort.delete(task.filePath.value).onFailure {
                 if (it !is DeleteFileError.FileNotFound) {
-                    return@withOperationLock Failure(NimbusError.PermanentError(it))
+                    return@withOperationLock Failure(
+                        NimbusError.PermanentError(
+                            PermanentNimbusErrorCause.StorageError(it)
+                        )
+                    )
                 }
             }
 
@@ -363,22 +440,38 @@ internal class DownloadService(
         val id = idProvider.generateUniqueId(fileUrl)
         withOperationLock(id) {
             val task = repository.getDownloadTask(DownloadId.create(id)).getOr {
-                return@withOperationLock Failure(NimbusError.DownloadNotFound)
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.DownloadNotFound
+                    )
+                )
             }
 
             if (task.state !is DownloadState.Finished && task.state !is DownloadState.Failed) {
-                return@withOperationLock Failure(NimbusError.InvalidState(task.state))
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.InvalidState(task.state)
+                    )
+                )
             }
 
             val path = task.filePath.value
             repository.deleteDownloadTask(DownloadId.create(id)).onFailure {
-                return@withOperationLock Failure(NimbusError.PermanentError(it))
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.StorageError(it)
+                    )
+                )
             }
 
             if (deleteAssociatedFile) {
                 nimbusStoragePort.delete(path).onFailure {
                     if (it !is DeleteFileError.FileNotFound) {
-                        return@withOperationLock Failure(NimbusError.PermanentError(it))
+                        return@withOperationLock Failure(
+                            NimbusError.PermanentError(
+                                PermanentNimbusErrorCause.StorageError(it)
+                            )
+                        )
                     }
                 }
             }
@@ -392,7 +485,11 @@ internal class DownloadService(
         filePath: String,
         fileName: String
     ): KResult<Flow<DownloadState>, NimbusError> = withReady {
-        validateEnqueueRequest(fileUrl, filePath, fileName).onFailure { return@withReady Failure(it) }
+        validateEnqueueRequest(
+            fileUrl,
+            filePath,
+            fileName
+        ).onFailure { return@withReady Failure(it) }
 
         // The loop only continues when a stale Finished task is removed (at most once),
         // after which the task no longer exists and the loop exits via the Failure branch.
@@ -407,8 +504,10 @@ internal class DownloadService(
                 is Success -> {
                     val dto = taskRes.value
                     if (dto.state is DownloadState.Finished) {
-                        removeDownload(fileUrl, deleteAssociatedFile = true)
-                            .getOr { return@withReady Failure(it) }
+                        removeDownload(
+                            fileUrl,
+                            deleteAssociatedFile = true
+                        ).getOr { return@withReady Failure(it) }
                         logger?.log(NimbusLogEvent.EnsureDownloadedStaleFinishedRemoved(fileUrl))
                         return@repeat
                     }
@@ -419,74 +518,113 @@ internal class DownloadService(
                     startDownload(fileUrl).getOr { return@withReady Failure(it) }
                     return@withReady observeDownload(fileUrl)
                 }
+
                 is Failure -> {
-                    if (taskRes.error !is NimbusError.DownloadNotFound) {
-                        return@withReady Failure(taskRes.error)
+                    val taskError = taskRes.error
+                    val isDownloadNotFound = taskError is NimbusError.PermanentError &&
+                            taskError.errorCause is PermanentNimbusErrorCause.DownloadNotFound
+                    if (!isDownloadNotFound) {
+                        return@withReady Failure(taskError)
                     }
                     // enqueueDownload fetches the remote size and checks disk headroom
                     // internally; startDownload re-checks headroom before issuing the request.
-                    enqueueDownload(fileUrl, filePath, fileName)
-                        .getOr { return@withReady Failure(it) }
+                    enqueueDownload(
+                        fileUrl,
+                        filePath,
+                        fileName
+                    ).getOr { return@withReady Failure(it) }
                     startDownload(fileUrl).getOr { return@withReady Failure(it) }
                     return@withReady observeDownload(fileUrl)
                 }
             }
         }
         Failure(
-            NimbusError.UnexpectedError(
-                KError("ensure_downloaded_loop", "ensureDownloaded exceeded maximum iterations.")
+            NimbusError.PermanentError(
+                PermanentNimbusErrorCause.UnexpectedError(
+                    KError(
+                        "ensure_downloaded_loop",
+                        "ensureDownloaded exceeded maximum iterations."
+                    )
+                )
             )
         )
     }
 
-    override suspend fun retryFailedDownload(fileUrl: String): KResult<Unit, NimbusError> = withReady {
-        val id = idProvider.generateUniqueId(fileUrl)
-        withOperationLock(id) {
-            val task = repository.getDownloadTask(DownloadId.create(id)).getOr {
-                return@withOperationLock Failure(NimbusError.DownloadNotFound)
-            }
-
-            if (task.state !is DownloadState.Failed) {
-                return@withOperationLock Failure(NimbusError.InvalidState(task.state))
-            }
-
-            val newSize = downloadPort.getFileSizeToDownload(fileUrl).getOr {
-                return@withOperationLock Failure(it.toNimbusError())
-            }
-            validateFileSize(newSize).onFailure { return@withOperationLock Failure(it) }
-
-            if (!task.updateExpectedFileSize(newSize)) {
-                return@withOperationLock Failure(
-                    NimbusError.UnexpectedError(
-                        KError("update_size_failed", "Could not update expected file size.")
+    override suspend fun retryFailedDownload(fileUrl: String): KResult<Unit, NimbusError> =
+        withReady {
+            val id = idProvider.generateUniqueId(fileUrl)
+            withOperationLock(id) {
+                val task = repository.getDownloadTask(DownloadId.create(id)).getOr {
+                    return@withOperationLock Failure(
+                        NimbusError.PermanentError(
+                            PermanentNimbusErrorCause.DownloadNotFound
+                        )
                     )
-                )
-            }
-
-            nimbusStoragePort.delete(task.filePath.value).onFailure { deleteError ->
-                if (deleteError !is DeleteFileError.FileNotFound) {
-                    return@withOperationLock Failure(NimbusError.PermanentError(deleteError))
                 }
-            }
-            nimbusStoragePort.create(task.filePath.value).onFailure { createError ->
-                if (createError !is CreateFileError.FileAlreadyExists) {
-                    return@withOperationLock Failure(NimbusError.PermanentError(createError))
+
+                if (task.state !is DownloadState.Failed) {
+                    return@withOperationLock Failure(
+                        NimbusError.PermanentError(
+                            PermanentNimbusErrorCause.InvalidState(task.state)
+                        )
+                    )
                 }
-            }
 
-            if (!task.resetFromFailedToEnqueued()) {
-                return@withOperationLock Failure(
-                    NimbusError.UnexpectedError(KError("reset_failed", "Could not reset failed task."))
-                )
-            }
+                val newSize = downloadPort.getFileSizeToDownload(fileUrl).getOr {
+                    return@withOperationLock Failure(it.toNimbusError())
+                }
+                validateFileSize(newSize).onFailure { return@withOperationLock Failure(it) }
 
-            repository.saveDownloadTask(task).onFailure {
-                return@withOperationLock Failure(NimbusError.PermanentError(it))
-            }
+                if (!task.updateExpectedFileSize(newSize)) {
+                    return@withOperationLock Failure(
+                        NimbusError.PermanentError(
+                            PermanentNimbusErrorCause.UnexpectedError(
+                                KError("update_size_failed", "Could not update expected file size.")
+                            )
+                        )
+                    )
+                }
 
-            Success(Unit)
+                nimbusStoragePort.delete(task.filePath.value).onFailure { deleteError ->
+                    if (deleteError !is DeleteFileError.FileNotFound) {
+                        return@withOperationLock Failure(
+                            NimbusError.PermanentError(
+                                PermanentNimbusErrorCause.StorageError(deleteError)
+                            )
+                        )
+                    }
+                }
+                nimbusStoragePort.create(task.filePath.value).onFailure { createError ->
+                    if (createError !is CreateFileError.FileAlreadyExists) {
+                        return@withOperationLock Failure(
+                            NimbusError.PermanentError(
+                                PermanentNimbusErrorCause.StorageError(createError)
+                            )
+                        )
+                    }
+                }
+
+                if (!task.resetFromFailedToEnqueued()) {
+                    return@withOperationLock Failure(
+                        NimbusError.PermanentError(
+                            PermanentNimbusErrorCause.UnexpectedError(
+                                KError("reset_failed", "Could not reset failed task.")
+                            )
+                        )
+                    )
+                }
+
+                repository.saveDownloadTask(task).onFailure {
+                    return@withOperationLock Failure(
+                        NimbusError.PermanentError(
+                            PermanentNimbusErrorCause.StorageError(it)
+                        )
+                    )
+                }
+
+                Success(Unit)
+            }
         }
-    }
 
     private fun partialBytesOnDiskForPath(filePath: String, expectedSize: Long): Long {
         return when (val s = nimbusStoragePort.size(filePath)) {
@@ -508,9 +646,14 @@ internal class DownloadService(
             is Failure -> {
                 return when (val e = space.error) {
                     is GetUsableSpaceError.Unsupported -> Success(Unit)
-                    is GetUsableSpaceError.IoFailed -> Failure(NimbusError.PermanentError(e.cause))
+                    is GetUsableSpaceError.IoFailed -> Failure(
+                        NimbusError.PermanentError(
+                            PermanentNimbusErrorCause.StorageError(e)
+                        )
+                    )
                 }
             }
+
             is Success -> {
                 if (space.value < required) {
                     logger?.log(
@@ -522,10 +665,12 @@ internal class DownloadService(
                         )
                     )
                     return Failure(
-                        NimbusError.InsufficientDiskSpace(
-                            path = filePath,
-                            requiredBytes = required,
-                            availableBytes = space.value
+                        NimbusError.PermanentError(
+                            PermanentNimbusErrorCause.InsufficientDiskSpace(
+                                path = filePath,
+                                requiredBytes = required,
+                                availableBytes = space.value
+                            )
                         )
                     )
                 }
@@ -562,17 +707,31 @@ internal class DownloadService(
         filePath: String,
         fileName: String
     ): KResult<Unit, NimbusError> {
-        if (!fileUrl.isSupportedNetworkUrl()) return Failure(NimbusError.InvalidUrl)
-        if (filePath.isBlank() || filePath.containsPathTraversal()) return Failure(NimbusError.InvalidPath)
-        if (!fileName.isValidFileName()) return Failure(NimbusError.InvalidFileName)
+        if (!fileUrl.isSupportedNetworkUrl()) return Failure(
+            NimbusError.PermanentError(
+                PermanentNimbusErrorCause.InvalidUrl
+            )
+        )
+        if (filePath.isBlank() || filePath.containsPathTraversal()) return Failure(
+            NimbusError.PermanentError(
+                PermanentNimbusErrorCause.InvalidPath
+            )
+        )
+        if (!fileName.isValidFileName()) return Failure(
+            NimbusError.PermanentError(
+                PermanentNimbusErrorCause.InvalidFileName
+            )
+        )
         return Success(Unit)
     }
 
     private fun validateFileSize(fileSize: Long): KResult<Unit, NimbusError> {
         if (fileSize <= 0L) {
             return Failure(
-                NimbusError.InvalidFileSize(
-                    KError("invalid_file_size", "Remote file size must be > 0.")
+                NimbusError.PermanentError(
+                    PermanentNimbusErrorCause.InvalidFileSize(
+                        KError("invalid_file_size", "Remote file size must be > 0.")
+                    )
                 )
             )
         }

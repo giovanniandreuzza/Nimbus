@@ -1,14 +1,14 @@
 package io.github.giovanniandreuzza.nimbus.core.domain.entities
 
-import io.github.giovanniandreuzza.explicitarchitecture.core.domain.entities.Entity
 import io.github.giovanniandreuzza.explicitarchitecture.core.domain.aggregates.IsAggregateRoot
-import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
+import io.github.giovanniandreuzza.explicitarchitecture.core.domain.entities.Entity
+import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
+import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.FileName
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.FilePath
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.FileSize
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.FileUrl
-import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 
 /**
  * Download Task.
@@ -58,7 +58,7 @@ internal class DownloadTask private constructor(
         return true
     }
 
-    fun fail(error: KError) {
+    fun fail(error: DownloadError) {
         _state = DownloadState.Failed(error)
     }
 
@@ -100,6 +100,7 @@ internal class DownloadTask private constructor(
                 storedFileSize = FileSize.create(newSizeBytes)
                 return true
             }
+
             else -> return false
         }
     }

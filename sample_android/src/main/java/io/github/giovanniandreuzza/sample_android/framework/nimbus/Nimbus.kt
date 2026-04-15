@@ -1,8 +1,8 @@
 package io.github.giovanniandreuzza.sample_android.framework.nimbus
 
 import io.github.giovanniandreuzza.nimbus.Nimbus
-import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.ktor.KtorDownloadAdapter
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.withAndroidContext
 import io.ktor.client.HttpClient
 
