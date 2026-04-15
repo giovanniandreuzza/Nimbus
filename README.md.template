@@ -32,22 +32,26 @@ Table of contents
 
 ## Features
 
-**Nimbus APIs**: The library provides an interface to manage download operations.
+**Nimbus APIs**: The library provides a fully typed, suspend-based interface (`NimbusAPI`) to manage download operations. All errors are returned as typed values — no exceptions thrown across the public boundary.
+
+**Typed Error Hierarchy**: Every failure carries a typed cause (`TemporaryNimbusErrorCause` / `PermanentNimbusErrorCause`) enabling exhaustive `when` matching without wildcards.
 
 **Concurrency Limit**: Set a custom concurrency limit to control the number of downloads that can
 occur simultaneously.
 
-**Dispatcher**: Use custom coroutine dispatchers to control where the download operations run.
+**Progress Tracking**: Track the progress of each download operation with real-time `Flow<DownloadState>` emissions.
 
-**Progress Tracking**: Track the progress of each download operation.
+**Pause / Resume**: Pause a running download and resume it later — progress is preserved across sessions via ProtoBuf persistence.
 
-**Pause**: Pause a download operation.
+**Cancel**: Cancel a download operation from any state; partial files are cleaned up automatically.
 
-**Resume**: Resume a paused download operation.
+**Retry**: Retry a failed download with `retryFailedDownload` — re-fetches remote size and resets state.
 
-**Cancel**: Cancel a download operation.
+**Auto-start**: Optionally fire `startDownload` automatically after `enqueueDownload` with `withAutoStart(true)`.
 
-**Repository Integration**: Easily integrate with repositories for download and file management.
+**Pluggable HTTP Client**: Implement `NimbusDownloadPort` yourself, or use the ready-made `KtorDownloadAdapter` from the `nimbus-ktor` artifact.
+
+**KMP-native Storage**: File I/O via `kotlinx.io.files.SystemFileSystem` — no `java.io.File`, works on Android, JVM, and iOS.
 
 ## Releases
 
@@ -55,11 +59,13 @@ occur simultaneously.
 
 ## Installation
 
-Add `nimbus` to your `build.gradle` dependencies.
+Add `nimbus` to your `build.gradle` dependencies. Optionally add `nimbus-ktor` for the ready-made Ktor HTTP adapter.
 
-```
+```kotlin
 dependencies {
-    implementation 'io.github.giovanniandreuzza:nimbus:$VERSION'
+    implementation("io.github.giovanniandreuzza:nimbus:$VERSION")
+    // Optional — recommended Ktor HTTP adapter:
+    implementation("io.github.giovanniandreuzza:nimbus-ktor:$VERSION")
 }
 ```
 

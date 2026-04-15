@@ -1,9 +1,9 @@
 package io.github.giovanniandreuzza.nimbus.infrastructure.repositories
 
+import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
-import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
 import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
@@ -75,6 +75,7 @@ internal class DownloadRepository(
                             return Failure(FailedToLoadDownloadTasks(it))
                         }
                     }
+
                     task.state is DownloadState.Finished -> {
                         // File-integrity check: if the finished file was deleted or
                         // corrupted between sessions, reset the task to Enqueued so
@@ -119,7 +120,9 @@ internal class DownloadRepository(
         mutex.withLock {
             tasks[downloadTask.entityId.id] = downloadTask
             stateFlows[downloadTask.entityId.id]?.update { downloadTask.state }
-                ?: run { stateFlows[downloadTask.entityId.id] = MutableStateFlow(downloadTask.state) }
+                ?: run {
+                    stateFlows[downloadTask.entityId.id] = MutableStateFlow(downloadTask.state)
+                }
             _allTasksFlow.value = tasks.toMap()
         }
 

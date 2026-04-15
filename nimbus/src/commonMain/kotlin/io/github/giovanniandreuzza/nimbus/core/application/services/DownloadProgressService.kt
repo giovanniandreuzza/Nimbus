@@ -8,8 +8,8 @@ import io.github.giovanniandreuzza.nimbus.core.application.toNimbusError
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
-import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 
 /**
  * Download Progress Service.

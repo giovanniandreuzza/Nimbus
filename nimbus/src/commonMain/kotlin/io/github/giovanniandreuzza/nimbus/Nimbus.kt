@@ -150,10 +150,10 @@ public class Nimbus private constructor(
                 if (nimbusStoragePort == null) {
                     require(downloadManagerPath!!.isAbsolutePath()) {
                         "downloadManagerPath must be an absolute path when using the default " +
-                            "file system storage. Got: '${downloadManagerPath}'. " +
-                            "On Android use .withAndroidContext(context), or pass " +
-                            "context.filesDir.absolutePath + \"/subdir\" explicitly. " +
-                            "On iOS use the documents or caches directory absolute path."
+                                "file system storage. Got: '${downloadManagerPath}'. " +
+                                "On Android use .withAndroidContext(context), or pass " +
+                                "context.filesDir.absolutePath + \"/subdir\" explicitly. " +
+                                "On iOS use the documents or caches directory absolute path."
                     }
                 }
 
@@ -192,5 +192,5 @@ public class Nimbus private constructor(
 // Returns true for POSIX absolute paths (/…) and Windows absolute paths (C:\… or \\…).
 private fun String.isAbsolutePath(): Boolean =
     startsWith("/") ||
-        startsWith("\\\\") ||
-        (length >= 3 && this[1] == ':' && (this[2] == '\\' || this[2] == '/'))
+            startsWith("\\\\") ||
+            (length >= 3 && this[1] == ':' && (this[2] == '\\' || this[2] == '/'))

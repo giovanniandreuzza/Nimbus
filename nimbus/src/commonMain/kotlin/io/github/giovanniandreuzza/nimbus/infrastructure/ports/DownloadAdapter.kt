@@ -9,6 +9,8 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailu
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
+import io.github.giovanniandreuzza.nimbus.core.application.errors.PermanentDownloadErrorCause
+import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.CreateFileError
@@ -17,8 +19,8 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.shared.utils.getDownloadProgress
 import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
@@ -124,7 +126,10 @@ internal class DownloadAdapter(
             throw e
         } catch (e: Exception) {
             val error = unexpectedDownloadError(e)
-            notifyFailureAndCleanup(id, DownloadError.UnexpectedError(error))
+            notifyFailureAndCleanup(
+                id,
+                DownloadError.PermanentError(PermanentDownloadErrorCause.UnexpectedError(error))
+            )
         }
     }
 
@@ -138,28 +143,30 @@ internal class DownloadAdapter(
         id: String
     ): Long? {
         val exists = nimbusStoragePort.exists(downloadTask.filePath).getOr { error ->
-            notifyFailureAndCleanup(id, DownloadError.LocalFileStateUnreadable(error))
+            notifyFailureAndCleanup(
+                id,
+                DownloadError.PermanentError(PermanentDownloadErrorCause.StorageError(error))
+            )
             return null
         }
         if (!exists) return 0L
 
         val size = nimbusStoragePort.size(downloadTask.filePath).getOr { error ->
-            notifyFailureAndCleanup(id, DownloadError.LocalFileStateUnreadable(error))
+            notifyFailureAndCleanup(
+                id,
+                DownloadError.PermanentError(PermanentDownloadErrorCause.StorageError(error))
+            )
             return null
         }
         return when {
             size > downloadTask.fileSize -> {
                 notifyFailureAndCleanup(
                     id,
-                    DownloadError.LocalFileOversized(
-                        KError(
-                            "local_file_oversized",
-                            "Local size $size exceeds expected ${downloadTask.fileSize}."
-                        )
-                    )
+                    DownloadError.PermanentError(PermanentDownloadErrorCause.LocalFileOversized)
                 )
                 null
             }
+
             else -> size
         }
     }
@@ -173,11 +180,10 @@ internal class DownloadAdapter(
             is Failure -> 0L
         }
         if (actualSize != downloadTask.fileSize) {
-            val error = KError(
-                code = "file_integrity_error",
-                message = "File size mismatch after download: expected ${downloadTask.fileSize}, got $actualSize"
+            notifyFailureAndCleanup(
+                id,
+                DownloadError.TemporaryError(TemporaryDownloadErrorCause.FileIntegrityMismatch)
             )
-            notifyFailureAndCleanup(id, DownloadError.TemporaryError(error))
             return false
         }
         return true
@@ -185,7 +191,10 @@ internal class DownloadAdapter(
 
     private suspend fun ensureDownloadTargetReady(filePath: String, id: String): Boolean {
         val exists = nimbusStoragePort.exists(filePath).getOr { error ->
-            notifyFailureAndCleanup(id, DownloadError.PermanentError(error))
+            notifyFailureAndCleanup(
+                id,
+                DownloadError.PermanentError(PermanentDownloadErrorCause.StorageError(error))
+            )
             return false
         }
         if (exists) return true
@@ -193,9 +202,19 @@ internal class DownloadAdapter(
         nimbusStoragePort.create(filePath).onFailure { error ->
             val mappedError = when (error) {
                 CreateFileError.FileAlreadyExists -> return true
-                is CreateFileError.IOError -> DownloadError.PermanentError(error.cause)
-                is CreateFileError.ReadPermissionDenied -> DownloadError.PermanentError(error.cause)
-                is CreateFileError.WritePermissionDenied -> DownloadError.PermanentError(error.cause)
+                is CreateFileError.IOError -> DownloadError.PermanentError(
+                    PermanentDownloadErrorCause.StorageError(
+                        error
+                    )
+                )
+
+                is CreateFileError.ReadPermissionDenied -> DownloadError.PermanentError(
+                    PermanentDownloadErrorCause.StorageError(error)
+                )
+
+                is CreateFileError.WritePermissionDenied -> DownloadError.PermanentError(
+                    PermanentDownloadErrorCause.StorageError(error)
+                )
             }
             notifyFailureAndCleanup(id, mappedError)
             return false
@@ -207,11 +226,22 @@ internal class DownloadAdapter(
         nimbusStoragePort.delete(filePath)
         nimbusStoragePort.create(filePath).onFailure { error ->
             val mappedError = when (error) {
-                is CreateFileError.IOError -> DownloadError.PermanentError(error.cause)
-                is CreateFileError.ReadPermissionDenied -> DownloadError.PermanentError(error.cause)
-                is CreateFileError.WritePermissionDenied -> DownloadError.PermanentError(error.cause)
+                is CreateFileError.IOError -> DownloadError.PermanentError(
+                    PermanentDownloadErrorCause.StorageError(
+                        error
+                    )
+                )
+
+                is CreateFileError.ReadPermissionDenied -> DownloadError.PermanentError(
+                    PermanentDownloadErrorCause.StorageError(error)
+                )
+
+                is CreateFileError.WritePermissionDenied -> DownloadError.PermanentError(
+                    PermanentDownloadErrorCause.StorageError(error)
+                )
+
                 CreateFileError.FileAlreadyExists -> DownloadError.TemporaryError(
-                    KError("truncate_race", "Could not truncate file after 416.")
+                    TemporaryDownloadErrorCause.TruncateRace
                 )
             }
             notifyFailureAndCleanup(id, mappedError)
@@ -276,21 +306,25 @@ internal class DownloadAdapter(
                     retryAttempt = 0
                     break@downloadLoop
                 }
+
                 is Failure -> {
-                    when (result.error) {
-                        DownloadError.RangeNotSatisfiable -> {
+                    val downloadError = result.error
+                    when {
+                        downloadError is DownloadError.TemporaryError &&
+                                downloadError.errorCause is TemporaryDownloadErrorCause.RangeNotSatisfiable -> {
                             if (!truncateLocalFileAfter416(downloadTask.filePath, id)) return false
                             progressBytes = 0L
                             retryAttempt = 0
                         }
+
                         else -> {
                             val shouldRetry = shouldRetry(
-                                error = result.error,
+                                error = downloadError,
                                 retryAttempt = retryAttempt,
                                 isStillActive = currentCoroutineContext().isActive
                             )
                             if (!shouldRetry) {
-                                notifyFailureAndCleanup(id, result.error)
+                                notifyFailureAndCleanup(id, downloadError)
                                 return false
                             }
                             retryAttempt += 1
@@ -307,9 +341,17 @@ internal class DownloadAdapter(
     private suspend fun openSink(filePath: String, id: String): Sink? {
         return nimbusStoragePort.sink(path = filePath, hasToAppend = true).getOr { error ->
             val mappedError = when (error) {
-                GetFileSinkError.FileNotFound -> DownloadError.TemporaryError(error.cause)
-                is GetFileSinkError.ReadPermissionDenied -> DownloadError.PermanentError(error.cause)
-                is GetFileSinkError.WritePermissionDenied -> DownloadError.PermanentError(error.cause)
+                GetFileSinkError.FileNotFound -> DownloadError.TemporaryError(
+                    TemporaryDownloadErrorCause.FileNotAccessible
+                )
+
+                is GetFileSinkError.ReadPermissionDenied -> DownloadError.PermanentError(
+                    PermanentDownloadErrorCause.StorageError(error)
+                )
+
+                is GetFileSinkError.WritePermissionDenied -> DownloadError.PermanentError(
+                    PermanentDownloadErrorCause.StorageError(error)
+                )
             }
             notifyFailureAndCleanup(id, mappedError)
             return null
@@ -346,17 +388,24 @@ internal class DownloadAdapter(
         return progressBytes
     }
 
-    private fun shouldRetry(error: DownloadError, retryAttempt: Int, isStillActive: Boolean): Boolean {
+    private fun shouldRetry(
+        error: DownloadError,
+        retryAttempt: Int,
+        isStillActive: Boolean
+    ): Boolean {
         return error is DownloadError.TemporaryError &&
-            retryAttempt < maxRetryAttempts &&
-            isStillActive
+                retryAttempt < maxRetryAttempts &&
+                isStillActive
     }
 
     private fun createExceptionHandler(id: String): CoroutineExceptionHandler {
         return CoroutineExceptionHandler { _, throwable ->
             val error = unexpectedDownloadError(throwable)
             downloadScope.launch {
-                notifyFailureAndCleanup(id, DownloadError.UnexpectedError(error))
+                notifyFailureAndCleanup(
+                    id,
+                    DownloadError.PermanentError(PermanentDownloadErrorCause.UnexpectedError(error))
+                )
             }
         }
     }

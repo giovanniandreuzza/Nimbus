@@ -22,7 +22,7 @@ import java.io.File
 /**
  * Main ViewModel — MVI style.
  *
- * Nimbus is configured with [withAutoStart(true)][io.github.giovanniandreuzza.nimbus.Nimbus.Builder.withAutoStart],
+ * Nimbus is configured with [withAutoStart(true)][io.github.giovanniandreuzza.nimbus.Nimbus.Companion.Builder.withAutoStart],
  * so [MainUiAction.Enqueue] is the only action needed to kick off a download;
  * the library starts it automatically in the background.
  *
@@ -124,11 +124,13 @@ class MainViewModel(
     private fun enqueue(index: Int) {
         viewModelScope.launch {
             val config = configs[index]
-            when (val result = nimbus.enqueueDownload(config.url, config.filePath, config.fileName)) {
+            when (val result =
+                nimbus.enqueueDownload(config.url, config.filePath, config.fileName)) {
                 is Failure -> {
                     Timber.e("Enqueue $index failed: ${result.error}")
                     _uiEvent.send(MainUiEvent.ShowError("Enqueue failed: ${result.error.message}"))
                 }
+
                 is Success -> {
                     Timber.d("Enqueued $index — autoStart will start it")
                     startObservation(index)
@@ -144,6 +146,7 @@ class MainViewModel(
                     Timber.e("Pause $index failed: ${result.error}")
                     _uiEvent.send(MainUiEvent.ShowError("Pause failed: ${result.error.message}"))
                 }
+
                 is Success -> Timber.d("Paused $index")
             }
         }
@@ -156,6 +159,7 @@ class MainViewModel(
                     Timber.e("Resume $index failed: ${result.error}")
                     _uiEvent.send(MainUiEvent.ShowError("Resume failed: ${result.error.message}"))
                 }
+
                 is Success -> {
                     Timber.d("Resumed $index")
                     // Re-attach observation if the previous job was cancelled (e.g. app restart).
@@ -174,6 +178,7 @@ class MainViewModel(
                     Timber.e("Cancel $index failed: ${result.error}")
                     _uiEvent.send(MainUiEvent.ShowError("Cancel failed: ${result.error.message}"))
                 }
+
                 is Success -> {
                     Timber.d("Cancelled $index")
                     observationJobs.remove(index)?.cancel()
@@ -193,6 +198,7 @@ class MainViewModel(
                     _uiEvent.send(MainUiEvent.ShowError("Retry failed: ${retryResult.error.message}"))
                     return@launch
                 }
+
                 is Success -> Timber.d("Task $index reset to Enqueued")
             }
 
@@ -203,6 +209,7 @@ class MainViewModel(
                     _uiEvent.send(MainUiEvent.ShowError("Start failed: ${startResult.error.message}"))
                     return@launch
                 }
+
                 is Success -> {
                     Timber.d("Started $index after retry")
                     startObservation(index)
@@ -224,6 +231,7 @@ class MainViewModel(
                     Timber.e("Observe $index failed: ${result.error}")
                     _uiEvent.send(MainUiEvent.ShowError("Observe failed: ${result.error.message}"))
                 }
+
                 is Success -> result.value.collect { state ->
                     Timber.d("Download $index → $state")
                     updateItemState(index, state.toDisplayState())

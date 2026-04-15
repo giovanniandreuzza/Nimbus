@@ -22,7 +22,6 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.io.IOException
 import kotlinx.io.InternalIoApi
 import kotlinx.io.readByteArray
@@ -30,6 +29,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.protobuf.ProtoBuf
+import kotlin.coroutines.cancellation.CancellationException
 
 @ExperimentalSerializationApi
 internal abstract class StoreManager<T>(
@@ -282,8 +282,13 @@ internal abstract class StoreManager<T>(
             with(it) {
                 val error = when (this) {
                     GetFileSinkError.FileNotFound -> StoreError.StoreNotFound
-                    is GetFileSinkError.ReadPermissionDenied -> StoreError.ReadPermissionDenied(cause)
-                    is GetFileSinkError.WritePermissionDenied -> StoreError.WritePermissionDenied(cause)
+                    is GetFileSinkError.ReadPermissionDenied -> StoreError.ReadPermissionDenied(
+                        cause
+                    )
+
+                    is GetFileSinkError.WritePermissionDenied -> StoreError.WritePermissionDenied(
+                        cause
+                    )
                 }
                 return Failure(error)
             }

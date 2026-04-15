@@ -39,7 +39,7 @@ val api: NimbusAPI = Nimbus.Builder()
 val api: NimbusAPI = Nimbus.Builder()….createAndInit()
 ```
 
-If loading fails (e.g. corrupt store), `NimbusError.InitializationFailed` is returned by the
+If loading fails (e.g. corrupt store), `NimbusError.PermanentError(PermanentNimbusErrorCause.InitializationFailed(...))` is returned by the
 first API call rather than at `init()` time.
 
 ## NimbusAPI — complete method reference
@@ -93,8 +93,9 @@ sealed class DownloadState {
     data object Enqueued : DownloadState()
     data class  Downloading(val progress: Double) : DownloadState()  // 0.0–100.0
     data class  Paused(val progress: Double) : DownloadState()       // 0.0–100.0
-    data class  Failed(val error: KError) : DownloadState()
+    data class  Failed(val error: DownloadError) : DownloadState()   // typed DownloadError
     data object Finished : DownloadState()
+    data object Cancelled : DownloadState()
 }
 ```
 
@@ -117,28 +118,94 @@ data class DownloadTaskDTO(
 
 ## NimbusError sealed class — exhaustive list
 
+`NimbusError` has only two top-level variants. All error detail is carried in a typed cause sealed class,
+enabling exhaustive `when` matching at every level.
+
 ```kotlin
 sealed class NimbusError {
+    // Transient — the operation may be retried
+    data class TemporaryError(val errorCause: TemporaryNimbusErrorCause) : NimbusError()
+    // Non-recoverable — retrying will not help
+    data class PermanentError(val errorCause: PermanentNimbusErrorCause) : NimbusError()
+}
+
+// ── TemporaryNimbusErrorCause ──────────────────────────────────────────────────
+sealed class TemporaryNimbusErrorCause {
+    data class DownloadFailed(val errorCause: TemporaryDownloadErrorCause) : TemporaryNimbusErrorCause()
+    data class GetFileSizeFailed(val errorCause: TemporaryGetFileSizeErrorCause) : TemporaryNimbusErrorCause()
+}
+
+// ── PermanentNimbusErrorCause ──────────────────────────────────────────────────
+sealed class PermanentNimbusErrorCause {
     // Input validation (before any network call)
-    object InvalidUrl           // fileUrl is not http/https
-    object InvalidPath          // filePath contains ".." traversal component
-    object InvalidFileName      // fileName is blank, ".", "..", or contains / \ \0
-    class  InvalidFileSize      // remote reported size <= 0
-    object DownloadNotFound     // no task registered for this fileUrl
-    class  FilePathInUse(filePath: String)  // another task already targets this filePath
-    class  InsufficientDiskSpace(path: String, requiredBytes: Long, availableBytes: Long)
+    data object InvalidPath        // filePath contains ".." traversal component
+    data object InvalidUrl         // fileUrl is not http/https
+    data object InvalidFileName    // fileName is blank, ".", "..", or contains / \ \0
+    data class  InvalidFileSize(cause: KError? = null)  // remote reported size <= 0
+    data object DownloadNotFound   // no task registered for this fileUrl
+    data class  FilePathInUse(filePath: String)
+    data class  InsufficientDiskSpace(path: String, requiredBytes: Long, availableBytes: Long)
 
     // State machine violations
-    class  InvalidState(currentState: DownloadState)  // operation not allowed in this state
+    data class  InvalidState(currentState: DownloadState)  // operation not allowed in this state
 
     // Initialisation
-    class  InitializationFailed(cause: KError)
+    data class  InitializationFailed(cause: KError)
 
-    // Network / storage
-    object ResourceNotFound     // HTTP 404
-    class  TemporaryError       // transient; retry is safe
-    class  PermanentError       // non-recoverable
-    class  UnexpectedError      // programmer error / unhandled exception
+    // Network / download
+    data object ResourceNotFound   // HTTP 404
+    data class  DownloadFailed(errorCause: PermanentDownloadErrorCause)
+    data class  GetFileSizeFailed(errorCause: PermanentGetFileSizeErrorCause)
+
+    // Storage
+    data class  StorageError(cause: KError)
+    data class  UnexpectedError(cause: KError? = null)
+}
+```
+
+### DownloadError cause types (reachable via `DownloadState.Failed` and `NimbusError` cause chains)
+
+```kotlin
+// Carried by DownloadState.Failed and TemporaryNimbusErrorCause.DownloadFailed /
+// PermanentNimbusErrorCause.DownloadFailed
+sealed class DownloadError {
+    data class TemporaryError(val errorCause: TemporaryDownloadErrorCause) : DownloadError()
+    data class PermanentError(val errorCause: PermanentDownloadErrorCause) : DownloadError()
+}
+
+sealed class TemporaryDownloadErrorCause {
+    data class  ServerError(statusCode: Int)   // HTTP 5xx
+    data object RangeNotSatisfiable            // HTTP 416; adapter truncates and retries from byte 0
+    data object FileIntegrityMismatch          // downloaded size ≠ expected size; will retry
+    data object FileNotAccessible              // local file could not be opened for writing; will retry
+    data object TruncateRace                   // could not recreate file after 416 truncation; will retry
+}
+
+sealed class PermanentDownloadErrorCause {
+    data object ResourceNotFound                           // HTTP 404
+    data class  ClientError(statusCode: Int)               // HTTP 4xx (excluding 404)
+    data class  InconsistentRangeResponse(reason: String)  // server returned 200 when 206 expected on resume
+    data object LocalFileOversized                         // local file > expected download size
+    data class  StorageError(cause: KError)                // I/O or permission failure
+    data class  UnexpectedError(cause: KError? = null)
+}
+
+// Carried by TemporaryNimbusErrorCause.GetFileSizeFailed /
+// PermanentNimbusErrorCause.GetFileSizeFailed
+sealed class GetFileSizeError {
+    data class TemporaryError(val errorCause: TemporaryGetFileSizeErrorCause) : GetFileSizeError()
+    data class PermanentError(val errorCause: PermanentGetFileSizeErrorCause) : GetFileSizeError()
+}
+
+sealed class TemporaryGetFileSizeErrorCause {
+    data class ServerError(statusCode: Int)   // HTTP 5xx
+}
+
+sealed class PermanentGetFileSizeErrorCause {
+    data object ResourceNotFound              // HTTP 404
+    data class  ClientError(statusCode: Int)  // HTTP 4xx (excluding 404)
+    data object FileSizeUnavailable           // no Content-Length in HEAD or Range probe
+    data class  UnexpectedError(cause: KError? = null)
 }
 ```
 
@@ -159,9 +226,11 @@ api.getDownloadTask(url).fold(
     onSuccess = { dto -> show(dto) },
     onFailure = { error ->
         when (error) {
-            NimbusError.DownloadNotFound -> showEmpty()
+            is NimbusError.PermanentError -> when (error.errorCause) {
+                PermanentNimbusErrorCause.DownloadNotFound -> showEmpty()
+                else -> showError(error)
+            }
             is NimbusError.TemporaryError -> showRetry()
-            else -> showError(error)
         }
     }
 )
@@ -265,8 +334,8 @@ provides internally — do not buffer the entire response in memory.
 - When `offset > 0`, send `Range: bytes=offset-`.
 - Accept **206** with matching `Content-Range` start byte.
 - Reject **200** with a non-empty body when offset > 0 — this would corrupt the file
-  (`DownloadError.InconsistentRangeResponse`).
-- Map **416** → `DownloadError.RangeNotSatisfiable`.
+  (`DownloadError.PermanentError(PermanentDownloadErrorCause.InconsistentRangeResponse(reason))`).
+- Map **416** → `DownloadError.TemporaryError(TemporaryDownloadErrorCause.RangeNotSatisfiable)`.
 
 ## Using KtorDownloadAdapter (nimbus-ktor artifact)
 

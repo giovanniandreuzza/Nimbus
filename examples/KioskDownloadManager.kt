@@ -71,7 +71,11 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
+import io.github.giovanniandreuzza.nimbus.core.application.errors.PermanentGetFileSizeErrorCause
+import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryGetFileSizeErrorCause
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusError
+import io.github.giovanniandreuzza.nimbus.presentation.PermanentNimbusErrorCause
+import io.github.giovanniandreuzza.nimbus.presentation.TemporaryNimbusErrorCause
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 import kotlinx.coroutines.CoroutineScope
@@ -141,8 +145,10 @@ class KioskNimbusLogger : NimbusLogger {
                 println("[NIMBUS] FAILED ${event.fileUrl} — ${event.error.message}")
 
             is NimbusLogEvent.InsufficientDiskSpace ->
-                println("[NIMBUS] DISK FULL — need ${event.requiredBytes}B, " +
-                        "have ${event.availableBytes}B at ${event.path}")
+                println(
+                    "[NIMBUS] DISK FULL — need ${event.requiredBytes}B, " +
+                            "have ${event.availableBytes}B at ${event.path}"
+                )
 
             is NimbusLogEvent.AutoStartFailed ->
                 println("[NIMBUS] AutoStart failed for ${event.fileUrl}: ${event.error.message}")
@@ -280,6 +286,7 @@ class KioskDownloadManager(
                 // created and is in Failed state. For hard errors (InvalidUrl, disk full, etc.)
                 // we log and move on — the next reconciliation cycle will retry.
             }
+
             is Success -> {
                 // Collect until terminal — ensureDownloaded already started the download,
                 // we just observe until done. Using a nested launch keeps reconcile() from
@@ -289,10 +296,13 @@ class KioskDownloadManager(
                         when (state) {
                             is DownloadState.Downloading ->
                                 println("[KIOSK] ${file.fileName} — ${state.progress.toInt()}%")
+
                             is DownloadState.Failed ->
                                 println("[KIOSK] ${file.fileName} failed: ${state.error.message}")
+
                             DownloadState.Finished ->
                                 println("[KIOSK] ${file.fileName} ready on disk")
+
                             else -> Unit
                         }
                     }
@@ -343,6 +353,7 @@ class KioskDownloadManager(
                     // Task may have been removed or changed state — stop retrying here.
                     return
                 }
+
                 is Success -> Unit
             }
 
@@ -354,6 +365,7 @@ class KioskDownloadManager(
                     delayMs = (delayMs * 2).coerceAtMost(maxRetryDelayMs)
                     continue
                 }
+
                 is Success -> {
                     println("[KIOSK] Restarted $fileUrl successfully")
                     return  // The failure watcher will catch it again if it fails once more
@@ -381,18 +393,35 @@ class KioskDownloadManager(
 // ---------------------------------------------------------------------------
 
 private fun NimbusError.toReadable(): String = when (this) {
-    NimbusError.InvalidPath          -> "invalid path"
-    NimbusError.InvalidUrl           -> "invalid URL"
-    NimbusError.InvalidFileName      -> "invalid file name"
-    is NimbusError.InvalidFileSize   -> "invalid file size"
-    NimbusError.DownloadNotFound     -> "download not found"
-    is NimbusError.FilePathInUse     -> "path already in use: $filePath"
-    is NimbusError.InsufficientDiskSpace ->
-        "insufficient disk space (need ${requiredBytes}B, have ${availableBytes}B)"
-    is NimbusError.InvalidState      -> "invalid state: $currentState"
-    is NimbusError.InitializationFailed -> "init failed: ${cause.message}"
-    NimbusError.ResourceNotFound     -> "resource not found (404)"
-    is NimbusError.TemporaryError    -> "temporary error: ${cause?.message}"
-    is NimbusError.PermanentError    -> "permanent error: ${cause?.message}"
-    is NimbusError.UnexpectedError   -> "unexpected error: ${cause?.message}"
+    is NimbusError.TemporaryError -> when (val c = errorCause) {
+        is TemporaryNimbusErrorCause.DownloadFailed -> "temporary download error: ${c.errorCause.message}"
+        is TemporaryNimbusErrorCause.GetFileSizeFailed -> when (val gc = c.errorCause) {
+            is TemporaryGetFileSizeErrorCause.ServerError -> "temporary get-file-size error: server ${gc.statusCode}"
+        }
+    }
+
+    is NimbusError.PermanentError -> when (val c = errorCause) {
+        PermanentNimbusErrorCause.InvalidPath -> "invalid path"
+        PermanentNimbusErrorCause.InvalidUrl -> "invalid URL"
+        PermanentNimbusErrorCause.InvalidFileName -> "invalid file name"
+        is PermanentNimbusErrorCause.InvalidFileSize -> "invalid file size: ${c.cause?.message}"
+        PermanentNimbusErrorCause.DownloadNotFound -> "download not found"
+        is PermanentNimbusErrorCause.FilePathInUse -> "path already in use: ${c.filePath}"
+        is PermanentNimbusErrorCause.InsufficientDiskSpace ->
+            "insufficient disk space (need ${c.requiredBytes}B, have ${c.availableBytes}B)"
+
+        is PermanentNimbusErrorCause.InvalidState -> "invalid state: ${c.currentState}"
+        is PermanentNimbusErrorCause.InitializationFailed -> "init failed: ${c.cause.message}"
+        PermanentNimbusErrorCause.ResourceNotFound -> "resource not found (404)"
+        is PermanentNimbusErrorCause.DownloadFailed -> "permanent download error: ${c.errorCause.message}"
+        is PermanentNimbusErrorCause.GetFileSizeFailed -> when (val gc = c.errorCause) {
+            PermanentGetFileSizeErrorCause.ResourceNotFound -> "resource not found during size check"
+            is PermanentGetFileSizeErrorCause.ClientError -> "client error during size check: ${gc.statusCode}"
+            PermanentGetFileSizeErrorCause.FileSizeUnavailable -> "could not determine file size"
+            is PermanentGetFileSizeErrorCause.UnexpectedError -> "unexpected size check error: ${gc.cause?.message}"
+        }
+
+        is PermanentNimbusErrorCause.StorageError -> "storage error: ${c.cause.message}"
+        is PermanentNimbusErrorCause.UnexpectedError -> "unexpected error: ${c.cause?.message}"
+    }
 }
