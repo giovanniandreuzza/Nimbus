@@ -53,7 +53,8 @@ internal fun init(
         storePath = downloadManagerPath,
         dispatcher = ioDispatcher,
         nimbusStoragePort = storage,
-        logger = logger
+        logger = logger,
+        storeScope = downloadScope
     )
 
     val autoRetryRef = AutoRetryRef()

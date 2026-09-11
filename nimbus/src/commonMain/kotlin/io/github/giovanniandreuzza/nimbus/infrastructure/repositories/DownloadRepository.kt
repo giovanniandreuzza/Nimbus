@@ -22,12 +22,17 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.mappers.Do
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -53,7 +58,9 @@ internal class DownloadRepository(
     storePath: String,
     dispatcher: CoroutineDispatcher,
     private val nimbusStoragePort: NimbusStoragePort,
-    logger: NimbusLogger? = null
+    private val logger: NimbusLogger? = null,
+    storeScope: CoroutineScope = CoroutineScope(SupervisorJob() + dispatcher),
+    coalesceWindowMs: Long = DEFAULT_COALESCE_WINDOW_MS
 ) : DownloadTaskRepository {
 
     private val mutex = Mutex()
@@ -76,9 +83,15 @@ internal class DownloadRepository(
      *   number of known tasks whether or not anyone is observing. Bumping a counter does not.
      */
     private val revision = MutableStateFlow(0L)
-    private val diskStore = DiskStore(storePath, dispatcher, nimbusStoragePort) { reason ->
-        logger?.log(NimbusLogEvent.StoreReset(reason))
-    }
+    private val diskStore = DiskStore(
+        storePath = storePath,
+        dispatcher = dispatcher,
+        nimbusStoragePort = nimbusStoragePort,
+        scope = storeScope,
+        coalesceWindowMs = coalesceWindowMs,
+        onReset = { reason -> logger?.log(NimbusLogEvent.StoreReset(reason)) },
+        onBackgroundFlushFailed = { cause -> logger?.log(NimbusLogEvent.StoreFlushFailed(cause)) }
+    )
 
     // -----------------------------------------------------------------------
     // DownloadTaskRepository implementation
@@ -87,6 +100,11 @@ internal class DownloadRepository(
     override suspend fun loadDownloadTasks(): KResult<Unit, FailedToLoadDownloadTasks> {
         diskStore.load().onFailure { return Failure(FailedToLoadDownloadTasks(it)) }
 
+        // Recovery can rewrite every task it loads. Each rewrite is published in memory and
+        // the whole set is committed once at the end, so booting a device holding hundreds
+        // of tasks costs one commit rather than one per recovered task.
+        var recovered = false
+
         mutex.withLock {
             diskStore.getAll().forEach { (id, task) ->
                 when {
@@ -94,9 +112,8 @@ internal class DownloadRepository(
                         // Crash/restart recovery: Downloading tasks that were never
                         // paused are reset to Paused so they can be resumed cleanly.
                         task.pause()
-                        diskStore.save(task).onFailure {
-                            return Failure(FailedToLoadDownloadTasks(it))
-                        }
+                        diskStore.publish(task)
+                        recovered = true
                     }
 
                     task.state is DownloadState.Finished -> {
@@ -107,9 +124,8 @@ internal class DownloadRepository(
                             .let { result -> if (result is Success) result.value else -1L }
                         if (actualSize != task.fileSize.value) {
                             task.resetToEnqueued()
-                            diskStore.save(task).onFailure {
-                                return Failure(FailedToLoadDownloadTasks(it))
-                            }
+                            diskStore.publish(task)
+                            recovered = true
                         }
                     }
                 }
@@ -119,8 +135,21 @@ internal class DownloadRepository(
             revision.value++
         }
 
+        if (recovered) {
+            diskStore.flush().onFailure { return Failure(FailedToLoadDownloadTasks(it)) }
+        }
+
         return Success(Unit)
     }
+
+    /**
+     * Commits anything still waiting for a coalesced write.
+     *
+     * Terminal states are already durable when their save returns, so this exists for the
+     * moments when a caller knows the process may not survive long enough for the next
+     * coalesced commit — an appliance being backgrounded or told to shut down.
+     */
+    internal suspend fun flushPendingState(): KResult<Unit, KError> = diskStore.flush()
 
     override suspend fun getDownloadTask(id: DownloadId): KResult<DownloadTask, DownloadTaskNotFound> {
         val task = mutex.withLock { tasks[id] }
@@ -155,9 +184,35 @@ internal class DownloadRepository(
             revision.value++
         }
 
-        diskStore.save(downloadTask).onFailure { return Failure(it) }
+        diskStore.save(downloadTask, durable = downloadTask.state.mustBeDurable())
+            .onFailure { return Failure(it) }
 
         return Success(Unit)
+    }
+
+    /**
+     * Whether reaching this state has to be on disk before the save returns.
+     *
+     * A commit rewrites the whole store, so committing every transition makes the cost of
+     * one state change grow with the number of tasks the device has ever known. The states
+     * that can wait are the ones the boot path can re-derive: `loadDownloadTasks` already
+     * demotes a `Downloading` task to `Paused` and re-checks a `Finished` task against the
+     * file on disk, and the resume offset comes from the partial file's length rather than
+     * from anything recorded here. Losing an `Enqueued`, `Downloading` or `Paused` record to
+     * a power cut therefore costs the caller a re-enqueue at worst, never a re-download.
+     *
+     * The terminal states carry information that is nowhere else — why a download failed,
+     * that a file is complete and may be handed to the caller, that a task was cancelled on
+     * purpose — so they are committed before the save returns.
+     */
+    private fun DownloadState.mustBeDurable(): Boolean = when (this) {
+        is DownloadState.Finished,
+        is DownloadState.Failed,
+        is DownloadState.Cancelled -> true
+
+        is DownloadState.Enqueued,
+        is DownloadState.Downloading,
+        is DownloadState.Paused -> false
     }
 
     override suspend fun updateDownloadProgress(downloadTask: DownloadTask): KResult<Unit, KError> {
@@ -189,7 +244,10 @@ internal class DownloadRepository(
         storePath: String,
         dispatcher: CoroutineDispatcher,
         nimbusStoragePort: NimbusStoragePort,
-        onReset: suspend (reason: String) -> Unit
+        scope: CoroutineScope,
+        coalesceWindowMs: Long,
+        onReset: suspend (reason: String) -> Unit,
+        private val onBackgroundFlushFailed: suspend (KError) -> Unit
     ) : StoreManager<DownloadStore>(
         filePath = storePath,
         nimbusStoragePort = nimbusStoragePort,
@@ -197,6 +255,23 @@ internal class DownloadRepository(
         dispatcher = dispatcher,
         onReset = onReset
     ) {
+
+        /**
+         * Carries at most one pending flush: a burst of coalescable saves collapses into a
+         * single commit of the final value instead of one commit each.
+         */
+        private val flushRequests = Channel<Unit>(Channel.CONFLATED)
+
+        init {
+            scope.launch {
+                for (request in flushRequests) {
+                    // Let the burst finish before paying for it.
+                    delay(coalesceWindowMs)
+                    flush().onFailure { onBackgroundFlushFailed(it) }
+                }
+            }
+        }
+
         suspend fun load(): KResult<Unit, InitStoreError> {
             val result = init(DownloadStore())
             if (result.isFailure()) {
@@ -219,12 +294,41 @@ internal class DownloadRepository(
         fun getAll(): Map<DownloadId, DownloadTask> =
             data?.downloads?.toDomains() ?: emptyMap()
 
-        suspend fun save(task: DownloadTask): KResult<Unit, StoreError> {
+        /**
+         * @param durable commit before returning, rather than letting the change ride along
+         * with the next coalesced commit.
+         */
+        suspend fun save(task: DownloadTask, durable: Boolean): KResult<Unit, StoreError> {
             val taskStore = task.toStore()
-            return update { it.copy(downloads = it.downloads + (taskStore.id to taskStore)) }
+            val transform: (DownloadStore) -> DownloadStore = {
+                it.copy(downloads = it.downloads + (taskStore.id to taskStore))
+            }
+
+            if (durable) return update(transform)
+
+            mutate(transform)
+            flushRequests.trySend(Unit)
+            return Success(Unit)
+        }
+
+        /** Publishes [task] in memory without committing and without asking for a commit. */
+        suspend fun publish(task: DownloadTask) {
+            val taskStore = task.toStore()
+            mutate { it.copy(downloads = it.downloads + (taskStore.id to taskStore)) }
         }
 
         suspend fun delete(id: DownloadId): KResult<Unit, StoreError> =
             update { it.copy(downloads = it.downloads - id.value) }
+    }
+
+    internal companion object {
+        /**
+         * How long a coalescable change waits for company before the store is committed.
+         *
+         * Long enough that a burst — a boot recovery, an enqueue of a whole playlist, a
+         * pause-all — becomes one commit; short enough that a lone change is on disk well
+         * within the time it takes a person to notice anything happened.
+         */
+        const val DEFAULT_COALESCE_WINDOW_MS: Long = 250L
     }
 }
