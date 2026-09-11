@@ -44,6 +44,9 @@ kotlin {
             implementation(kotlin("test"))
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.ktor.mock)
+            // A real engine against a real socket: what MockEngine cannot answer is whether
+            // a Range header is actually sent and what a client raises when a body stops.
+            implementation(libs.ktor.okhttp)
         }
     }
 }
