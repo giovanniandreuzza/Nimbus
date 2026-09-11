@@ -83,6 +83,8 @@ internal abstract class StoreManager<T>(
                     is CreateStoreError.WritePermissionDenied -> InitStoreError.WritePermissionDenied(
                         cause
                     )
+
+                    is CreateStoreError.UnexpectedError -> InitStoreError.StoreFailed(cause)
                 }
                 return Failure(error)
             }
@@ -282,6 +284,8 @@ internal abstract class StoreManager<T>(
                         is DeleteFileError.DeletePermissionDenied -> DeleteStoreError.DeletePermissionDenied(
                             it
                         )
+
+                        is DeleteFileError.UnexpectedError -> DeleteStoreError.UnexpectedError(it)
                     }
                     return@withLock Failure(error)
                 }
@@ -313,6 +317,9 @@ internal abstract class StoreManager<T>(
 
                     is CreateFileError.WritePermissionDenied ->
                         Failure(CreateStoreError.WritePermissionDenied(error.cause))
+
+                    is CreateFileError.UnexpectedError ->
+                        Failure(CreateStoreError.UnexpectedError(error.cause))
                 }
             }
             Success(Unit)
@@ -338,6 +345,9 @@ internal abstract class StoreManager<T>(
 
                     is CreateFileError.WritePermissionDenied ->
                         Failure(StoreError.WritePermissionDenied(createError.cause))
+
+                    is CreateFileError.UnexpectedError ->
+                        Failure(StoreError.StoreFailed(createError.cause))
                 }
             }
         }
@@ -353,6 +363,8 @@ internal abstract class StoreManager<T>(
                     is GetFileSinkError.WritePermissionDenied -> StoreError.WritePermissionDenied(
                         cause
                     )
+
+                    is GetFileSinkError.UnexpectedError -> StoreError.StoreFailed(cause)
                 }
                 return Failure(error)
             }
@@ -380,6 +392,7 @@ internal abstract class StoreManager<T>(
                 val error = when (this) {
                     GetFileSourceError.FileNotFound -> ReadError.StoreNotFound
                     is GetFileSourceError.ReadPermissionDenied -> ReadError.ReadPermissionDenied(it)
+                    is GetFileSourceError.UnexpectedError -> ReadError.UnexpectedError(it)
                 }
                 return Failure(error)
             }
@@ -423,6 +436,7 @@ internal abstract class StoreManager<T>(
         is MoveFileError.IOError -> StoreError.IOError(cause)
         is MoveFileError.ReadPermissionDenied -> StoreError.ReadPermissionDenied(cause)
         is MoveFileError.WritePermissionDenied -> StoreError.WritePermissionDenied(cause)
+        is MoveFileError.UnexpectedError -> StoreError.StoreFailed(cause)
     }
 
     /**
@@ -481,6 +495,7 @@ internal abstract class StoreManager<T>(
                     is ReadError.IOError -> InitStoreError.IOError(cause)
                     is ReadError.ReadPermissionDenied -> InitStoreError.ReadPermissionDenied(cause)
                     ReadError.StoreNotFound -> InitStoreError.StoreNotFound
+                    is ReadError.UnexpectedError -> InitStoreError.StoreFailed(cause)
                 }
                 return Failure(error)
             }

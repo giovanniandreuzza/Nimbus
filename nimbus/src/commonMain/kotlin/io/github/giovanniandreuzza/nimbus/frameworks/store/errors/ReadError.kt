@@ -71,4 +71,17 @@ internal sealed class ReadError(
         message = "An I/O error occurred.",
         cause = cause
     )
+
+    /**
+     * A failure the storage implementation could not classify.
+     *
+     * @param cause Cause.
+     * @author Giovanni Andreuzza
+     */
+    @IsFrameworkError
+    data class UnexpectedError(override val cause: KError) : ReadError(
+        code = "unexpected_error",
+        message = "An unexpected error occurred.",
+        cause = cause
+    )
 }

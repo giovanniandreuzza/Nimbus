@@ -14,6 +14,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownl
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.CreateFileError
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.DeleteFileError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.GetFileSinkError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
@@ -215,6 +216,10 @@ internal class DownloadAdapter(
                 is CreateFileError.WritePermissionDenied -> DownloadError.PermanentError(
                     PermanentDownloadErrorCause.StorageError(error)
                 )
+
+                is CreateFileError.UnexpectedError -> DownloadError.PermanentError(
+                    PermanentDownloadErrorCause.StorageError(error)
+                )
             }
             notifyFailureAndCleanup(id, mappedError)
             return false
@@ -223,7 +228,18 @@ internal class DownloadAdapter(
     }
 
     private suspend fun truncateLocalFileAfter416(filePath: String, id: String): Boolean {
-        nimbusStoragePort.delete(filePath)
+        // A delete that genuinely failed must not be mistaken for the race below: the
+        // create that follows would report FileAlreadyExists, the download would retry as
+        // if two writers had collided, and the real reason would never reach the logger.
+        nimbusStoragePort.delete(filePath).onFailure { error ->
+            if (error !is DeleteFileError.FileNotFound) {
+                notifyFailureAndCleanup(
+                    id,
+                    DownloadError.PermanentError(PermanentDownloadErrorCause.StorageError(error))
+                )
+                return false
+            }
+        }
         nimbusStoragePort.create(filePath).onFailure { error ->
             val mappedError = when (error) {
                 is CreateFileError.IOError -> DownloadError.PermanentError(
@@ -242,6 +258,10 @@ internal class DownloadAdapter(
 
                 CreateFileError.FileAlreadyExists -> DownloadError.TemporaryError(
                     TemporaryDownloadErrorCause.TruncateRace
+                )
+
+                is CreateFileError.UnexpectedError -> DownloadError.PermanentError(
+                    PermanentDownloadErrorCause.StorageError(error)
                 )
             }
             notifyFailureAndCleanup(id, mappedError)
@@ -350,6 +370,10 @@ internal class DownloadAdapter(
                 )
 
                 is GetFileSinkError.WritePermissionDenied -> DownloadError.PermanentError(
+                    PermanentDownloadErrorCause.StorageError(error)
+                )
+
+                is GetFileSinkError.UnexpectedError -> DownloadError.PermanentError(
                     PermanentDownloadErrorCause.StorageError(error)
                 )
             }
