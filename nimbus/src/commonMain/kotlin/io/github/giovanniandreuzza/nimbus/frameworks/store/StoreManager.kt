@@ -142,6 +142,35 @@ internal abstract class StoreManager<T>(
     }
 
     /**
+     * Applies [transform] to the current value and publishes the result **without writing
+     * it to disk**.
+     *
+     * The pair of [mutate] and [flush] is [update] split in two, for callers that would
+     * otherwise commit the whole store once per change. Because a commit rewrites
+     * everything the store holds, a burst of changes is far cheaper as one commit of the
+     * final value than as one commit each — but only a caller knows which of its changes
+     * can wait for the next commit and which must be durable before it returns. Those that
+     * must be durable use [update].
+     */
+    suspend fun mutate(transform: (T) -> T) {
+        mutex.withLock {
+            val current = data ?: return@withLock
+            data = transform(current)
+        }
+    }
+
+    /**
+     * Commits whatever the store currently holds, including every change published by
+     * [mutate] since the last commit.
+     */
+    suspend fun flush(): KResult<Unit, StoreError> {
+        return mutex.withLock {
+            val current = data ?: return@withLock Success(Unit)
+            writeLocked(current)
+        }
+    }
+
+    /**
      * Serialises [data] and commits it with a two-phase write.
      *
      * Callers must already hold [mutex] — [Mutex] is not reentrant, so this must never

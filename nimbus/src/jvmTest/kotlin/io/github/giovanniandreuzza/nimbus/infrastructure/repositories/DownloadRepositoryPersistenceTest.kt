@@ -44,6 +44,7 @@ class DownloadRepositoryPersistenceTest {
             "expected every task to be held in memory"
         )
 
+        repository.flushPendingState()
         val reloaded = repositoryOn(storeFile)
         reloaded.loadDownloadTasks()
 
@@ -67,6 +68,7 @@ class DownloadRepositoryPersistenceTest {
         task.pause()
         repository.saveDownloadTask(task)
 
+        repository.flushPendingState()
         val reloaded = repositoryOn(storeFile)
         reloaded.loadDownloadTasks()
 

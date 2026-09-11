@@ -81,6 +81,16 @@ public sealed class NimbusLogEvent {
     ) : NimbusLogEvent()
 
     /**
+     * A coalesced background commit of the store failed. Every state the caller was told
+     * was durable already is; what may be missing from disk are the states the boot path
+     * can re-derive — an enqueue, a progress position, a pause — so a device that restarts
+     * now recovers, it just may not remember the most recent non-terminal change.
+     */
+    public data class StoreFlushFailed(
+        public val cause: KError
+    ) : NimbusLogEvent()
+
+    /**
      * The persisted store was unusable — it could not be decoded, or it carried a
      * schema version this build does not understand — and was discarded. Every
      * pending task is gone: callers have to enqueue again.
