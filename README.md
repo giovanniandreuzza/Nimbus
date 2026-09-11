@@ -61,13 +61,15 @@ occur simultaneously.
 
 Add `nimbus` to your `build.gradle` dependencies. Optionally add `nimbus-ktor` for the ready-made Ktor HTTP adapter.
 
+<!-- x-release-please-start-version -->
 ```kotlin
 dependencies {
-    implementation("io.github.giovanniandreuzza:nimbus:2.1.0")
+    implementation("io.github.giovanniandreuzza:nimbus:2.2.0")
     // Optional — recommended Ktor HTTP adapter:
-    implementation("io.github.giovanniandreuzza:nimbus-ktor:2.1.0")
+    implementation("io.github.giovanniandreuzza:nimbus-ktor:2.2.0")
 }
 ```
+<!-- x-release-please-end -->
 
 ### Example
 
