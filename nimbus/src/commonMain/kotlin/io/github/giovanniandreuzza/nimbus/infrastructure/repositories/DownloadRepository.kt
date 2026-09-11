@@ -25,6 +25,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
@@ -58,7 +59,23 @@ internal class DownloadRepository(
     private val mutex = Mutex()
     private val tasks = mutableMapOf<DownloadId, DownloadTask>()
     private val stateFlows = mutableMapOf<DownloadId, MutableStateFlow<DownloadState>>()
-    private val _allTasksFlow = MutableStateFlow<Map<DownloadId, DownloadTask>>(emptyMap())
+
+    /**
+     * Monotonic counter bumped on every mutation, and the only thing the hot path pushes.
+     *
+     * [observeAllDownloadTasks] derives its snapshots from this instead of the repository
+     * publishing a copy of the task map on every change. Two reasons, and both matter on the
+     * devices this library targets:
+     *
+     * - **Correctness.** [DownloadTask] is an `Entity`, whose `equals` is identity on the id
+     *   alone — a task that changed state is still equal to itself. A [MutableStateFlow]
+     *   holding a map of tasks therefore conflates every state change away and emits only
+     *   when the key set changes, so a list UI would see tasks appear and then never move.
+     *   A revision number changes on every mutation, so nothing is conflated away.
+     * - **Cost.** Copying the map on every progress tick allocates proportionally to the
+     *   number of known tasks whether or not anyone is observing. Bumping a counter does not.
+     */
+    private val revision = MutableStateFlow(0L)
     private val diskStore = DiskStore(storePath, dispatcher, nimbusStoragePort) { reason ->
         logger?.log(NimbusLogEvent.StoreReset(reason))
     }
@@ -99,7 +116,7 @@ internal class DownloadRepository(
                 tasks[id] = task
                 stateFlows[id] = MutableStateFlow(task.state)
             }
-            _allTasksFlow.value = tasks.toMap()
+            revision.value++
         }
 
         return Success(Unit)
@@ -119,8 +136,14 @@ internal class DownloadRepository(
         return flow?.let { Success(it.asStateFlow()) } ?: Failure(DownloadTaskNotFound)
     }
 
+    /**
+     * Snapshots are built only when a collector is ready for one: [conflate] lets a slow
+     * observer — a list UI redrawing at frame rate — skip the revisions it could not have
+     * rendered anyway, so the cost of a snapshot is bounded by how fast it is consumed
+     * rather than by how fast downloads report progress.
+     */
     override fun observeAllDownloadTasks(): Flow<List<DownloadTask>> =
-        _allTasksFlow.map { it.values.toList() }
+        revision.map { getAllDownloadTask().values.toList() }.conflate()
 
     override suspend fun saveDownloadTask(downloadTask: DownloadTask): KResult<Unit, KError> {
         mutex.withLock {
@@ -129,7 +152,7 @@ internal class DownloadRepository(
                 ?: run {
                     stateFlows[downloadTask.entityId.id] = MutableStateFlow(downloadTask.state)
                 }
-            _allTasksFlow.value = tasks.toMap()
+            revision.value++
         }
 
         diskStore.save(downloadTask).onFailure { return Failure(it) }
@@ -141,7 +164,7 @@ internal class DownloadRepository(
         mutex.withLock {
             tasks[downloadTask.entityId.id] = downloadTask
             stateFlows[downloadTask.entityId.id]?.update { downloadTask.state }
-            _allTasksFlow.value = tasks.toMap()
+            revision.value++
         }
         return Success(Unit)
     }
@@ -150,7 +173,7 @@ internal class DownloadRepository(
         mutex.withLock {
             tasks.remove(id)
             stateFlows.remove(id)
-            _allTasksFlow.value = tasks.toMap()
+            revision.value++
         }
 
         diskStore.delete(id).onFailure { return Failure(it) }
@@ -197,22 +220,11 @@ internal class DownloadRepository(
             data?.downloads?.toDomains() ?: emptyMap()
 
         suspend fun save(task: DownloadTask): KResult<Unit, StoreError> {
-            data?.let {
-                val taskStore = task.toStore()
-                val updated = it.copy(downloads = it.downloads + (taskStore.id to taskStore))
-                data = updated
-                return store(updated)
-            }
-            return Success(Unit)
+            val taskStore = task.toStore()
+            return update { it.copy(downloads = it.downloads + (taskStore.id to taskStore)) }
         }
 
-        suspend fun delete(id: DownloadId): KResult<Unit, StoreError> {
-            data?.let {
-                val updated = it.copy(downloads = it.downloads - id.value)
-                data = updated
-                return store(updated)
-            }
-            return Success(Unit)
-        }
+        suspend fun delete(id: DownloadId): KResult<Unit, StoreError> =
+            update { it.copy(downloads = it.downloads - id.value) }
     }
 }

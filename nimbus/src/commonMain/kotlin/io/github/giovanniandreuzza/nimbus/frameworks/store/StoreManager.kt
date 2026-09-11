@@ -43,7 +43,13 @@ internal abstract class StoreManager<T>(
     private val mutex = Mutex()
     private val tempFilePath: String = "$filePath.tmp"
 
+    /**
+     * The value currently held by the store. Subclasses may read it; deriving a new value
+     * from it and persisting that must go through [update], which performs the
+     * read-modify-write atomically.
+     */
     protected var data: T? = null
+        private set
 
     fun isReady(): Boolean = data != null
 
@@ -111,58 +117,86 @@ internal abstract class StoreManager<T>(
      * - [StoreError.SerializationError] if a serialization error occurs;
      * - [StoreError.IOError] if an IO error occurs.
      */
-    @OptIn(InternalIoApi::class)
     suspend fun store(data: T): KResult<Unit, StoreError> {
+        return mutex.withLock { writeLocked(data) }
+    }
+
+    /**
+     * Atomically reads the current value, applies [transform], publishes the result and
+     * persists it — all under the store lock.
+     *
+     * [store] alone cannot offer this: a caller that reads [data], derives a new value and
+     * calls [store] performs a read-modify-write with no lock held, so two concurrent callers
+     * can both derive from the same base and the later write silently drops the earlier one.
+     * Callers that mutate a value derived from the current one must use this instead.
+     *
+     * No-op returning [Success] when the store has not been initialised yet.
+     */
+    suspend fun update(transform: (T) -> T): KResult<Unit, StoreError> {
         return mutex.withLock {
-            try {
-                withContext(dispatcher) {
-                    val encodedData = protoBuf.encodeToByteArray(serializer, data)
-                    // Strict two-phase write: commit happens with atomic move.
-                    writeEncodedDataToPath(tempFilePath, encodedData).getOr {
-                        return@withContext Failure(it)
-                    }
-                    nimbusStoragePort.atomicMove(tempFilePath, filePath).getOr {
-                        return@withContext Failure(it.toStoreError())
-                    }
-                    Success(Unit)
+            val current = data ?: return@withLock Success(Unit)
+            val updated = transform(current)
+            data = updated
+            writeLocked(updated)
+        }
+    }
+
+    /**
+     * Serialises [data] and commits it with a two-phase write.
+     *
+     * Callers must already hold [mutex] — [Mutex] is not reentrant, so this must never
+     * acquire it itself.
+     */
+    @OptIn(InternalIoApi::class)
+    private suspend fun writeLocked(data: T): KResult<Unit, StoreError> {
+        return try {
+            withContext(dispatcher) {
+                val encodedData = protoBuf.encodeToByteArray(serializer, data)
+                // Strict two-phase write: commit happens with atomic move.
+                writeEncodedDataToPath(tempFilePath, encodedData).getOr {
+                    return@withContext Failure(it)
                 }
-            } catch (e: CancellationException) {
-                // Must be re-thrown — CancellationException is a subclass of
-                // IllegalStateException on the JVM, so without this guard it would
-                // be caught below and silently converted to a StoreFailed failure,
-                // preventing coroutine cancellation from propagating correctly.
-                throw e
-            } catch (e: SerializationException) {
-                val error = KError(
-                    code = "SerializationException",
-                    message = e.message ?: "Unknown serialization error"
-                )
-                Failure(StoreError.SerializationError(error))
-            } catch (e: IOException) {
-                val error = KError(
-                    code = "IOException",
-                    message = e.message ?: "Unknown IO error"
-                )
-                Failure(StoreError.IOError(error))
-            } catch (e: IndexOutOfBoundsException) {
-                val error = KError(
-                    code = "IndexOutOfBoundsException",
-                    message = e.message ?: "Index out of bounds error"
-                )
-                Failure(StoreError.StoreFailed(error))
-            } catch (e: IllegalArgumentException) {
-                val error = KError(
-                    code = "IllegalArgumentException",
-                    message = e.message ?: "Illegal argument error"
-                )
-                Failure(StoreError.StoreFailed(error))
-            } catch (e: IllegalStateException) {
-                val error = KError(
-                    code = "IllegalStateException",
-                    message = e.message ?: "Illegal state error"
-                )
-                Failure(StoreError.StoreFailed(error))
+                nimbusStoragePort.atomicMove(tempFilePath, filePath).getOr {
+                    return@withContext Failure(it.toStoreError())
+                }
+                Success(Unit)
             }
+        } catch (e: CancellationException) {
+            // Must be re-thrown — CancellationException is a subclass of
+            // IllegalStateException on the JVM, so without this guard it would
+            // be caught below and silently converted to a StoreFailed failure,
+            // preventing coroutine cancellation from propagating correctly.
+            throw e
+        } catch (e: SerializationException) {
+            val error = KError(
+                code = "SerializationException",
+                message = e.message ?: "Unknown serialization error"
+            )
+            Failure(StoreError.SerializationError(error))
+        } catch (e: IOException) {
+            val error = KError(
+                code = "IOException",
+                message = e.message ?: "Unknown IO error"
+            )
+            Failure(StoreError.IOError(error))
+        } catch (e: IndexOutOfBoundsException) {
+            val error = KError(
+                code = "IndexOutOfBoundsException",
+                message = e.message ?: "Index out of bounds error"
+            )
+            Failure(StoreError.StoreFailed(error))
+        } catch (e: IllegalArgumentException) {
+            val error = KError(
+                code = "IllegalArgumentException",
+                message = e.message ?: "Illegal argument error"
+            )
+            Failure(StoreError.StoreFailed(error))
+        } catch (e: IllegalStateException) {
+            val error = KError(
+                code = "IllegalStateException",
+                message = e.message ?: "Illegal state error"
+            )
+            Failure(StoreError.StoreFailed(error))
         }
     }
 
