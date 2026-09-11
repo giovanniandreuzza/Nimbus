@@ -351,6 +351,18 @@ internal class DownloadAdapter(
             // transfer was already interrupted, which is to say when far more has already
             // been wasted. Re-priming at the top of each attempt is also what makes the
             // rule hold across a 416 truncation and every transport retry.
+            // The offset comes from the file, for the same reason the digest does, and at the
+            // same moment.
+            //
+            // Holding it in memory instead looks equivalent and is not: the assignment that
+            // records it only runs when the transfer returns, so an attempt whose body stopped
+            // arriving leaves the variable at whatever it was before — while the bytes it did
+            // write are on disk. The next attempt then asks to resume from a stale offset and
+            // appends the same stretch twice. Reading the length back is also the only source
+            // that survives the process dying mid-transfer, which is the case this all exists
+            // for.
+            progressBytes = resolvePartialBytesOnDisk(downloadTask, id) ?: return null
+
             val algorithm = digestAlgorithm
             if (algorithm != null) {
                 val primed = ContentDigest(algorithm)
