@@ -39,6 +39,18 @@ internal abstract class StoreManager<T>(
     private val dispatcher: CoroutineDispatcher,
     private val onReset: (suspend (reason: String) -> Unit)? = null,
 ) {
+    /**
+     * Default configuration, which omits any value equal to its declared default.
+     *
+     * That has a consequence worth knowing when adding a field: give it a default the code
+     * never actually writes, or it will not reach the disk. `DownloadStore.schemaVersion`
+     * is the cautionary case — it defaulted to the current version, so it was never
+     * encoded, and a store from an older build decoded as whatever the reading build's
+     * default happened to be. It now defaults to a value no build writes.
+     *
+     * `encodeDefaults = true` is not the fix: ProtoBuf has no representation for an absent
+     * optional field's null, so turning it on fails to encode every nullable field.
+     */
     private val protoBuf: ProtoBuf = ProtoBuf
     private val mutex = Mutex()
     private val tempFilePath: String = "$filePath.tmp"

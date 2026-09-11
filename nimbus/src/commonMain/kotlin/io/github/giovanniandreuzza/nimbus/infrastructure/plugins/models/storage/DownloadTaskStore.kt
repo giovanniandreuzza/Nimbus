@@ -27,5 +27,9 @@ internal data class DownloadTaskStore(
     @ProtoNumber(5)
     val fileSize: Long,
     @ProtoNumber(6)
-    val state: DownloadStateStore
+    val state: DownloadStateStore,
+    @ProtoNumber(7)
+    val expectedChecksum: ChecksumStore? = null,
+    @ProtoNumber(8)
+    val checksum: ChecksumStore? = null
 )

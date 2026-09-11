@@ -49,6 +49,20 @@ occur simultaneously.
 
 **Auto-start**: Optionally fire `startDownload` automatically after `enqueueDownload` with `withAutoStart(true)`.
 
+**Content Digest**: Opt in with `withContentDigest(DigestAlgorithm.SHA256)` and every download is
+hashed as it is written, so learning what you downloaded costs nothing beyond the hashing. Pass an
+`expectedChecksum` to have a transfer verified against a digest your backend published, and call
+`checksum(fileUrl)` later to ask whether a file still holds the bytes it arrived with — the
+difference between a file that has changed and a file that is intact but unusable.
+
+```kotlin
+val nimbus = Nimbus.Builder()
+    .withNimbusDownloadPort(myDownloadPort)
+    .withDownloadManagerPath(path)
+    .withContentDigest(DigestAlgorithm.SHA256)
+    .build()
+```
+
 **Pluggable HTTP Client**: Implement `NimbusDownloadPort` yourself, or use the ready-made `KtorDownloadAdapter` from the `nimbus-ktor` artifact.
 
 **KMP-native Storage**: File I/O via `kotlinx.io.files.SystemFileSystem` — no `java.io.File`, works on Android, JVM, and iOS.
@@ -64,9 +78,9 @@ Add `nimbus` to your `build.gradle` dependencies. Optionally add `nimbus-ktor` f
 <!-- x-release-please-start-version -->
 ```kotlin
 dependencies {
-    implementation("io.github.giovanniandreuzza:nimbus:2.2.0")
+    implementation("io.github.giovanniandreuzza:nimbus:2.3.0")
     // Optional — recommended Ktor HTTP adapter:
-    implementation("io.github.giovanniandreuzza:nimbus-ktor:2.2.0")
+    implementation("io.github.giovanniandreuzza:nimbus-ktor:2.3.0")
 }
 ```
 <!-- x-release-please-end -->

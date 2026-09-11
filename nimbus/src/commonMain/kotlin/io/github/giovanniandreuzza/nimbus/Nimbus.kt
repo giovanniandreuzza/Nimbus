@@ -3,6 +3,7 @@ package io.github.giovanniandreuzza.nimbus
 import io.github.giovanniandreuzza.nimbus.di.init
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
+import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 import kotlinx.coroutines.CoroutineDispatcher
@@ -46,6 +47,7 @@ public class Nimbus private constructor(
     retryBaseDelayMs: Long,
     minReservedDiskBytes: Long?,
     autoStart: Boolean,
+    digestAlgorithm: DigestAlgorithm?,
     logger: NimbusLogger?
 ) {
     private val downloadService = init(
@@ -61,6 +63,7 @@ public class Nimbus private constructor(
         retryBaseDelayMs = retryBaseDelayMs,
         minReservedDiskBytes = minReservedDiskBytes,
         autoStart = autoStart,
+        digestAlgorithm = digestAlgorithm,
         logger = logger
     )
 
@@ -79,6 +82,7 @@ public class Nimbus private constructor(
             private var retryBaseDelayMs: Long = 500L
             private var minReservedDiskBytes: Long? = null
             private var autoStart: Boolean = false
+            private var digestAlgorithm: DigestAlgorithm? = null
             private var logger: NimbusLogger? = null
 
             public fun withDownloadScope(scope: CoroutineScope): Builder =
@@ -134,6 +138,25 @@ public class Nimbus private constructor(
                 apply { autoStart = enabled }
 
             /** Optional structured logging (e.g. remote diagnostics in unattended devices). */
+            /**
+             * Computes a content digest of every download, with [algorithm].
+             *
+             * Opt-in, and off by default: without it nothing is hashed, no extra state is
+             * kept, and the transfer path is unchanged.
+             *
+             * With it, [io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO.checksum]
+             * is populated when a download finishes, an `expectedChecksum` passed to
+             * [NimbusAPI.enqueueDownload] or [NimbusAPI.ensureDownloaded] is verified
+             * against the transferred bytes, and [NimbusAPI.checksum] can re-derive the
+             * digest of a finished file later.
+             *
+             * The bytes are hashed in the pass that already writes them to disk, so a
+             * caller that would otherwise read the whole file back to hash it itself pays
+             * nothing for this beyond the hashing.
+             */
+            public fun withContentDigest(algorithm: DigestAlgorithm?): Builder =
+                apply { this.digestAlgorithm = algorithm }
+
             public fun withNimbusLogger(logger: NimbusLogger?): Builder =
                 apply { this.logger = logger }
 
@@ -170,6 +193,7 @@ public class Nimbus private constructor(
                     retryBaseDelayMs = retryBaseDelayMs,
                     minReservedDiskBytes = minReservedDiskBytes,
                     autoStart = autoStart,
+                    digestAlgorithm = digestAlgorithm,
                     logger = logger
                 )
             }

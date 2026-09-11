@@ -5,6 +5,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.core.application.mappers
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
+import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 
 /**
  * Download Task DTO.
@@ -15,6 +16,9 @@ import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
  * @param filePath The file path.
  * @param fileSize The file size.
  * @param state The download state.
+ * @param expectedChecksum What the caller asked the finished file to hash to, if anything.
+ * @param checksum What the file actually hashed to. Non-null only once the download has
+ *   finished and a digest algorithm was configured on the builder.
  * @author Giovanni Andreuzza
  */
 @IsDto
@@ -24,7 +28,9 @@ public data class DownloadTaskDTO(
     val fileUrl: String,
     val filePath: String,
     val fileSize: Long,
-    val state: DownloadState
+    val state: DownloadState,
+    val expectedChecksum: Checksum? = null,
+    val checksum: Checksum? = null
 ) {
 
     internal companion object {
@@ -42,7 +48,9 @@ public data class DownloadTaskDTO(
                 fileUrl = downloadTask.fileUrl.value,
                 filePath = downloadTask.filePath.value,
                 fileSize = downloadTask.fileSize.value,
-                state = downloadTask.state
+                state = downloadTask.state,
+                expectedChecksum = downloadTask.expectedChecksum,
+                checksum = downloadTask.checksum
             )
         }
 

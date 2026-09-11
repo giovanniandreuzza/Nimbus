@@ -11,10 +11,13 @@ import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
+import io.github.giovanniandreuzza.nimbus.core.ports.ContentDigestPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
 import io.github.giovanniandreuzza.nimbus.core.ports.StoragePort
+import io.github.giovanniandreuzza.nimbus.presentation.Checksum
+import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusError
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
@@ -39,6 +42,8 @@ import kotlinx.coroutines.sync.withLock
  * @param downloadPort Drives actual HTTP download execution.
  * @param repository   Source of truth for all task state (in-memory + disk).
  * @param storagePort Storage the service needs: sizes, creation, deletion, free space.
+ * @param contentDigestPort Re-derives the digest of a file already on disk.
+ * @param digestAlgorithm When non-null, downloads are digested with it.
  * @param minReservedDiskBytes When non-null, requires at least this many free bytes **after** the
  *   remaining download bytes. When null, no disk headroom check is performed.
  * @param logger Optional structured logging (e.g. remote log in kiosk deployments).
@@ -49,6 +54,8 @@ internal class DownloadService(
     private val downloadPort: DownloadPort,
     private val repository: DownloadTaskRepository,
     private val storagePort: StoragePort,
+    private val contentDigestPort: ContentDigestPort,
+    private val digestAlgorithm: DigestAlgorithm?,
     private val minReservedDiskBytes: Long?,
     private val logger: NimbusLogger?,
     private val autoStart: Boolean,
@@ -158,7 +165,8 @@ internal class DownloadService(
     override suspend fun enqueueDownload(
         fileUrl: String,
         filePath: String,
-        fileName: String
+        fileName: String,
+        expectedChecksum: Checksum?
     ): KResult<DownloadTaskDTO, NimbusError> = withReady {
         validateEnqueueRequest(
             fileUrl,
@@ -205,7 +213,8 @@ internal class DownloadService(
                 fileUrl = fileUrl,
                 filePath = filePath,
                 fileName = fileName,
-                fileSize = fileSize
+                fileSize = fileSize,
+                expectedChecksum = expectedChecksum
             )
 
             repository.saveDownloadTask(task).onFailure {
@@ -482,7 +491,8 @@ internal class DownloadService(
     override suspend fun ensureDownloaded(
         fileUrl: String,
         filePath: String,
-        fileName: String
+        fileName: String,
+        expectedChecksum: Checksum?
     ): KResult<Flow<DownloadState>, NimbusError> = withReady {
         validateEnqueueRequest(
             fileUrl,
@@ -530,7 +540,8 @@ internal class DownloadService(
                     enqueueDownload(
                         fileUrl,
                         filePath,
-                        fileName
+                        fileName,
+                        expectedChecksum
                     ).getOr { return@withReady Failure(it) }
                     startDownload(fileUrl).getOr { return@withReady Failure(it) }
                     return@withReady observeDownload(fileUrl)
@@ -547,6 +558,39 @@ internal class DownloadService(
                 )
             )
         )
+    }
+
+    override suspend fun checksum(fileUrl: String): KResult<Checksum, NimbusError> = withReady {
+        val algorithm = digestAlgorithm ?: return@withReady Failure(
+            NimbusError.PermanentError(
+                PermanentNimbusErrorCause.UnexpectedError(
+                    KError(
+                        "content_digest_disabled",
+                        "No digest algorithm is configured. Call " +
+                                "Nimbus.Builder().withContentDigest(...) to enable it."
+                    )
+                )
+            )
+        )
+
+        val id = idProvider.generateUniqueId(fileUrl)
+        val task = repository.getDownloadTask(DownloadId.create(id)).getOr {
+            return@withReady Failure(
+                NimbusError.PermanentError(PermanentNimbusErrorCause.DownloadNotFound)
+            )
+        }
+
+        if (task.state !is DownloadState.Finished) {
+            return@withReady Failure(
+                NimbusError.PermanentError(PermanentNimbusErrorCause.InvalidState(task.state))
+            )
+        }
+
+        contentDigestPort.digestOf(task.filePath.value, algorithm).getOr {
+            return@withReady Failure(
+                NimbusError.PermanentError(PermanentNimbusErrorCause.StorageError(it))
+            )
+        }.let { Success(it) }
     }
 
     override suspend fun retryFailedDownload(fileUrl: String): KResult<Unit, NimbusError> =
