@@ -13,9 +13,13 @@ The build must stay green at all times. Never downgrade dependency versions to f
 Tests live in two source sets. `commonTest` is the default and runs on JVM, iOS and Android host;
 put a test there unless it genuinely cannot run on all three. `jvmTest` is for what is
 platform-bound: the architecture source scan, the real-filesystem adapter, the concurrency test
-that wants real threads, and the digest test that checks the library's SHA-256 against the JVM's
-own (an independent oracle is the point of that one). `testing/Fakes.kt` and
-`testing/InMemoryStorage.kt` are what let a test avoid a temp directory.
+that wants real threads, the digest test that checks the library's SHA-256 against the JVM's own
+(an independent oracle is the point of that one), and the two that need a real socket — a body
+that genuinely fails a read, and `nimbus-ktor`'s `HostileServerTest`, which runs the real engine
+against a `com.sun.net.httpserver` that misbehaves on purpose. `MockEngine` cannot stage either:
+a channel closed with a cause reads as end-of-stream and a declared `Content-Length` longer than
+the body is not enforced. `testing/Fakes.kt` and `testing/InMemoryStorage.kt` are what let a test
+avoid a temp directory.
 
 ## Project layout
 
