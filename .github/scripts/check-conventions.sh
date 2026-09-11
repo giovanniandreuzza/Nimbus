@@ -42,6 +42,11 @@ main() {
     failures=$((failures + 1))
   fi
 
+  # --no-merges is deliberate: only squash and rebase merges are allowed into
+  # main, and neither puts a merge commit there — rebase replays the commits and
+  # drops the merges, squash collapses everything into one. Checking merge
+  # subjects would fail a branch that merged main into itself, over a commit
+  # that will never exist on main.
   local subject
   while IFS= read -r subject; do
     [ -z "$subject" ] && continue

@@ -2,6 +2,15 @@ name: CI
 
 on:
   pull_request:
+    # 'edited' is not a default activity type, and the title is a required
+    # check that becomes the commit message on a squash merge: without it a
+    # pull request can pass with a valid title and then be renamed.
+    types: [opened, synchronize, reopened, edited]
+
+# Read-only: the build job runs code from the pull request. The repository
+# default is already 'read', but that is a setting someone can change.
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.event.pull_request.number }}
