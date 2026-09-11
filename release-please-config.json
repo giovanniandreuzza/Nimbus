@@ -4,7 +4,6 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "package-name": "nimbus",
       "include-v-in-tag": true,
       "extra-files": [
         { "type": "generic", "path": "README.md" }

@@ -18,7 +18,7 @@
 - **JDK 17** (`JvmTarget.JVM_17`), Temurin distribution in CI.
 - **macOS runners** for anything that compiles: the iOS targets do not build elsewhere. The repository is public, so these minutes are free.
 - **Allowed commit types:** `feat fix perf refactor docs test build ci chore revert`. Nothing else. `sample` is not a type.
-- **Allowed branch prefixes:** `feature/ bugfix/ hotfix/ release/ chore/`, plus the bare branches `main` and `develop`, plus the literal `release-please--branches--main`.
+- **Allowed branch prefixes:** `feature/ bugfix/ hotfix/ release/ chore/`, plus the bare branches `main` and `develop`, plus anything starting `release-please--` (the bot's branch name varies with its configuration).
 - **Never hand-edit `version.txt` or `CHANGELOG.md`** after Task 3. Both are written by release-please.
 - **Never bump the version in a feature branch.** Version bumps are the release pull request's job.
 - **The build must stay green at all times** (project rule, `CLAUDE.md`). Never downgrade a dependency to fix a build.
@@ -322,6 +322,7 @@ expect 0 is_valid_branch "hotfix/416-truncate"
 expect 0 is_valid_branch "release/2.3.0"
 expect 0 is_valid_branch "chore/release-automation"
 expect 0 is_valid_branch "release-please--branches--main"
+expect 0 is_valid_branch "release-please--branches--main--components--nimbus"
 
 # Branches that must fail
 expect 1 is_valid_branch "worktree-nimbus-2-3-0-tests"
@@ -380,7 +381,7 @@ BRANCH_RE='^(main|develop|(feature|bugfix|hotfix|release|chore)/[a-z0-9]+([._-][
 # release-please names its own branch, and that name has the consecutive
 # hyphens the convention forbids. Allowed explicitly rather than by loosening
 # the rule for everyone.
-BOT_BRANCH='release-please--branches--main'
+BOT_BRANCH_RE='^release-please--'
 
 is_valid_branch() {
   [ "$1" = "$BOT_BRANCH" ] && return 0
@@ -759,7 +760,9 @@ gh run list --repo giovanniandreuzza/Nimbus --workflow=release.yml --limit 1
 gh pr list --repo giovanniandreuzza/Nimbus
 ```
 
-Expected: the run exists. It will **fail** at `create-github-app-token` because the secrets do not exist yet — that is expected and is fixed by Task 8. No release pull request is open either way.
+Expected: the run exists. It will **fail** at `create-github-app-token` because the secrets do not exist yet — that is expected and is fixed by Task 8.
+
+Once Task 8 supplies the secrets and this run is re-run, release-please **will** open a release pull request, despite every commit here being `docs:`, `build:` or `ci:`. It opens one for any conventional commit since the last release, not only for `feat` and `fix`. Do not merge it: it is recomputed on every push to `main` and rolls forward into 2.3.0 once Task 11 lands the feature work.
 
 ---
 
@@ -1048,7 +1051,7 @@ gh run list --repo giovanniandreuzza/Nimbus --workflow=release.yml --limit 1
 gh pr list --repo giovanniandreuzza/Nimbus
 ```
 
-Expected: a pull request titled `chore(main): release 2.3.0` on branch `release-please--branches--main`.
+Expected: the pull request opened after Task 7 has been rewritten, now titled `chore(main): release 2.3.0`, on branch `release-please--branches--main`.
 
 - [ ] **Step 5: Read the proposed release before merging it**
 

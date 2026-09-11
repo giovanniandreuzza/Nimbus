@@ -197,6 +197,13 @@ release pull request merges and can be deleted then.
 **`.release-please-manifest.json`** — `{ ".": "2.2.0" }`. This is what tells release-please the
 current version in the absence of tags.
 
+**No `package-name`.** Naming the package makes release-please treat the root as a named
+component: it appends `--components--nimbus` to its branch name and prefixes the tags
+(`nimbus-v2.3.0` rather than `v2.3.0`). This was learned by shipping it — the first run produced
+exactly that. The repository publishes two artifacts from one version, so it has no components,
+and the branch name matters beyond cosmetics: the conventions check has to recognise it, or the
+release pull request cannot pass its own required check.
+
 **`version.txt`** — `2.2.0`. Written by release-please from here on; never edited by hand.
 
 ### `conventions.yml` — on `pull_request_target`
@@ -207,8 +214,9 @@ defined at the top of that script:
 
 - the branch name, against the Conventional Branch vocabulary: `main`, `develop`, and `feature/`,
   `bugfix/`, `hotfix/`, `release/`, `chore/` followed by lowercase alphanumeric segments separated
-  by single `-`, `_` or `.`; `release-please--branches--main` is allowed explicitly, since the
-  bot's own branch cannot satisfy a convention that forbids consecutive hyphens
+  by single `-`, `_` or `.`; branches beginning `release-please--` are allowed as a family, since
+  the bot's own branches cannot satisfy a convention that forbids consecutive hyphens and their
+  exact name depends on its configuration
 - every non-merge commit in the pull request, as `type(optional-scope)!: subject`
 - the pull request title, in the same form — it becomes the commit message when squashing
 
@@ -297,6 +305,13 @@ is to release the next patch version; do not attempt to re-publish.
 almost always a commit type: `feat!:` or a `BREAKING CHANGE:` footer produces a major bump. Fix
 the commit history on the offending branch; release-please recomputes when `main` changes.
 
+**A release pull request appears for changes not worth releasing.** Expected, and not a defect.
+Observed on the very first run: two `docs:` commits produced a proposed 2.2.1. release-please
+opens a release pull request for any conventional commit since the last release, not only for
+`feat` and `fix`. Leave it open — it is recomputed and rewritten on every push to `main`, so it
+rolls forward into the next real version rather than accumulating. The gate is that a human merges
+it, and merging is what releases; an open release pull request has released nothing.
+
 **A release pull request was merged by mistake.** `last-release-sha` in the config overrides where
 release-please starts gathering commits, and unlike `bootstrap-sha` it is never ignored.
 
@@ -369,7 +384,8 @@ Workflows cannot be unit tested, so validation is staged deliberately:
   workflow is wrong rather than the build.
 - The `conventions` regexes are a shell script and are exercised against a fixture list of good
   and bad branch names, commit subjects and pull request titles — including
-  `release-please--branches--main`, which must pass, and `sample: something`, which must fail.
+  `release-please--branches--main` and `release-please--branches--main--components--nimbus`, both
+  of which must pass, and `sample: something`, which must fail.
 - Pull request 1 is itself the first live run of `ci.yml`.
 - The first release is 2.3.0, with a maintainer reading the proposed changelog before merging.
 

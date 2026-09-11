@@ -24,6 +24,10 @@ expect 0 is_valid_branch "hotfix/416-truncate"
 expect 0 is_valid_branch "release/2.3.0"
 expect 0 is_valid_branch "chore/release-automation"
 expect 0 is_valid_branch "release-please--branches--main"
+# The shape release-please actually produced when the config named a component.
+# The literal whitelist missed it, which would have made the release pull
+# request unmergeable once this check became required.
+expect 0 is_valid_branch "release-please--branches--main--components--nimbus"
 
 # Branches that must fail
 expect 1 is_valid_branch "worktree-nimbus-2-3-0-tests"

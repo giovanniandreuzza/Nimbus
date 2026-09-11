@@ -15,13 +15,15 @@ set -uo pipefail
 TYPES='feat|fix|perf|refactor|docs|test|build|ci|chore|revert'
 SUBJECT_RE="^(${TYPES})(\([a-z0-9]+([._-][a-z0-9]+)*\))?!?: .+"
 BRANCH_RE='^(main|develop|(feature|bugfix|hotfix|release|chore)/[a-z0-9]+([._-][a-z0-9]+)*)$'
-# release-please names its own branch, and that name has the consecutive
-# hyphens the convention forbids. Allowed explicitly rather than by loosening
-# the rule for everyone.
-BOT_BRANCH='release-please--branches--main'
+# release-please names its own branches, and those names carry the consecutive
+# hyphens the convention forbids. Matched as a family rather than one literal:
+# the exact name depends on configuration — a named component appends
+# '--components--<name>' — and getting it wrong makes the release pull request
+# unmergeable once this check is required.
+BOT_BRANCH_RE='^release-please--'
 
 is_valid_branch() {
-  [ "$1" = "$BOT_BRANCH" ] && return 0
+  [[ "$1" =~ $BOT_BRANCH_RE ]] && return 0
   [[ "$1" =~ $BRANCH_RE ]]
 }
 
