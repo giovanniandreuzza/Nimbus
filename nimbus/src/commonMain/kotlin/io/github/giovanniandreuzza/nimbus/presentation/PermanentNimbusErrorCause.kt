@@ -50,6 +50,21 @@ public sealed class PermanentNimbusErrorCause(
         cause = cause
     )
 
+    /**
+     * A content digest was asked for, but none is configured.
+     *
+     * Its own cause rather than the catch-all: this is foreseeable, it is entirely the
+     * caller's to fix — call
+     * [Nimbus.Builder.withContentDigest][io.github.giovanniandreuzza.nimbus.Nimbus.Builder.withContentDigest]
+     * — and a caller branching on it should not have to read a string out of an unexpected
+     * failure to tell it apart from one.
+     */
+    public data object ContentDigestDisabled : PermanentNimbusErrorCause(
+        code = "content_digest_disabled",
+        message = "No digest algorithm is configured. " +
+                "Call Nimbus.Builder().withContentDigest(...) to enable it."
+    )
+
     /** The requested download task was not found. */
     public data object DownloadNotFound : PermanentNimbusErrorCause(
         code = "download_not_found",

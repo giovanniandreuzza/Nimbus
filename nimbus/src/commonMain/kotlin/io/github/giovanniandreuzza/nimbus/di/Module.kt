@@ -71,6 +71,8 @@ internal fun init(
         onAutoRetry = if (autoStart) { url -> autoRetryRef.fn?.invoke(url) } else null
     )
 
+    val contentDigestPort: ContentDigestPort = ContentDigestAdapter(storage, ioDispatcher)
+
     val downloadPort: DownloadPort = DownloadAdapter(
         concurrencyLimit = concurrencyLimit,
         downloadScope = downloadScope,
@@ -81,14 +83,14 @@ internal fun init(
         notifyEveryBytes = downloadNotifyEveryBytes,
         maxRetryAttempts = maxRetryAttempts,
         retryBaseDelayMs = retryBaseDelayMs,
-        digestAlgorithm = digestAlgorithm
+        digestAlgorithm = digestAlgorithm,
+        contentDigestPort = contentDigestPort
     )
 
     val idProvider: IdProviderPort = IdProviderAdapter()
 
     val storagePort: StoragePort = StorageAdapter(storage)
 
-    val contentDigestPort: ContentDigestPort = ContentDigestAdapter(storage, ioDispatcher)
 
     val service = DownloadService(
         idProvider = idProvider,

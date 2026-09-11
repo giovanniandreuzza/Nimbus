@@ -14,6 +14,7 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
+import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -284,7 +285,8 @@ class UnstableNetworkTest {
             notifyEveryBytes = 512L,
             maxRetryAttempts = maxRetryAttempts,
             retryBaseDelayMs = 1L,
-            digestAlgorithm = DigestAlgorithm.SHA256
+            digestAlgorithm = DigestAlgorithm.SHA256,
+                contentDigestPort = digestPortFor(storage)
         )
 
         suspend fun run() {

@@ -14,6 +14,7 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
+import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -109,7 +110,8 @@ class TransferFailureClassificationTest {
             notifyEveryBytes = 128L,
             maxRetryAttempts = maxRetryAttempts,
             retryBaseDelayMs = 1L,
-            digestAlgorithm = null
+            digestAlgorithm = null,
+                contentDigestPort = digestPortFor(storage)
         )
     }
 
