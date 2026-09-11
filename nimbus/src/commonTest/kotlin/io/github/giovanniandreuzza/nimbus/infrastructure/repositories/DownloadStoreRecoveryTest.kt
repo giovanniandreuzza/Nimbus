@@ -1,19 +1,20 @@
 package io.github.giovanniandreuzza.nimbus.infrastructure.repositories
 
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isSuccess
-import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage.FileSystemNimbusStorageAdapter
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToByteArray
 import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.protobuf.ProtoNumber
-import java.io.File
-import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -54,8 +55,8 @@ class DownloadStoreRecoveryTest {
 
     @Test
     fun `load recovers when the store on disk was written by an incompatible schema`() =
-        runBlocking {
-            val repository = repositoryOn(legacyStoreFile())
+        runTest {
+            val repository = repositoryOn(legacyStorage())
 
             val result = repository.loadDownloadTasks()
 
@@ -70,9 +71,9 @@ class DownloadStoreRecoveryTest {
         }
 
     @Test
-    fun `discarding the store is reported to the logger`() = runBlocking {
+    fun `discarding the store is reported to the logger`() = runTest {
         val events = mutableListOf<NimbusLogEvent>()
-        val repository = repositoryOn(legacyStoreFile(), logger = { events.add(it) })
+        val repository = repositoryOn(legacyStorage(), logger = { events.add(it) })
 
         repository.loadDownloadTasks()
 
@@ -82,19 +83,23 @@ class DownloadStoreRecoveryTest {
         )
     }
 
-    private fun legacyStoreFile(): File {
-        val dir = Files.createTempDirectory("nimbus-store").toFile()
-        return File(dir, "download_manager").also {
-            it.writeBytes(ProtoBuf.encodeToByteArray(legacyStore()))
-        }
+    private fun legacyStorage() = InMemoryStorage().apply {
+        write(STORE_PATH, ProtoBuf.encodeToByteArray(legacyStore()))
     }
 
-    private fun repositoryOn(storeFile: File, logger: NimbusLogger? = null) = DownloadRepository(
-        storePath = storeFile.absolutePath,
-        dispatcher = Dispatchers.IO,
-        nimbusStoragePort = FileSystemNimbusStorageAdapter(),
-        logger = logger
-    )
+    private fun TestScope.repositoryOn(
+        storage: InMemoryStorage,
+        logger: NimbusLogger? = null
+    ): DownloadRepository {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        return DownloadRepository(
+            storePath = STORE_PATH,
+            dispatcher = dispatcher,
+            nimbusStoragePort = storage,
+            logger = logger,
+            storeScope = CoroutineScope(SupervisorJob() + dispatcher)
+        )
+    }
 
     private fun legacyStore() = LegacyStore(
         downloads = mapOf(
@@ -109,4 +114,8 @@ class DownloadStoreRecoveryTest {
             )
         )
     )
+
+    private companion object {
+        const val STORE_PATH = "/tmp/nimbus/download_manager"
+    }
 }

@@ -1,12 +1,15 @@
 package io.github.giovanniandreuzza.nimbus.infrastructure.repositories
 
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isSuccess
-import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage.FileSystemNimbusStorageAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadStateStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadTaskStore
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -14,10 +17,9 @@ import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.encodeToByteArray
 import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.protobuf.ProtoNumber
-import java.io.File
-import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -37,17 +39,11 @@ private data class FutureStore(
 class DownloadStoreVersionTest {
 
     @Test
-    fun `load discards a store stamped with an unknown schema version`() = runBlocking {
-        val dir = Files.createTempDirectory("nimbus-store-version").toFile()
-        val storeFile = File(dir, "download_manager")
-        storeFile.writeBytes(ProtoBuf.encodeToByteArray(futureStore()))
+    fun `load discards a store stamped with an unknown schema version`() = runTest {
+        val storage = InMemoryStorage()
+        storage.write(STORE_PATH, ProtoBuf.encodeToByteArray(storeStampedAt(99)))
 
-        val repository = DownloadRepository(
-            storePath = storeFile.absolutePath,
-            dispatcher = Dispatchers.IO,
-            nimbusStoragePort = FileSystemNimbusStorageAdapter()
-        )
-
+        val repository = repositoryOn(storage)
         val result = repository.loadDownloadTasks()
 
         assertTrue(result.isSuccess(), "expected the load to recover, got $result")
@@ -58,12 +54,11 @@ class DownloadStoreVersionTest {
     }
 
     @Test
-    fun `load keeps the tasks of a store written by an older schema version`() = runBlocking {
-        val dir = Files.createTempDirectory("nimbus-store-migration").toFile()
-        val storeFile = File(dir, "download_manager")
-        storeFile.writeBytes(ProtoBuf.encodeToByteArray(versionOneStore()))
+    fun `load keeps the tasks of a store written by an older schema version`() = runTest {
+        val storage = InMemoryStorage()
+        storage.write(STORE_PATH, ProtoBuf.encodeToByteArray(storeStampedAt(1)))
 
-        val repository = repositoryOn(storeFile)
+        val repository = repositoryOn(storage)
         val result = repository.loadDownloadTasks()
 
         assertTrue(result.isSuccess(), "expected the load to succeed, got $result")
@@ -76,24 +71,28 @@ class DownloadStoreVersionTest {
     }
 
     @Test
-    fun `a migrated store is restamped so the migration is paid once`() = runBlocking {
-        val dir = Files.createTempDirectory("nimbus-store-restamp").toFile()
-        val storeFile = File(dir, "download_manager")
-        storeFile.writeBytes(ProtoBuf.encodeToByteArray(versionOneStore()))
+    fun `a migrated store is restamped so the migration is paid once`() = runTest {
+        val storage = InMemoryStorage()
+        storage.write(STORE_PATH, ProtoBuf.encodeToByteArray(storeStampedAt(1)))
 
-        repositoryOn(storeFile).loadDownloadTasks()
+        repositoryOn(storage).loadDownloadTasks()
 
-        val restamped = ProtoBuf.decodeFromByteArray<FutureStore>(storeFile.readBytes())
+        val bytes = assertNotNull(storage.read(STORE_PATH), "the store should still be there")
+        val restamped = ProtoBuf.decodeFromByteArray<FutureStore>(bytes)
         assertEquals(DownloadStore.SCHEMA_VERSION, restamped.schemaVersion)
     }
 
-    private fun repositoryOn(storeFile: File) = DownloadRepository(
-        storePath = storeFile.absolutePath,
-        dispatcher = Dispatchers.IO,
-        nimbusStoragePort = FileSystemNimbusStorageAdapter()
-    )
+    private fun TestScope.repositoryOn(storage: InMemoryStorage): DownloadRepository {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        return DownloadRepository(
+            storePath = STORE_PATH,
+            dispatcher = dispatcher,
+            nimbusStoragePort = storage,
+            storeScope = CoroutineScope(SupervisorJob() + dispatcher)
+        )
+    }
 
-    private fun versionOneStore() = FutureStore(
+    private fun storeStampedAt(version: Int) = FutureStore(
         downloads = mapOf(
             "task-1" to DownloadTaskStore(
                 id = "task-1",
@@ -104,20 +103,10 @@ class DownloadStoreVersionTest {
                 state = DownloadStateStore.Paused(progress = 12.5)
             )
         ),
-        schemaVersion = 1
+        schemaVersion = version
     )
 
-    private fun futureStore() = FutureStore(
-        downloads = mapOf(
-            "task-1" to DownloadTaskStore(
-                id = "task-1",
-                fileName = "screens.apk",
-                fileUrl = "https://example.com/screens.apk",
-                filePath = "/files/installer/screens.apk",
-                fileSize = 1_024L,
-                state = DownloadStateStore.Paused(progress = 12.5)
-            )
-        ),
-        schemaVersion = 99
-    )
+    private companion object {
+        const val STORE_PATH = "/tmp/nimbus/download_manager"
+    }
 }

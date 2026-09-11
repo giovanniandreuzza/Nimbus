@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
 class DownloadStoreSchemaTest {
 
     @Test
-    fun `state discriminators are stable names, not class names`() {
+    fun `state discriminators are stable names rather than class names`() {
         val encoded = ProtoBuf.encodeToByteArray(storeWithPausedTask())
         val text = encoded.decodeToString()
 

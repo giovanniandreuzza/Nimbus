@@ -23,6 +23,9 @@ kotlin {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
         }
+        // Without this the commonTest suite is compiled for Android but never run on it,
+        // which is the same as not having it: the target ships untested.
+        withHostTest {}
     }
 
     listOf(
@@ -42,6 +45,12 @@ kotlin {
             api(libs.kotlinx.io)
             api(libs.explicitarchitecture)
             implementation(libs.hash.sha2)
+        }
+
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.kotlinx.coroutines.test)
+            implementation(libs.kotlinx.serialization.protobuf)
         }
 
         jvmTest.dependencies {
