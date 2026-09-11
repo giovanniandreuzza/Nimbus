@@ -79,6 +79,15 @@ public sealed class NimbusLogEvent {
         public val fileUrl: String,
         public val cause: KError
     ) : NimbusLogEvent()
+
+    /**
+     * The persisted store was unusable — it could not be decoded, or it carried a
+     * schema version this build does not understand — and was discarded. Every
+     * pending task is gone: callers have to enqueue again.
+     */
+    public data class StoreReset(
+        public val reason: String
+    ) : NimbusLogEvent()
 }
 
 /**

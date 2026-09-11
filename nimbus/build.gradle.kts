@@ -43,6 +43,11 @@ kotlin {
             api(libs.explicitarchitecture)
             implementation(libs.hash.sha2)
         }
+
+        jvmTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.kotlinx.serialization.protobuf)
+        }
     }
 }
 

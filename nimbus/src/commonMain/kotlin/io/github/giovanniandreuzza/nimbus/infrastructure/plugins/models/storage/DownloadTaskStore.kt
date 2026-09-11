@@ -2,6 +2,7 @@ package io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage
 
 import io.github.giovanniandreuzza.explicitarchitecture.frameworks.models.IsFrameworkDto
 import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.protobuf.ProtoNumber
 
@@ -12,6 +13,7 @@ import kotlinx.serialization.protobuf.ProtoNumber
  */
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
+@SerialName("nimbus.task")
 @IsFrameworkDto
 internal data class DownloadTaskStore(
     @ProtoNumber(1)
