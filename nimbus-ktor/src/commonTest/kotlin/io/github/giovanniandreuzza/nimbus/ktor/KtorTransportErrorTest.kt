@@ -127,34 +127,12 @@ class KtorTransportErrorTest {
     }
 
     /**
-     * The guard that keeps the timeout check narrow.
-     *
-     * `downloadFile` invokes the caller's callback inside its own `try`, so a sink that could
-     * not be written arrives at the same `catch` as a dead socket — on every platform both are
-     * `kotlinx.io.IOException`. Were the mapping to treat `IOException` as transient, a full
-     * disk would be retried as though it were a congested link, forever making no progress.
+     * The classification is deliberately everything-is-transport, and that is only sound
+     * because of a guarantee made on the other side of the boundary: the callback Nimbus
+     * hands an implementation never raises a failure of its own, so nothing reaching this
+     * `catch` can be the caller's disk. `TransferFailureClassificationTest` in the core
+     * module is where that guarantee is held to.
      */
-    @Test
-    fun `an IO failure raised by the consumer is not mistaken for a transport timeout`() =
-        runTest {
-            val engine = MockEngine {
-                respond(
-                    content = ByteArray(1024),
-                    status = HttpStatusCode.OK,
-                    headers = headersOf("Content-Length", "1024")
-                )
-            }
-
-            val result = KtorDownloadAdapter(HttpClient(engine))
-                .downloadFile(url, offset = 0L) { throw IOException("No space left on device") }
-
-            val error = (result as? Failure)?.error ?: fail("expected a failure, got $result")
-            assertTrue(
-                error is DownloadError.PermanentError,
-                "a storage failure must not be retried as a network one; got $error"
-            )
-        }
-
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------

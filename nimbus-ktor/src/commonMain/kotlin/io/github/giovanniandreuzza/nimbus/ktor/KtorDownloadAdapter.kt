@@ -18,9 +18,7 @@ import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.utils.io.asSource
-import kotlinx.io.Buffer
 import kotlinx.io.IOException
-import kotlinx.io.RawSource
 import kotlinx.io.Source
 import kotlinx.io.buffered
 import kotlin.coroutines.cancellation.CancellationException
@@ -71,14 +69,14 @@ public class KtorDownloadAdapter(
             if (isTransportFailure(e)) {
                 Failure(
                     GetFileSizeError.TemporaryError(
-                        TemporaryGetFileSizeErrorCause.TransportFailure(unexpectedError(unwrapped(e)))
+                        TemporaryGetFileSizeErrorCause.TransportFailure(unexpectedError(e))
                     )
                 )
             } else {
                 Failure(
                     GetFileSizeError.PermanentError(
                         PermanentGetFileSizeErrorCause.UnexpectedError(
-                            unexpectedError(unwrapped(e))
+                            unexpectedError(e)
                         )
                     )
                 )
@@ -127,14 +125,14 @@ public class KtorDownloadAdapter(
             if (isTransportFailure(e)) {
                 Failure(
                     GetFileSizeError.TemporaryError(
-                        TemporaryGetFileSizeErrorCause.TransportFailure(unexpectedError(unwrapped(e)))
+                        TemporaryGetFileSizeErrorCause.TransportFailure(unexpectedError(e))
                     )
                 )
             } else {
                 Failure(
                     GetFileSizeError.PermanentError(
                         PermanentGetFileSizeErrorCause.UnexpectedError(
-                            unexpectedError(unwrapped(e))
+                            unexpectedError(e)
                         )
                     )
                 )
@@ -189,14 +187,14 @@ public class KtorDownloadAdapter(
             if (isTransportFailure(e)) {
                 Failure(
                     DownloadError.TemporaryError(
-                        TemporaryDownloadErrorCause.TransportFailure(unexpectedError(unwrapped(e)))
+                        TemporaryDownloadErrorCause.TransportFailure(unexpectedError(e))
                     )
                 )
             } else {
                 Failure(
                     DownloadError.PermanentError(
                         PermanentDownloadErrorCause.UnexpectedError(
-                            unexpectedError(unwrapped(e))
+                            unexpectedError(e)
                         )
                     )
                 )
@@ -248,7 +246,7 @@ public class KtorDownloadAdapter(
                         )
                     }
                 }
-                deliver(response, onSourceOpened)
+                onSourceOpened(response.bodyAsChannel().asSource().buffered())
                 Success(Unit)
             }
 
@@ -264,7 +262,7 @@ public class KtorDownloadAdapter(
                         )
                     )
                 }
-                deliver(response, onSourceOpened)
+                onSourceOpened(response.bodyAsChannel().asSource().buffered())
                 Success(Unit)
             }
 
@@ -282,87 +280,19 @@ public class KtorDownloadAdapter(
 
 
     /**
-     * Opens the response body and hands it to [onSourceOpened], keeping the two kinds of
-     * failure that can come out of that apart.
+     * Whether [error] is the link failing.
      *
-     * The callback both reads from the network and writes to wherever the caller is putting
-     * the bytes, and on every platform a dead socket and a full disk are the same type —
-     * `kotlinx.io.IOException`. Without a way to tell them apart, retrying one means
-     * retrying the other, which turns a disk that will never have room into a transfer that
-     * is attempted forever.
+     * Everything an implementation of [NimbusDownloadPort] sees is the transport. The
+     * callback it is handed comes from Nimbus, which classifies its own failures before they
+     * can escape into this `try` — so an `IOException` reaching here cannot be a sink that
+     * could not be written, and a dropped connection needs no further evidence.
      *
-     * So each side is labelled at the point it happens: reads through a [RawSource] wrapper
-     * that tags what it throws, everything else in the callback wrapped on the way out. What
-     * reaches the caller of this function unlabelled therefore came from neither, which
-     * leaves Ktor itself — connecting, resolving, negotiating TLS — and can be classified on
-     * its type alone.
+     * All of it is transient. The consumers this library is built for are unattended devices
+     * on congested cells, where a dropped connection is the normal condition and nobody is
+     * present to press retry; and because a retry resumes from the bytes already on disk, it
+     * costs the remainder of the file rather than the whole of it.
      */
-    private suspend fun deliver(
-        response: HttpResponse,
-        onSourceOpened: suspend (Source) -> Unit
-    ) {
-        val body = response.bodyAsChannel().asSource().taggingReadFailures()
-        try {
-            onSourceOpened(body.buffered())
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: TransportReadFailure) {
-            throw e
-        } catch (e: Throwable) {
-            throw ConsumerFailure(e)
-        }
-    }
-
-    /** A read from the response body failed: the transport, wherever it surfaces. */
-    private class TransportReadFailure(override val cause: Throwable) : Exception(cause)
-
-    /** The caller's own work inside the callback failed: their sink, their digest, not ours. */
-    private class ConsumerFailure(override val cause: Throwable) : Exception(cause)
-
-    private fun RawSource.taggingReadFailures(): RawSource {
-        val delegate = this
-        return object : RawSource {
-            override fun readAtMostTo(sink: Buffer, byteCount: Long): Long =
-                try {
-                    delegate.readAtMostTo(sink, byteCount)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    throw TransportReadFailure(e)
-                }
-
-            override fun close() = delegate.close()
-        }
-    }
-
-    /**
-     * Whether [error] is the link failing rather than the caller's own work.
-     *
-     * Total, because [deliver] labels the two ambiguous sources before they reach here. A
-     * tagged read failure is the transport by construction. A tagged consumer failure is not,
-     * whatever its type. What is left was raised by Ktor outside the callback — connecting,
-     * resolving, negotiating TLS, a peer that reset while the headers were being read — and
-     * an `IOException` there can only be the network.
-     *
-     * All of it is transient. Nimbus's demanding consumers are unattended devices on
-     * congested cells and flaky access points, where a dropped connection is the normal
-     * condition and there is nobody to press retry. And because the adapter resumes from the
-     * bytes already on disk, retrying costs the remainder of the file rather than the whole
-     * of it — which is the difference between a drop at 90% costing 10% and costing 100%.
-     */
-    private fun isTransportFailure(error: Throwable): Boolean = when (error) {
-        is ConsumerFailure -> false
-        is TransportReadFailure -> true
-        is IOException -> true
-        else -> false
-    }
-
-    /** Unwraps the labels [deliver] adds, so the reported cause is the failure itself. */
-    private fun unwrapped(error: Exception): Exception = when (error) {
-        is TransportReadFailure -> error.cause as? Exception ?: error
-        is ConsumerFailure -> error.cause as? Exception ?: error
-        else -> error
-    }
+    private fun isTransportFailure(error: Throwable): Boolean = error is IOException
 
     private fun unexpectedError(e: Exception): KError =
         KError(code = "unexpected_error", message = e.message ?: "An unexpected error occurred")
