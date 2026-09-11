@@ -360,30 +360,58 @@ internal class DownloadAdapter(
 
             val sink = openSink(downloadTask.filePath, id) ?: return null
 
+            // Nothing this callback does may escape into the port implementation's `try`.
+            //
+            // An implementor wraps the whole transfer, callback included, because that is the
+            // only way to hold the response open while the body is read. It therefore cannot
+            // tell a dead socket from a full disk — on every platform both are
+            // `kotlinx.io.IOException` — and every implementor would have to solve that
+            // separately to avoid retrying a disk that will never have room. The failure is
+            // classified here instead, once, by the side that knows which call threw: a read
+            // from the body is the transport, anything else is this adapter's own storage.
+            var transferFailure: DownloadError? = null
+
             val result = nimbusDownloadPort.downloadFile(
                 fileUrl = downloadTask.fileUrl,
                 offset = progressBytes
             ) { source ->
-                sink.use { output ->
-                    progressBytes = copySourceToSink(
-                        source = source,
-                        sink = output,
-                        id = id,
-                        totalFileSize = totalFileSize,
-                        initialProgressBytes = progressBytes,
-                        digest = digest
+                try {
+                    sink.use { output ->
+                        progressBytes = copySourceToSink(
+                            source = source,
+                            sink = output,
+                            id = id,
+                            totalFileSize = totalFileSize,
+                            initialProgressBytes = progressBytes,
+                            digest = digest
+                        )
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: BodyReadFailure) {
+                    transferFailure = DownloadError.TemporaryError(
+                        TemporaryDownloadErrorCause.TransportFailure(unexpectedKError(e.cause))
+                    )
+                } catch (e: Throwable) {
+                    transferFailure = DownloadError.PermanentError(
+                        PermanentDownloadErrorCause.StorageError(unexpectedKError(e))
                     )
                 }
             }
 
-            when (result) {
+            // What happened inside the callback wins: the implementation returned whatever it
+            // made of a body that stopped early, and this adapter knows why it stopped.
+            val outcome: KResult<Unit, DownloadError> =
+                transferFailure?.let { Failure(it) } ?: result
+
+            when (outcome) {
                 is Success -> {
                     retryAttempt = 0
                     break@downloadLoop
                 }
 
                 is Failure -> {
-                    val downloadError = result.error
+                    val downloadError = outcome.error
                     when {
                         downloadError is DownloadError.TemporaryError &&
                                 downloadError.errorCause is TemporaryDownloadErrorCause.RangeNotSatisfiable -> {
@@ -485,6 +513,30 @@ internal class DownloadAdapter(
         }
     }
 
+    /** A read from the response body failed. Raised only by [readingBody]. */
+    private class BodyReadFailure(override val cause: Throwable) : Exception(cause)
+
+    /**
+     * Runs a read of the response body, marking anything it throws.
+     *
+     * The mark is what separates the two failures that reach the same `catch`: a body that
+     * stopped arriving, which is transient and resumes from what is already on disk, and a
+     * sink that could not be written, which retrying will not fix.
+     */
+    private inline fun <T> readingBody(block: () -> T): T =
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            throw BodyReadFailure(e)
+        }
+
+    private fun unexpectedKError(cause: Throwable?): KError = KError(
+        code = "transfer_failed",
+        message = cause?.message ?: "The transfer failed."
+    )
+
     /**
      * @param digest fed every byte that passes, when a digest is being computed.
      */
@@ -510,11 +562,12 @@ internal class DownloadAdapter(
             // appliance is not a performance note but a crash.
             val chunk = digest?.let { ByteArray(bufferSize.toInt()) }
 
-            while (!input.exhausted() && currentCoroutineContext().isActive) {
+            while (readingBody { !input.exhausted() } && currentCoroutineContext().isActive) {
                 val bytesRead = if (chunk == null) {
-                    input.readAtMostTo(sink.buffer, bufferSize)
+                    val target = sink.buffer
+                    readingBody { input.readAtMostTo(target, bufferSize) }
                 } else {
-                    val read = input.readAtMostTo(chunk, 0, chunk.size)
+                    val read = readingBody { input.readAtMostTo(chunk, 0, chunk.size) }
                     if (read > 0) {
                         digest.update(chunk, 0, read)
                         sink.write(chunk, 0, read)
