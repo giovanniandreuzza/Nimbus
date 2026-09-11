@@ -28,6 +28,7 @@ fun DownloadCard(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onCancel: () -> Unit,
+    onStart: () -> Unit,
     onRetry: () -> Unit,
     onVerify: () -> Unit,
     modifier: Modifier = Modifier
@@ -180,6 +181,7 @@ fun DownloadCard(
                     }
 
                     DownloadDisplayState.Enqueued -> {
+                        Button(onClick = onStart) { Text("Start") }
                     }
                 }
             }

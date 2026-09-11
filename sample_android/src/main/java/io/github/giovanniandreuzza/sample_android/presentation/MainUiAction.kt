@@ -12,6 +12,13 @@ sealed interface MainUiAction {
     data class Pause(val index: Int) : MainUiAction
     data class Resume(val index: Int) : MainUiAction
     data class Cancel(val index: Int) : MainUiAction
+    /**
+     * Starts a task that is already Enqueued — the state boot recovery leaves a task in
+     * when its finished file is missing or the wrong size. Without this the row has no
+     * affordance at all.
+     */
+    data class Start(val index: Int) : MainUiAction
+
     data class Retry(val index: Int) : MainUiAction
 
     /** Re-derives the digest of a finished file from disk and compares it. */
