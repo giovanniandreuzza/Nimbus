@@ -4,10 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
-import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.getOr
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,6 +24,12 @@ import java.io.File
  * Nimbus is configured with [withAutoStart(true)][io.github.giovanniandreuzza.nimbus.Nimbus.Companion.Builder.withAutoStart],
  * so [MainUiAction.Enqueue] is the only action needed to kick off a download;
  * the library starts it automatically in the background.
+ *
+ * The whole UI is driven by a single [NimbusAPI.observeAllDownloads] collector.
+ * It emits the entire catalogue on every change — including progress ticks — so
+ * there is no per-task observation to attach, re-attach after a restart, or tear
+ * down on cancel. A cancelled task leaves the catalogue and its row falls back to
+ * [DownloadDisplayState.Idle] on its own.
  *
  * @param nimbus  Nimbus API singleton.
  * @param downloadFolder  Absolute directory where downloaded files are stored.
@@ -74,28 +79,13 @@ class MainViewModel(
     private val _uiEvent = Channel<MainUiEvent>(Channel.BUFFERED)
     val uiEvent: Flow<MainUiEvent> = _uiEvent.receiveAsFlow()
 
-    /** One Job per download index — cancelled on cancel/reset, kept alive through pause/resume. */
-    private val observationJobs = mutableMapOf<Int, Job>()
-
     // -----------------------------------------------------------------------
-    // Init — restore persisted state from previous sessions
+    // Init — one collector drives every row, including persisted tasks
     // -----------------------------------------------------------------------
 
     init {
         viewModelScope.launch {
-            val existing = nimbus.getAllDownloads().getOr { emptyList() }
-            for ((index, config) in configs.withIndex()) {
-                val dto = existing.find { it.fileUrl == config.url } ?: continue
-                val display = dto.state.toDisplayState()
-                updateItemState(index, display)
-                // Keep observing everything that isn't a terminal state so UI
-                // reacts to state changes when the user acts (resume, etc.).
-                if (display !is DownloadDisplayState.Finished &&
-                    display !is DownloadDisplayState.Failed
-                ) {
-                    startObservation(index)
-                }
-            }
+            nimbus.observeAllDownloads().collect { tasks -> render(tasks) }
         }
     }
 
@@ -114,6 +104,7 @@ class MainViewModel(
             is MainUiAction.Resume -> resume(action.index)
             is MainUiAction.Cancel -> cancel(action.index)
             is MainUiAction.Retry -> retry(action.index)
+            is MainUiAction.Verify -> verify(action.index)
         }
     }
 
@@ -126,15 +117,8 @@ class MainViewModel(
             val config = configs[index]
             when (val result =
                 nimbus.enqueueDownload(config.url, config.filePath, config.fileName)) {
-                is Failure -> {
-                    Timber.e("Enqueue $index failed: ${result.error}")
-                    _uiEvent.send(MainUiEvent.ShowError("Enqueue failed: ${result.error.message}"))
-                }
-
-                is Success -> {
-                    Timber.d("Enqueued $index — autoStart will start it")
-                    startObservation(index)
-                }
+                is Failure -> report("Enqueue", index, result.error.message)
+                is Success -> Timber.d("Enqueued $index — autoStart will start it")
             }
         }
     }
@@ -142,11 +126,7 @@ class MainViewModel(
     private fun pause(index: Int) {
         viewModelScope.launch {
             when (val result = nimbus.pauseDownload(configs[index].url)) {
-                is Failure -> {
-                    Timber.e("Pause $index failed: ${result.error}")
-                    _uiEvent.send(MainUiEvent.ShowError("Pause failed: ${result.error.message}"))
-                }
-
+                is Failure -> report("Pause", index, result.error.message)
                 is Success -> Timber.d("Paused $index")
             }
         }
@@ -155,18 +135,8 @@ class MainViewModel(
     private fun resume(index: Int) {
         viewModelScope.launch {
             when (val result = nimbus.resumeDownload(configs[index].url)) {
-                is Failure -> {
-                    Timber.e("Resume $index failed: ${result.error}")
-                    _uiEvent.send(MainUiEvent.ShowError("Resume failed: ${result.error.message}"))
-                }
-
-                is Success -> {
-                    Timber.d("Resumed $index")
-                    // Re-attach observation if the previous job was cancelled (e.g. app restart).
-                    if (observationJobs[index]?.isActive != true) {
-                        startObservation(index)
-                    }
-                }
+                is Failure -> report("Resume", index, result.error.message)
+                is Success -> Timber.d("Resumed $index")
             }
         }
     }
@@ -174,16 +144,8 @@ class MainViewModel(
     private fun cancel(index: Int) {
         viewModelScope.launch {
             when (val result = nimbus.cancelDownload(configs[index].url)) {
-                is Failure -> {
-                    Timber.e("Cancel $index failed: ${result.error}")
-                    _uiEvent.send(MainUiEvent.ShowError("Cancel failed: ${result.error.message}"))
-                }
-
-                is Success -> {
-                    Timber.d("Cancelled $index")
-                    observationJobs.remove(index)?.cancel()
-                    updateItemState(index, DownloadDisplayState.Idle)
-                }
+                is Failure -> report("Cancel", index, result.error.message)
+                is Success -> Timber.d("Cancelled $index")
             }
         }
     }
@@ -192,51 +154,76 @@ class MainViewModel(
         viewModelScope.launch {
             val config = configs[index]
 
-            when (val retryResult = nimbus.retryFailedDownload(config.url)) {
-                is Failure -> {
-                    Timber.e("Retry $index failed: ${retryResult.error}")
-                    _uiEvent.send(MainUiEvent.ShowError("Retry failed: ${retryResult.error.message}"))
-                    return@launch
-                }
-
+            when (val result = nimbus.retryFailedDownload(config.url)) {
+                is Failure -> return@launch report("Retry", index, result.error.message)
                 is Success -> Timber.d("Task $index reset to Enqueued")
             }
 
-            // autoStart only fires on enqueueDownload, so we start manually after retry.
-            when (val startResult = nimbus.startDownload(config.url)) {
+            // autoStart only fires on enqueueDownload, so start manually after a retry.
+            when (val result = nimbus.startDownload(config.url)) {
+                is Failure -> report("Start after retry", index, result.error.message)
+                is Success -> Timber.d("Started $index after retry")
+            }
+        }
+    }
+
+    /**
+     * Re-derives the digest of the finished file from disk and compares it with the digest
+     * Nimbus recorded when the download completed.
+     *
+     * This is what separates a file whose bytes changed on disk from one that is intact and
+     * simply cannot be used — delete the file from the device while the app runs and this
+     * reports the difference instead of silently re-downloading.
+     */
+    private fun verify(index: Int) {
+        viewModelScope.launch {
+            updateItem(index) { it.copy(verification = VerificationResult.Running) }
+
+            when (val result = nimbus.checksum(configs[index].url)) {
                 is Failure -> {
-                    Timber.e("Start after retry $index failed: ${startResult.error}")
-                    _uiEvent.send(MainUiEvent.ShowError("Start failed: ${startResult.error.message}"))
-                    return@launch
+                    Timber.e("Verify $index failed: ${result.error}")
+                    updateItem(index) {
+                        it.copy(verification = VerificationResult.Error(result.error.message))
+                    }
                 }
 
                 is Success -> {
-                    Timber.d("Started $index after retry")
-                    startObservation(index)
+                    val onDisk = result.value.value
+                    val recorded = _uiState.value.downloads.getOrNull(index)?.checksum
+                    Timber.d("Verify $index — on disk $onDisk, recorded $recorded")
+                    updateItem(index) {
+                        it.copy(
+                            verification = if (onDisk == recorded) VerificationResult.Match
+                            else VerificationResult.Mismatch(onDisk)
+                        )
+                    }
                 }
             }
         }
     }
 
     // -----------------------------------------------------------------------
-    // Observation
+    // Rendering
     // -----------------------------------------------------------------------
 
-    private fun startObservation(index: Int) {
-        observationJobs.remove(index)?.cancel()
-        observationJobs[index] = viewModelScope.launch {
-            val config = configs[index]
-            when (val result = nimbus.observeDownload(config.url)) {
-                is Failure -> {
-                    Timber.e("Observe $index failed: ${result.error}")
-                    _uiEvent.send(MainUiEvent.ShowError("Observe failed: ${result.error.message}"))
+    /** Projects the whole catalogue onto the fixed row list, matching on URL. */
+    private fun render(tasks: List<DownloadTaskDTO>) {
+        val byUrl = tasks.associateBy { it.fileUrl }
+        _uiState.update { current ->
+            current.copy(
+                downloads = configs.mapIndexed { index, config ->
+                    val previous = current.downloads.getOrNull(index)
+                    val task = byUrl[config.url]
+                    DownloadItemUiState(
+                        fileName = config.fileName,
+                        displayState = task?.state?.toDisplayState() ?: DownloadDisplayState.Idle,
+                        checksum = task?.checksum?.value,
+                        // Verification is a transient result of a user action, not something
+                        // the catalogue carries — carry it across rather than dropping it.
+                        verification = previous?.verification
+                    )
                 }
-
-                is Success -> result.value.collect { state ->
-                    Timber.d("Download $index → $state")
-                    updateItemState(index, state.toDisplayState())
-                }
-            }
+            )
         }
     }
 
@@ -244,12 +231,15 @@ class MainViewModel(
     // Helpers
     // -----------------------------------------------------------------------
 
-    private fun updateItemState(index: Int, displayState: DownloadDisplayState) {
+    private suspend fun report(label: String, index: Int, message: String) {
+        Timber.e("$label $index failed: $message")
+        _uiEvent.send(MainUiEvent.ShowError("$label failed: $message"))
+    }
+
+    private fun updateItem(index: Int, transform: (DownloadItemUiState) -> DownloadItemUiState) {
         _uiState.update { current ->
             val updated = current.downloads.toMutableList()
-            if (index in updated.indices) {
-                updated[index] = updated[index].copy(displayState = displayState)
-            }
+            if (index in updated.indices) updated[index] = transform(updated[index])
             current.copy(downloads = updated)
         }
     }
