@@ -28,12 +28,12 @@ public sealed class TemporaryGetFileSizeErrorCause(
 
     /**
      * The transport timed out while asking the remote how large the file is. See
-     * [TemporaryDownloadErrorCause.NetworkTimeout] for why this is never permanent.
+     * [TemporaryDownloadErrorCause.TransportFailure] for why this is never permanent.
      *
      * @param cause The underlying transport error.
      */
-    public data class NetworkTimeout(override val cause: KError) : TemporaryGetFileSizeErrorCause(
-        code = "network_timeout",
+    public data class TransportFailure(override val cause: KError) : TemporaryGetFileSizeErrorCause(
+        code = "transport_failure",
         message = cause.message,
         cause = cause
     )

@@ -8,6 +8,8 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.getOr
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onSuccess
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
+import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
+import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
@@ -605,13 +607,14 @@ internal class DownloadService(
                     )
                 }
 
-                if (task.state !is DownloadState.Failed) {
-                    return@withOperationLock Failure(
+                val failure = task.state as? DownloadState.Failed
+                    ?: return@withOperationLock Failure(
                         NimbusError.PermanentError(
                             PermanentNimbusErrorCause.InvalidState(task.state)
                         )
                     )
-                }
+
+                val previousSize = task.fileSize.value
 
                 val newSize = downloadPort.getFileSizeToDownload(fileUrl).getOr {
                     return@withOperationLock Failure(it.toNimbusError())
@@ -628,19 +631,37 @@ internal class DownloadService(
                     )
                 }
 
-                storagePort.delete(task.filePath.value).onFailure { deleteError ->
-                    return@withOperationLock Failure(
-                        NimbusError.PermanentError(
-                            PermanentNimbusErrorCause.StorageError(deleteError)
+                // Keep the partial only when nothing about this retry can invalidate it.
+                //
+                // Discarding it is the safe default and was the only behaviour until now, but
+                // on a device downloading a large file over a link that keeps dropping it is
+                // also the expensive one: the transfer restarts from zero every time, which is
+                // the bandwidth this library exists to stop wasting. The transport failing
+                // says nothing about the bytes already written — they are what the server
+                // sent, in order — so a resume picks up from them correctly.
+                //
+                // Deliberately a whitelist. A checksum mismatch leaves a file of exactly the
+                // right length and the wrong content, and resuming into it would re-verify the
+                // same wrong bytes on every attempt and never converge. A cause added later
+                // therefore falls through to discarding, which is the old behaviour, rather
+                // than silently keeping a file nobody has reasoned about.
+                val resumable = newSize == previousSize && failure.error.isAboutTheTransport()
+
+                if (!resumable) {
+                    storagePort.delete(task.filePath.value).onFailure { deleteError ->
+                        return@withOperationLock Failure(
+                            NimbusError.PermanentError(
+                                PermanentNimbusErrorCause.StorageError(deleteError)
+                            )
                         )
-                    )
-                }
-                storagePort.create(task.filePath.value).onFailure { createError ->
-                    return@withOperationLock Failure(
-                        NimbusError.PermanentError(
-                            PermanentNimbusErrorCause.StorageError(createError)
+                    }
+                    storagePort.create(task.filePath.value).onFailure { createError ->
+                        return@withOperationLock Failure(
+                            NimbusError.PermanentError(
+                                PermanentNimbusErrorCause.StorageError(createError)
+                            )
                         )
-                    )
+                    }
                 }
 
                 if (!task.resetFromFailedToEnqueued()) {
@@ -664,6 +685,18 @@ internal class DownloadService(
                 Success(Unit)
             }
         }
+
+    /**
+     * Whether [this] failure is about the link or the server rather than the bytes on disk.
+     *
+     * Only these two are unambiguous. Both describe the other end of the connection, and
+     * neither can be a statement about what was already written locally, so a partial file
+     * left behind by one of them is still a valid prefix of the target.
+     */
+    private fun DownloadError.isAboutTheTransport(): Boolean =
+        this is DownloadError.TemporaryError &&
+                (errorCause is TemporaryDownloadErrorCause.TransportFailure ||
+                        errorCause is TemporaryDownloadErrorCause.ServerError)
 
     private fun partialBytesOnDiskForPath(filePath: String, expectedSize: Long): Long {
         return when (val s = storagePort.size(filePath)) {

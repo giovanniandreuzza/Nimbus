@@ -247,7 +247,7 @@ sealed class TemporaryDownloadErrorCause {
     data object FileNotAccessible              // local file could not be opened for writing; will retry
     data object TruncateRace                   // could not recreate file after 416 truncation; will retry
     data object ChecksumMismatch               // transferred bytes ≠ expectedChecksum; will retry
-    data class  NetworkTimeout(cause: KError)  // connect/socket/request timeout; will retry
+    data class  TransportFailure(cause: KError) // timeout, reset, DNS, TLS; will retry
 }
 
 sealed class PermanentDownloadErrorCause {
@@ -268,7 +268,7 @@ sealed class GetFileSizeError {
 
 sealed class TemporaryGetFileSizeErrorCause {
     data class ServerError(statusCode: Int)     // HTTP 5xx
-    data class NetworkTimeout(cause: KError)    // connect/socket/request timeout; will retry
+    data class TransportFailure(cause: KError)  // timeout, reset, DNS, TLS; will retry
 }
 
 sealed class PermanentGetFileSizeErrorCause {
