@@ -527,8 +527,11 @@ EOF
 - [ ] **Step 2: Verify the YAML parses**
 
 ```bash
-python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/ci.yml')); print('ci.yml parses')"
+ruby -ryaml -e 'YAML.safe_load(File.read(".github/workflows/ci.yml"), aliases: true); puts "ci.yml parses"'
 ```
+
+Ruby rather than Python: macOS ships Ruby with a YAML parser, and this machine's `python3` has no
+`pyyaml`.
 
 - [ ] **Step 3: Verify the build command works locally before trusting it in CI**
 
@@ -670,7 +673,7 @@ EOF
 
 ```bash
 python3 -c "import json; json.load(open('release-please-config.json')); json.load(open('.release-please-manifest.json')); print('json ok')"
-python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml')); print('release.yml parses')"
+ruby -ryaml -e 'YAML.safe_load(File.read(".github/workflows/release.yml"), aliases: true); puts "release.yml parses"'
 ```
 
 - [ ] **Step 5: Verify the publish task name exists**
