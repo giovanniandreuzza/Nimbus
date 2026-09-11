@@ -12,7 +12,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
  * @author Giovanni Andreuzza
  */
 @IsFrameworkError
-public sealed class CreateStoreError(
+internal sealed class CreateStoreError(
     override val code: String,
     override val message: String,
     override val cause: KError? = null
@@ -28,7 +28,7 @@ public sealed class CreateStoreError(
      * @author Giovanni Andreuzza
      */
     @IsFrameworkError
-    public data object StoreAlreadyExists : CreateStoreError(
+    data object StoreAlreadyExists : CreateStoreError(
         code = "file_already_exists",
         message = "The file already exists."
     )
@@ -40,7 +40,7 @@ public sealed class CreateStoreError(
      * @author Giovanni Andreuzza
      */
     @IsFrameworkError
-    public data class IOError(override val cause: KError) : CreateStoreError(
+    data class IOError(override val cause: KError) : CreateStoreError(
         code = "io_error",
         message = "An I/O error occurred.",
         cause = cause
@@ -53,7 +53,7 @@ public sealed class CreateStoreError(
      * @author Giovanni Andreuzza
      */
     @IsFrameworkError
-    public data class ReadPermissionDenied(override val cause: KError) : CreateStoreError(
+    data class ReadPermissionDenied(override val cause: KError) : CreateStoreError(
         code = "read_permission_denied",
         message = "Read permission denied.",
         cause = cause
@@ -66,9 +66,22 @@ public sealed class CreateStoreError(
      * @author Giovanni Andreuzza
      */
     @IsFrameworkError
-    public data class WritePermissionDenied(override val cause: KError) : CreateStoreError(
+    data class WritePermissionDenied(override val cause: KError) : CreateStoreError(
         code = "write_permission_denied",
         message = "Write permission denied.",
+        cause = cause
+    )
+
+    /**
+     * A failure the storage implementation could not classify.
+     *
+     * @param cause Cause.
+     * @author Giovanni Andreuzza
+     */
+    @IsFrameworkError
+    data class UnexpectedError(override val cause: KError) : CreateStoreError(
+        code = "unexpected_error",
+        message = "An unexpected error occurred.",
         cause = cause
     )
 }

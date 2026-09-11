@@ -21,10 +21,15 @@ import kotlinx.io.Source
 import kotlinx.io.buffered
 import kotlinx.io.files.FileNotFoundException
 import kotlinx.io.files.Path
-import kotlinx.io.files.SystemFileSystem
 
-internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
-    private val fileSystem = SystemFileSystem
+/**
+ * @param fileSystem the filesystem to work against. Injectable so the classification of
+ * failures — in particular the catch-all branches, which no real filesystem can be asked to
+ * reach on demand — can be exercised by a test.
+ */
+internal class FileSystemNimbusStorageAdapter(
+    private val fileSystem: NimbusFileSystem = SystemNimbusFileSystem
+) : NimbusStoragePort {
 
     override fun exists(path: String): KResult<Boolean, DoesFileExistError> {
         return try {
@@ -32,7 +37,7 @@ internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
         } catch (e: IOException) {
             Failure(DoesFileExistError.ReadPermissionDenied(readPermissionError(e)))
         } catch (t: Throwable) {
-            Failure(DoesFileExistError.ReadPermissionDenied(readPermissionError(t)))
+            Failure(DoesFileExistError.UnexpectedError(unexpectedError(t)))
         }
     }
 
@@ -55,7 +60,7 @@ internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
         } catch (e: IOException) {
             Failure(CreateFileError.IOError(ioError(e, "IO Error during file creation")))
         } catch (t: Throwable) {
-            Failure(CreateFileError.WritePermissionDenied(writePermissionError(t)))
+            Failure(CreateFileError.UnexpectedError(unexpectedError(t)))
         }
     }
 
@@ -76,7 +81,7 @@ internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
         } catch (e: IOException) {
             Failure(LocalFileSizeError.ReadPermissionDenied(readPermissionError(e)))
         } catch (t: Throwable) {
-            Failure(LocalFileSizeError.ReadPermissionDenied(readPermissionError(t)))
+            Failure(LocalFileSizeError.UnexpectedError(unexpectedError(t)))
         }
     }
 
@@ -94,7 +99,7 @@ internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
         } catch (e: IOException) {
             Failure(GetFileSinkError.WritePermissionDenied(writePermissionError(e)))
         } catch (t: Throwable) {
-            Failure(GetFileSinkError.WritePermissionDenied(writePermissionError(t)))
+            Failure(GetFileSinkError.UnexpectedError(unexpectedError(t)))
         }
     }
 
@@ -112,7 +117,7 @@ internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
         } catch (e: IOException) {
             Failure(GetFileSourceError.ReadPermissionDenied(readPermissionError(e)))
         } catch (t: Throwable) {
-            Failure(GetFileSourceError.ReadPermissionDenied(readPermissionError(t)))
+            Failure(GetFileSourceError.UnexpectedError(unexpectedError(t)))
         }
     }
 
@@ -131,7 +136,7 @@ internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
         } catch (e: IOException) {
             Failure(DeleteFileError.IOError(ioError(e, "IO Error during file deletion")))
         } catch (t: Throwable) {
-            Failure(DeleteFileError.DeletePermissionDenied(deletePermissionError(t)))
+            Failure(DeleteFileError.UnexpectedError(unexpectedError(t)))
         }
     }
 
@@ -154,7 +159,7 @@ internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
             if (t.message?.contains("not supported", ignoreCase = true) == true) {
                 fallbackMove(sourcePath, destinationPath)
             } else {
-                Failure(MoveFileError.WritePermissionDenied(writePermissionError(t)))
+                Failure(MoveFileError.UnexpectedError(unexpectedError(t)))
             }
         }
     }
@@ -179,7 +184,7 @@ internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
         } catch (e: IOException) {
             Failure(MoveFileError.IOError(ioError(e, "IO Error during fallback file move")))
         } catch (t: Throwable) {
-            Failure(MoveFileError.WritePermissionDenied(writePermissionError(t)))
+            Failure(MoveFileError.UnexpectedError(unexpectedError(t)))
         }
     }
 
@@ -195,9 +200,15 @@ internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
             message = cause.message ?: "Write permission denied"
         )
 
-    private fun deletePermissionError(cause: Throwable): KError =
+    /**
+     * For the catch-all branches, which see everything the named branches did not: a
+     * `SecurityException`, a platform-specific filesystem error, an `OutOfMemoryError`.
+     * None of those is a permission denial, and reporting them as one told callers
+     * something untrue about their environment.
+     */
+    private fun unexpectedError(cause: Throwable): KError =
         KError(
-            code = "delete_permission_denied",
-            message = cause.message ?: "Delete permission denied"
+            code = "unexpected_error",
+            message = cause.message ?: cause::class.simpleName ?: "Unexpected error"
         )
 }

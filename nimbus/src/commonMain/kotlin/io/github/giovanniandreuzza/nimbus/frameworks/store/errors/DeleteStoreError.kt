@@ -82,4 +82,17 @@ internal sealed class DeleteStoreError(
         message = "Delete permission denied.",
         cause = cause
     )
+
+    /**
+     * A failure the storage implementation could not classify.
+     *
+     * @param cause Cause.
+     * @author Giovanni Andreuzza
+     */
+    @IsFrameworkError
+    data class UnexpectedError(override val cause: KError) : DeleteStoreError(
+        code = "unexpected_error",
+        message = "An unexpected error occurred.",
+        cause = cause
+    )
 }
