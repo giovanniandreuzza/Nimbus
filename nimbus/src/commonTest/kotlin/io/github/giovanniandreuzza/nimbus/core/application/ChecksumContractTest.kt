@@ -35,7 +35,7 @@ import kotlin.test.assertTrue
 class ChecksumContractTest {
 
     @Test
-    fun `checksum without a configured algorithm reports a named cause, not the catch-all`() =
+    fun `checksum without a configured algorithm reports a named cause rather than the catch-all`() =
         runTest {
             val f = fixture(digestAlgorithm = null)
             f.service.enqueueDownload(URL, PATH, NAME)

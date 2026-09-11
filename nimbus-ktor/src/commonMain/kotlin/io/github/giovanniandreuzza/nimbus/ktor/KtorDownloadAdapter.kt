@@ -236,7 +236,20 @@ public class KtorDownloadAdapter(
                             )
                         )
                     }
-                    if (rangeStart != null && rangeStart != offset) {
+                    // A header that cannot be read is not weaker evidence than a missing
+                    // one, it is the same absence of evidence — and appending a body
+                    // without it yields a file of exactly the right length holding the
+                    // wrong bytes, which the size check cannot see.
+                    if (rangeStart == null) {
+                        return Failure(
+                            DownloadError.PermanentError(
+                                PermanentDownloadErrorCause.InconsistentRangeResponse(
+                                    "Content-Range '$cr' could not be read during resume."
+                                )
+                            )
+                        )
+                    }
+                    if (rangeStart != offset) {
                         return Failure(
                             DownloadError.PermanentError(
                                 PermanentDownloadErrorCause.InconsistentRangeResponse(

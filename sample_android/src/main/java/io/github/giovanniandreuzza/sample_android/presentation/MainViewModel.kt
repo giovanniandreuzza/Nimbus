@@ -202,10 +202,7 @@ class MainViewModel(
                     val recorded = _uiState.value.downloads.getOrNull(index)?.checksum
                     Timber.d("Verify $index — on disk $onDisk, recorded $recorded")
                     updateItem(index) {
-                        it.copy(
-                            verification = if (onDisk == recorded) VerificationResult.Match
-                            else VerificationResult.Mismatch(onDisk)
-                        )
+                        it.copy(verification = verificationOf(onDisk, recorded))
                     }
                 }
             }
@@ -228,9 +225,14 @@ class MainViewModel(
                         fileName = config.fileName,
                         displayState = task?.state?.toDisplayState() ?: DownloadDisplayState.Idle,
                         checksum = task?.checksum?.value,
-                        // Verification is a transient result of a user action, not something
-                        // the catalogue carries — carry it across rather than dropping it.
-                        verification = previous?.verification
+                        // Verification is a transient result of a user action, so the
+                        // catalogue does not carry it — but it is about one file, and a row
+                        // that has been cancelled or started again is no longer showing that
+                        // file.
+                        verification = verificationToCarry(
+                            previous?.verification,
+                            task?.state?.toDisplayState() ?: DownloadDisplayState.Idle
+                        )
                     )
                 }
             )

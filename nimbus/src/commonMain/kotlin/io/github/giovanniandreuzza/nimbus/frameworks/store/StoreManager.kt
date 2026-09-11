@@ -255,18 +255,23 @@ internal abstract class StoreManager<T>(
     @OptIn(InternalIoApi::class)
     suspend fun read(): KResult<T, ReadError> {
         return mutex.withLock {
-            val primary = readFromPath(filePath)
-            if (primary is Success) {
-                return@withLock primary
+            // The temp file is read first, and that order is the recovery protocol rather
+            // than a fallback. Saving encodes the whole store into the temp file and only
+            // then commits it with an atomic move, so a temp file still present means the
+            // move did not complete — and the temp is the newer state, complete by
+            // construction, while the destination holds the previous version or, where the
+            // move had to fall back to copying, a partial one.
+            //
+            // Reading the destination first only looks harmless because a truncated
+            // protobuf usually fails to decode. When it happens to decode, the store is
+            // silently accepted with tasks missing and the complete copy beside it thrown
+            // away.
+            val interrupted = readFromPath(tempFilePath)
+            if (interrupted is Success) {
+                return@withLock interrupted
             }
 
-            // Recovery fallback for interrupted writes.
-            val fallback = readFromPath(tempFilePath)
-            if (fallback is Success) {
-                return@withLock fallback
-            }
-
-            primary
+            readFromPath(filePath)
         }
     }
 
