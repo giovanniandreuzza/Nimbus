@@ -125,6 +125,12 @@ fun DownloadCard(
                     color = MaterialTheme.colorScheme.primary
                 )
 
+                VerificationResult.Unavailable -> Text(
+                    text = "no digest recorded — nothing to verify against",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
                 is VerificationResult.Mismatch -> Text(
                     text = "MISMATCH — on disk " + verification.onDisk.take(16) + "…",
                     style = MaterialTheme.typography.bodySmall,
