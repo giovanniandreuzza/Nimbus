@@ -19,6 +19,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.giovanniandreuzza.sample_android.presentation.DownloadDisplayState
 import io.github.giovanniandreuzza.sample_android.presentation.DownloadItemUiState
+import io.github.giovanniandreuzza.sample_android.presentation.VerificationResult
 
 @Composable
 fun DownloadCard(
@@ -28,6 +29,7 @@ fun DownloadCard(
     onResume: () -> Unit,
     onCancel: () -> Unit,
     onRetry: () -> Unit,
+    onVerify: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     ElevatedCard(modifier = modifier.fillMaxWidth()) {
@@ -99,6 +101,46 @@ fun DownloadCard(
                 else -> {}
             }
 
+            // Content digest — what the transferred bytes hashed to, and the result of
+            // re-deriving it from the file on disk.
+            item.checksum?.let { digest ->
+                Text(
+                    text = "sha256 " + digest.take(16) + "…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            when (val verification = item.verification) {
+                VerificationResult.Running -> Text(
+                    text = "verifying…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                VerificationResult.Match -> Text(
+                    text = "verified — bytes on disk are unchanged",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                is VerificationResult.Mismatch -> Text(
+                    text = "MISMATCH — on disk " + verification.onDisk.take(16) + "…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+
+                is VerificationResult.Error -> Text(
+                    text = "verify failed: " + verification.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                null -> {}
+            }
+
             // Action buttons — contextual, right-aligned
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -133,8 +175,11 @@ fun DownloadCard(
                         Button(onClick = onRetry) { Text("Retry") }
                     }
 
-                    DownloadDisplayState.Enqueued,
                     DownloadDisplayState.Finished -> {
+                        OutlinedButton(onClick = onVerify) { Text("Verify") }
+                    }
+
+                    DownloadDisplayState.Enqueued -> {
                     }
                 }
             }

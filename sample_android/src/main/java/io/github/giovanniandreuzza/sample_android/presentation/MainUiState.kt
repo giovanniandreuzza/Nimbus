@@ -6,8 +6,24 @@ data class MainUiState(
 
 data class DownloadItemUiState(
     val fileName: String,
-    val displayState: DownloadDisplayState = DownloadDisplayState.Idle
+    val displayState: DownloadDisplayState = DownloadDisplayState.Idle,
+    /** Hex digest of the transferred bytes — populated by Nimbus once Finished. */
+    val checksum: String? = null,
+    /** Result of the last [MainUiAction.Verify], re-derived from the file on disk. */
+    val verification: VerificationResult? = null
 )
+
+sealed class VerificationResult {
+    data object Running : VerificationResult()
+
+    /** The file on disk still hashes to what was downloaded. */
+    data object Match : VerificationResult()
+
+    /** The bytes on disk changed since the download finished. */
+    data class Mismatch(val onDisk: String) : VerificationResult()
+
+    data class Error(val message: String) : VerificationResult()
+}
 
 sealed class DownloadDisplayState {
     data object Idle : DownloadDisplayState()
