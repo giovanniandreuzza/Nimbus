@@ -1,6 +1,4 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import java.io.FileNotFoundException
-import java.util.Properties
 
 plugins {
     alias(libs.plugins.androidMultiplatformLibrary)
@@ -9,10 +7,10 @@ plugins {
     alias(libs.plugins.kotlinSerialization)
 }
 
-val localProperties = loadProperties()
+val libraryVersion = rootProject.file("version.txt").readText().trim()
 
 group = "io.github.giovanniandreuzza"
-version = localProperties.getVersion()
+version = libraryVersion
 
 kotlin {
     explicitApi()
@@ -48,39 +46,12 @@ kotlin {
     }
 }
 
-tasks.register("generateReadme") {
-    val readmeTemplatePath = rootProject.file("README.md.template").absolutePath
-    val readmePath = rootProject.file("README.md").absolutePath
-    val versionFilePath = rootProject.file("versions.properties").absolutePath
-
-    inputs.file(readmeTemplatePath)
-    outputs.file(readmePath)
-
-    doLast {
-        val version = File(versionFilePath)
-            .readLines()
-            .first { it.startsWith("VERSION=") }
-            .substringAfter("=")
-
-        val content = File(readmeTemplatePath).readText().replace(
-            oldValue = "\$VERSION",
-            newValue = version
-        )
-
-        File(readmePath).writeText(content)
-    }
-}
-
-tasks.build {
-    dependsOn("generateReadme")
-}
-
 mavenPublishing {
     // Define coordinates for the published artifact
     coordinates(
         groupId = "io.github.giovanniandreuzza",
         artifactId = "nimbus",
-        version = localProperties.getVersion()
+        version = libraryVersion
     )
 
     // Configure POM metadata for the published artifact
@@ -118,15 +89,3 @@ mavenPublishing {
     // Enable GPG signing for all publications
     signAllPublications()
 }
-
-fun loadProperties() = rootProject.file("versions.properties").let {
-    if (!it.exists()) {
-        throw FileNotFoundException("File ${it.absolutePath} not found")
-    }
-
-    Properties().also { properties ->
-        properties.load(it.inputStream())
-    }
-}
-
-fun Properties.getVersion() = getProperty("VERSION") ?: "1.0.0"

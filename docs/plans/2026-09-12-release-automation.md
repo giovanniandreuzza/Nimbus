@@ -187,11 +187,12 @@ Expected: `version: 2.2.0` from both.
 
 ```bash
 grep -rn "versions.properties\|generateReadme\|README.md.template" \
-  --include="*.kts" --include="*.kt" --include="*.md" . \
-  | grep -v '^./docs/\|^./.claude/\|^./graphify-out/\|build/'
+  --include="*.kts" --include="*.kt" nimbus nimbus-ktor sample_android
 ```
 
-Expected: no output.
+Expected: no output. Scope the search to the source trees: `docs/` describes this change and
+mentions all three names legitimately, and `.claude/worktrees/` holds separate checkouts of the
+2.3.0 work that still carry the old build files until Task 10 rebases them.
 
 - [ ] **Step 7: Verify the build is still green**
 

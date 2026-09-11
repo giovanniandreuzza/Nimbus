@@ -1,6 +1,4 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import java.io.FileNotFoundException
-import java.util.Properties
 
 plugins {
     alias(libs.plugins.androidMultiplatformLibrary)
@@ -8,10 +6,10 @@ plugins {
     alias(libs.plugins.vanniktech.mavenPublish)
 }
 
-val localProperties = loadProperties()
+val libraryVersion = rootProject.file("version.txt").readText().trim()
 
 group = "io.github.giovanniandreuzza"
-version = localProperties.getVersion()
+version = libraryVersion
 
 kotlin {
     explicitApi()
@@ -42,7 +40,7 @@ mavenPublishing {
     coordinates(
         groupId = "io.github.giovanniandreuzza",
         artifactId = "nimbus-ktor",
-        version = localProperties.getVersion()
+        version = libraryVersion
     )
 
     pom {
@@ -75,15 +73,3 @@ mavenPublishing {
 
     signAllPublications()
 }
-
-fun loadProperties() = rootProject.file("versions.properties").let {
-    if (!it.exists()) {
-        throw FileNotFoundException("File ${it.absolutePath} not found")
-    }
-
-    Properties().also { properties ->
-        properties.load(it.inputStream())
-    }
-}
-
-fun Properties.getVersion() = getProperty("VERSION") ?: "1.0.0"
