@@ -12,6 +12,9 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownl
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryGetFileSizeErrorCause
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.ktor.client.HttpClient
+import io.ktor.client.network.sockets.ConnectTimeoutException
+import io.ktor.client.network.sockets.SocketTimeoutException
+import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.request.head
 import io.ktor.client.request.headers
 import io.ktor.client.request.prepareGet
@@ -65,13 +68,21 @@ public class KtorDownloadAdapter(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Failure(
-                GetFileSizeError.PermanentError(
-                    PermanentGetFileSizeErrorCause.UnexpectedError(
-                        unexpectedError(e)
+            if (isTransportTimeout(e)) {
+                Failure(
+                    GetFileSizeError.TemporaryError(
+                        TemporaryGetFileSizeErrorCause.NetworkTimeout(unexpectedError(e))
                     )
                 )
-            )
+            } else {
+                Failure(
+                    GetFileSizeError.PermanentError(
+                        PermanentGetFileSizeErrorCause.UnexpectedError(
+                            unexpectedError(e)
+                        )
+                    )
+                )
+            }
         }
     }
 
@@ -113,13 +124,21 @@ public class KtorDownloadAdapter(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Failure(
-                GetFileSizeError.PermanentError(
-                    PermanentGetFileSizeErrorCause.UnexpectedError(
-                        unexpectedError(e)
+            if (isTransportTimeout(e)) {
+                Failure(
+                    GetFileSizeError.TemporaryError(
+                        TemporaryGetFileSizeErrorCause.NetworkTimeout(unexpectedError(e))
                     )
                 )
-            )
+            } else {
+                Failure(
+                    GetFileSizeError.PermanentError(
+                        PermanentGetFileSizeErrorCause.UnexpectedError(
+                            unexpectedError(e)
+                        )
+                    )
+                )
+            }
         }
     }
 
@@ -167,13 +186,21 @@ public class KtorDownloadAdapter(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Failure(
-                DownloadError.PermanentError(
-                    PermanentDownloadErrorCause.UnexpectedError(
-                        unexpectedError(e)
+            if (isTransportTimeout(e)) {
+                Failure(
+                    DownloadError.TemporaryError(
+                        TemporaryDownloadErrorCause.NetworkTimeout(unexpectedError(e))
                     )
                 )
-            )
+            } else {
+                Failure(
+                    DownloadError.PermanentError(
+                        PermanentDownloadErrorCause.UnexpectedError(
+                            unexpectedError(e)
+                        )
+                    )
+                )
+            }
         }
     }
 
@@ -255,6 +282,29 @@ public class KtorDownloadAdapter(
         }
     }
 
+
+    /**
+     * Whether [error] is the transport giving up on time, as opposed to anything else.
+     *
+     * Deliberately narrow. `downloadFile` hands the caller a [Source] and invokes its
+     * callback inside this same `try`, so a failure raised in there — a sink that could not
+     * be written, a full disk — arrives here indistinguishable from a failure of the socket:
+     * on every platform both are `kotlinx.io.IOException`. Treating `IOException` as
+     * transient would therefore retry a full disk as though it were a congested link.
+     *
+     * These three types do not have that ambiguity. Ktor raises them for connecting, for
+     * waiting on bytes, and for the request as a whole; none of them can originate in the
+     * caller's callback, so classifying them as transient is correct wherever they surface.
+     *
+     * What this does not catch is a connection reset or a DNS failure, which are equally
+     * transient and equally common on an unattended device. Separating those from a caller
+     * -side failure needs the port to stop wrapping the callback in the adapter's own `try`,
+     * which is a change to the [NimbusDownloadPort] contract rather than to this mapping.
+     */
+    private fun isTransportTimeout(error: Throwable): Boolean =
+        error is SocketTimeoutException ||
+                error is ConnectTimeoutException ||
+                error is HttpRequestTimeoutException
 
     private fun unexpectedError(e: Exception): KError =
         KError(code = "unexpected_error", message = e.message ?: "An unexpected error occurred")

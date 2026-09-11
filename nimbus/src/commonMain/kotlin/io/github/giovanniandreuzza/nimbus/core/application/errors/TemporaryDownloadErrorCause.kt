@@ -72,6 +72,25 @@ public sealed class TemporaryDownloadErrorCause(
      * serving something stale — not about the file at the origin. There is no checksum
      * failure that is a property of the URL rather than of the attempt.
      */
+    /**
+     * The transport timed out: connecting, or waiting for the next bytes of a response
+     * that had already started, or the request as a whole.
+     *
+     * Temporary, never permanent. A timeout is a statement about the link at this moment —
+     * a congested cell, a proxy that stalled, a device that moved out of coverage — and
+     * nothing about whether the resource can be fetched. Nimbus's demanding consumers are
+     * unattended devices on exactly those links, where a timeout is the normal failure and
+     * not the exceptional one; classifying it as permanent means the retry budget never
+     * applies to the thing it exists for.
+     *
+     * @param cause The underlying transport error.
+     */
+    public data class NetworkTimeout(override val cause: KError) : TemporaryDownloadErrorCause(
+        code = "network_timeout",
+        message = cause.message,
+        cause = cause
+    )
+
     public data object ChecksumMismatch : TemporaryDownloadErrorCause(
         code = "checksum_mismatch",
         message = "The downloaded bytes did not match the expected checksum."
