@@ -7,11 +7,13 @@ import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
+import io.github.giovanniandreuzza.nimbus.core.ports.StoragePort
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage.FileSystemNimbusStorageAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.DownloadAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.IdProviderAdapter
+import io.github.giovanniandreuzza.nimbus.infrastructure.ports.StorageAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.DownloadRepository
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
@@ -79,11 +81,13 @@ internal fun init(
 
     val idProvider: IdProviderPort = IdProviderAdapter()
 
+    val storagePort: StoragePort = StorageAdapter(storage)
+
     val service = DownloadService(
         idProvider = idProvider,
         downloadPort = downloadPort,
         repository = repository,
-        nimbusStoragePort = storage,
+        storagePort = storagePort,
         minReservedDiskBytes = minReservedDiskBytes,
         logger = logger,
         autoStart = autoStart,
