@@ -103,6 +103,7 @@ class MainViewModel(
             is MainUiAction.Pause -> pause(action.index)
             is MainUiAction.Resume -> resume(action.index)
             is MainUiAction.Cancel -> cancel(action.index)
+            is MainUiAction.Start -> start(action.index)
             is MainUiAction.Retry -> retry(action.index)
             is MainUiAction.Verify -> verify(action.index)
         }
@@ -146,6 +147,15 @@ class MainViewModel(
             when (val result = nimbus.cancelDownload(configs[index].url)) {
                 is Failure -> report("Cancel", index, result.error.message)
                 is Success -> Timber.d("Cancelled $index")
+            }
+        }
+    }
+
+    private fun start(index: Int) {
+        viewModelScope.launch {
+            when (val result = nimbus.startDownload(configs[index].url)) {
+                is Failure -> report("Start", index, result.error.message)
+                is Success -> Timber.d("Started $index")
             }
         }
     }

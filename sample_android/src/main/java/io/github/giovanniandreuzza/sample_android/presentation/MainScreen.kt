@@ -60,6 +60,7 @@ fun MainScreen(
                     onPause = { onAction(MainUiAction.Pause(index)) },
                     onResume = { onAction(MainUiAction.Resume(index)) },
                     onCancel = { onAction(MainUiAction.Cancel(index)) },
+                    onStart = { onAction(MainUiAction.Start(index)) },
                     onRetry = { onAction(MainUiAction.Retry(index)) },
                     onVerify = { onAction(MainUiAction.Verify(index)) }
                 )
