@@ -34,9 +34,10 @@
 | `version.txt` | The single source of truth for the version. Written by release-please, read by both Gradle modules. |
 | `release-please-config.json` | How release-please versions this repository and shapes the changelog. |
 | `.release-please-manifest.json` | The current version, standing in for the tags this repository does not have. |
-| `.github/scripts/check-conventions.sh` | Pure validation logic for branch names and commit subjects, plus a `main` that reads the pull request context from the environment. Sourceable, so it can be tested without GitHub. |
-| `.github/scripts/check-conventions-test.sh` | Fixture table asserting what must pass and what must fail. Runs locally in under a second. |
-| `.github/workflows/ci.yml` | `conventions` and `build` jobs on every pull request. The two required status checks. |
+| `.github/scripts/check-conventions.sh` | Pure validation logic for branch names and commit subjects, plus a `main` that reads context from the environment and commit subjects from stdin. Sourceable, so it can be tested without GitHub. |
+| `.github/scripts/check-conventions-test.sh` | Fixture table asserting what must pass and what must fail, plus end-to-end assertions on `main`. Runs locally in under a second. |
+| `.github/workflows/conventions.yml` | The `conventions` required check, on `pull_request_target` so it runs from the base branch and a pull request cannot rewrite its own gate. |
+| `.github/workflows/ci.yml` | The `build` required check, on `pull_request`. |
 | `.github/workflows/release.yml` | release-please on pushes to `main`, then publish gated on `release_created`. |
 | `CHANGELOG.md` | Seeded with a header; every section after that is generated. |
 
@@ -469,7 +470,18 @@ git commit -m "ci: check branch, commit and pull request conventions"
 - Create: `.github/workflows/ci.yml`
 
 **Interfaces:**
-- Produces: two status check names, `conventions` and `build`, referenced by the ruleset in Task 9.
+- Produces: the status check name `build`, referenced by the ruleset in Task 9. The `conventions`
+  check comes from `conventions.yml`.
+
+**Why two workflows.** For `pull_request`, GitHub evaluates the workflow and any script it calls
+from the merge ref, so a pull request can rewrite them, keep the job names, and empty its own
+required checks. `conventions` therefore runs on `pull_request_target`, which is taken from the
+base branch; it checks out the base and reads commit subjects through the API, so no pull request
+content is fetched or executed. `build` stays on `pull_request` because it inherently runs pull
+request code — it answers "does this compile", and is not a security boundary.
+
+A `pull_request_target` workflow does not run until it is on the base branch, so `conventions`
+does not report on the pull request that introduces it.
 
 - [ ] **Step 1: Write the workflow**
 

@@ -2,13 +2,14 @@ name: CI
 
 on:
   pull_request:
-    # 'edited' is not a default activity type, and the title is a required
-    # check that becomes the commit message on a squash merge: without it a
-    # pull request can pass with a valid title and then be renamed.
-    types: [opened, synchronize, reopened, edited]
 
-# Read-only: the build job runs code from the pull request. The repository
+# Read-only: this workflow runs code from the pull request. The repository
 # default is already 'read', but that is a setting someone can change.
+#
+# Everything here is defined by the pull request's own merge ref and can be
+# rewritten by it. That is acceptable for a build — its job is to answer
+# "does this compile", not to be a gate. The gate that cannot be rewritten is
+# conventions.yml, which runs from the base branch.
 permissions:
   contents: read
 
@@ -17,22 +18,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  conventions:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          # The conventions check walks BASE_SHA..HEAD_SHA; a shallow clone has
-          # no such range.
-          fetch-depth: 0
-      - name: Check branch, commit and pull request conventions
-        env:
-          HEAD_REF: ${{ github.head_ref }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: bash .github/scripts/check-conventions.sh
-
   build:
     # macOS because the iOS targets do not compile anywhere else. The repository
     # is public, so these minutes are free.
