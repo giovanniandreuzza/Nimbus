@@ -1,0 +1,25 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "acb87a1daa84a39d80e8d1e1fed198fb6a584af7",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "nimbus",
+      "include-v-in-tag": true,
+      "extra-files": [
+        { "type": "generic", "path": "README.md" }
+      ],
+      "changelog-sections": [
+        { "type": "feat", "section": "Features" },
+        { "type": "fix", "section": "Bug Fixes" },
+        { "type": "perf", "section": "Performance" },
+        { "type": "refactor", "section": "Internal" },
+        { "type": "docs", "section": "Documentation" },
+        { "type": "test", "hidden": true },
+        { "type": "build", "hidden": true },
+        { "type": "ci", "hidden": true },
+        { "type": "chore", "hidden": true }
+      ]
+    }
+  }
+}
