@@ -838,11 +838,16 @@ Only after Task 7 has registered the check names and Task 8 has made the release
 
 - [ ] **Step 1: Confirm the check names exist exactly as the ruleset will spell them**
 
+Read them from a pull request, not from `main`: `conventions` and `build` run on pull requests, so
+`main`'s own check-runs list only `release-please` and `publish`.
+
 ```bash
-gh api /repos/giovanniandreuzza/Nimbus/commits/main/check-runs --jq '.check_runs[].name' | sort -u
+gh pr view <any-open-pr> --repo giovanniandreuzza/Nimbus \
+  --json statusCheckRollup --jq '[.statusCheckRollup[].name] | unique'
 ```
 
-Expected to include `conventions` and `build`. If a name differs, use the name reported here — the ruleset matches on this string.
+Expected: `["build", "conventions"]`. If a name differs, use the name reported here — the ruleset
+matches on this string.
 
 - [ ] **Step 2: Set the merge strategies**
 
@@ -912,16 +917,27 @@ gh api /repos/giovanniandreuzza/Nimbus --jq '{squash: .allow_squash_merge, rebas
 
 Expected: one active ruleset named `main`; `merge: false`.
 
-- [ ] **Step 5: Verify `main` actually rejects a direct push**
+- [ ] **Step 5: Verify the rules are actually in force on `main`**
+
+Do **not** probe by pushing. If the ruleset were not applying, the probe commit would land on
+`main` and trigger `release.yml` — the failure case of the test does damage. Ask GitHub which
+rules it will enforce instead; the answer is authoritative and read-only.
 
 ```bash
-git switch main && git pull
-git commit --allow-empty -m "chore: protection probe"
-git push origin main     # expect: rejected by the ruleset
-git reset --hard origin/main
+gh api /repos/giovanniandreuzza/Nimbus/rules/branches/main --jq '.[] | .type' | sort
+gh api /repos/giovanniandreuzza/Nimbus/rules/branches/main \
+  --jq '.[] | select(.type=="required_status_checks") | .parameters.required_status_checks'
 ```
 
-Expected: the push is refused. If it succeeds, the ruleset is not applying — do not continue to Task 10.
+Expected: `deletion`, `non_fast_forward`, `pull_request`, `required_linear_history`,
+`required_status_checks`, and the two contexts `conventions` and `build`. If any is missing, the
+ruleset is not applying — do not continue to Task 10.
+
+Note what GitHub adds on its own: the `pull_request` rule comes back with
+`require_extra_approval_for_unattributed_changes: true`, which is defaulted on and was not
+requested. It requires one approval more than configured for pull requests not attributed to a
+person. Check whether it applies to release-please's pull request before relying on the
+zero-approval setting.
 
 ---
 
