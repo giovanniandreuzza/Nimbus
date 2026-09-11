@@ -6,6 +6,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.PermanentDownloadErrorCause
+import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.StorageAdapter
@@ -321,6 +322,78 @@ class DownloadServiceLifecycleTest {
         }
 
     @Test
+    fun `a retry after the transport failed resumes from the partial instead of discarding it`() =
+        runTest {
+            val f = fixture()
+            f.repository.seed(taskIn(transportFailure()))
+            f.storage.write(PATH, ByteArray(500))
+
+            f.service.retryFailedDownload(URL).valueOrFail()
+
+            assertEquals(
+                500,
+                f.storage.read(PATH)?.size,
+                "the transport failing says nothing about the bytes already written; " +
+                        "discarding them restarts a large transfer from zero every drop"
+            )
+            assertEquals(DownloadState.Enqueued, f.repository.current(URL)?.state)
+        }
+
+    @Test
+    fun `a retry whose remote changed size discards the partial even after a transport failure`() =
+        runTest {
+            val f = fixture()
+            f.repository.seed(taskIn(transportFailure()))
+            f.storage.write(PATH, ByteArray(500))
+            f.downloadPort.remoteSizeBecomes(4_096L)
+
+            f.service.retryFailedDownload(URL).valueOrFail()
+
+            assertEquals(
+                0,
+                f.storage.read(PATH)?.size,
+                "a partial of a different resource cannot be resumed into"
+            )
+        }
+
+    @Test
+    fun `a retry after a checksum mismatch discards the partial`() = runTest {
+        val f = fixture()
+        f.repository.seed(
+            taskIn(
+                DownloadState.Failed(
+                    DownloadError.TemporaryError(TemporaryDownloadErrorCause.ChecksumMismatch)
+                )
+            )
+        )
+        f.storage.write(PATH, ByteArray(SIZE.toInt()))
+
+        f.service.retryFailedDownload(URL).valueOrFail()
+
+        assertEquals(
+            0,
+            f.storage.read(PATH)?.size,
+            "a mismatch leaves a file of exactly the right length and the wrong content: " +
+                    "resuming into it re-verifies the same wrong bytes and never converges"
+        )
+    }
+
+    @Test
+    fun `a retry after a permanent failure discards the partial`() = runTest {
+        val f = fixture()
+        f.repository.seed(taskIn(failedState()))
+        f.storage.write(PATH, ByteArray(500))
+
+        f.service.retryFailedDownload(URL).valueOrFail()
+
+        assertEquals(
+            0,
+            f.storage.read(PATH)?.size,
+            "only a transport failure is known not to implicate the bytes on disk"
+        )
+    }
+
+    @Test
     fun `only a failed download can be retried`() = runTest {
         val f = fixture()
         f.service.enqueueDownload(URL, PATH, NAME)
@@ -486,6 +559,14 @@ class DownloadServiceLifecycleTest {
         }
         return task
     }
+
+    private fun transportFailure() = DownloadState.Failed(
+        DownloadError.TemporaryError(
+            TemporaryDownloadErrorCause.TransportFailure(
+                KError("socket_timeout", "Socket timeout has expired")
+            )
+        )
+    )
 
     private fun failedState() = DownloadState.Failed(
         DownloadError.PermanentError(PermanentDownloadErrorCause.ResourceNotFound)

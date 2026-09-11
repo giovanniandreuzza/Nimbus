@@ -29,7 +29,7 @@ class DownloadStateStoreMappersTest {
             TemporaryDownloadErrorCause.FileNotAccessible,
             TemporaryDownloadErrorCause.TruncateRace,
             TemporaryDownloadErrorCause.ChecksumMismatch,
-            TemporaryDownloadErrorCause.NetworkTimeout(
+            TemporaryDownloadErrorCause.TransportFailure(
                 TemporaryDownloadErrorCause.FileNotAccessible
             )
         )

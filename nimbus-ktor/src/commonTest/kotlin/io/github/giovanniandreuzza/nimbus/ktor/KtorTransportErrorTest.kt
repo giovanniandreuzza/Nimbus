@@ -44,7 +44,7 @@ class KtorTransportErrorTest {
             .getFileSize(url)
 
         assertEquals(
-            "network_timeout",
+            "transport_failure",
             result.temporarySizeCause().code,
             "a stalled read must be retried, not reported as permanent"
         )
@@ -55,7 +55,7 @@ class KtorTransportErrorTest {
         val result = adapterThrowing(ConnectTimeoutException("Connect timeout has expired"))
             .getFileSize(url)
 
-        assertEquals("network_timeout", result.temporarySizeCause().code)
+        assertEquals("transport_failure", result.temporarySizeCause().code)
     }
 
     @Test
@@ -63,7 +63,7 @@ class KtorTransportErrorTest {
         val result = adapterThrowing(HttpRequestTimeoutException(url, 1_000L))
             .getFileSize(url)
 
-        assertEquals("network_timeout", result.temporarySizeCause().code)
+        assertEquals("transport_failure", result.temporarySizeCause().code)
     }
 
     @Test
@@ -72,7 +72,7 @@ class KtorTransportErrorTest {
             .downloadFile(url, offset = 0L) { fail("the body was never opened") }
 
         assertEquals(
-            "network_timeout",
+            "transport_failure",
             result.temporaryDownloadCause().code,
             "a transfer that stalled must be retried"
         )
@@ -88,6 +88,26 @@ class KtorTransportErrorTest {
             cause.message.contains("timeout", ignoreCase = true),
             "the diagnosis must survive the mapping, got: ${cause.message}"
         )
+    }
+
+    @Test
+    fun `a connection reset before the body is temporary`() = runTest {
+        val result = adapterThrowing(IOException("Connection reset by peer"))
+            .downloadFile(url, offset = 0L) { fail("the body was never opened") }
+
+        assertEquals(
+            "transport_failure",
+            result.temporaryDownloadCause().code,
+            "a reset is as transient as a timeout and far more common on a long transfer"
+        )
+    }
+
+    @Test
+    fun `a name that does not resolve is temporary`() = runTest {
+        val result = adapterThrowing(IOException("Unable to resolve host"))
+            .getFileSize(url)
+
+        assertEquals("transport_failure", result.temporarySizeCause().code)
     }
 
     // -----------------------------------------------------------------------

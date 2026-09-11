@@ -85,8 +85,8 @@ public sealed class TemporaryDownloadErrorCause(
      *
      * @param cause The underlying transport error.
      */
-    public data class NetworkTimeout(override val cause: KError) : TemporaryDownloadErrorCause(
-        code = "network_timeout",
+    public data class TransportFailure(override val cause: KError) : TemporaryDownloadErrorCause(
+        code = "transport_failure",
         message = cause.message,
         cause = cause
     )

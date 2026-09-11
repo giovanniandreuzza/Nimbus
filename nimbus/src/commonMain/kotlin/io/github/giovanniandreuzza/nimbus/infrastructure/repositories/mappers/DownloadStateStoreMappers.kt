@@ -73,7 +73,7 @@ internal object DownloadStateStoreMappers {
             "file_not_accessible" -> TemporaryDownloadErrorCause.FileNotAccessible
             "truncate_race" -> TemporaryDownloadErrorCause.TruncateRace
             "checksum_mismatch" -> TemporaryDownloadErrorCause.ChecksumMismatch
-            "network_timeout" -> TemporaryDownloadErrorCause.NetworkTimeout(
+            "transport_failure" -> TemporaryDownloadErrorCause.TransportFailure(
                 this.errorCause?.toKError() ?: toKError()
             )
 
