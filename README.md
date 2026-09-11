@@ -78,9 +78,9 @@ Add `nimbus` to your `build.gradle` dependencies. Optionally add `nimbus-ktor` f
 <!-- x-release-please-start-version -->
 ```kotlin
 dependencies {
-    implementation("io.github.giovanniandreuzza:nimbus:2.3.0")
+    implementation("io.github.giovanniandreuzza:nimbus:2.2.0")
     // Optional — recommended Ktor HTTP adapter:
-    implementation("io.github.giovanniandreuzza:nimbus-ktor:2.3.0")
+    implementation("io.github.giovanniandreuzza:nimbus-ktor:2.2.0")
 }
 ```
 <!-- x-release-please-end -->
