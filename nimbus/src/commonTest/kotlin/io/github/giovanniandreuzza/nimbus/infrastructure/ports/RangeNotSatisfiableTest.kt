@@ -16,6 +16,7 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
+import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -175,7 +176,8 @@ class RangeNotSatisfiableTest {
                 notifyEveryBytes = 32L,
                 maxRetryAttempts = maxRetryAttempts,
                 retryBaseDelayMs = 1L,
-                digestAlgorithm = null
+                digestAlgorithm = null,
+                contentDigestPort = digestPortFor(storage)
             )
             adapter.startDownload(task())
             scope.advanceUntilIdle()

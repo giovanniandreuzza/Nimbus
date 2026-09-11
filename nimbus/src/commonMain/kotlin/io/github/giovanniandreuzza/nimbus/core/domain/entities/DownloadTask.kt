@@ -25,9 +25,12 @@ internal class DownloadTask private constructor(
     fileSize: FileSize,
     private var _state: DownloadState,
     /** What the caller said the finished file should hash to, if anything. */
-    val expectedChecksum: Checksum?,
+    private var _expectedChecksum: Checksum?,
     private var _checksum: Checksum?
 ) : Entity<DownloadId>(id = id) {
+
+    val expectedChecksum: Checksum?
+        get() = _expectedChecksum
 
     private var storedFileSize: FileSize = fileSize
 
@@ -99,6 +102,22 @@ internal class DownloadTask private constructor(
     }
 
     /**
+     * Adopts a new expectation for what the finished file should hash to.
+     *
+     * Refused once the task is [DownloadState.Finished]: the file has already been accepted
+     * against the old expectation, so changing it after the fact would describe bytes nobody
+     * checked. Before then the verification has not happened yet, and the caller's latest
+     * word is the one it should be made against.
+     *
+     * @return false when the task has already finished.
+     */
+    fun updateExpectedChecksum(checksum: Checksum?): Boolean {
+        if (_state is DownloadState.Finished) return false
+        _expectedChecksum = checksum
+        return true
+    }
+
+    /**
      * Updates the expected remote size (e.g. after [retryFailedDownload] refetched HEAD).
      * Allowed only in [DownloadState.Enqueued], [DownloadState.Paused], or [DownloadState.Failed].
      */
@@ -163,7 +182,7 @@ internal class DownloadTask private constructor(
                 fileName = fileName,
                 fileSize = fileSize,
                 _state = DownloadState.Enqueued,
-                expectedChecksum = expectedChecksum,
+                _expectedChecksum = expectedChecksum,
                 _checksum = null
             )
         }
@@ -202,7 +221,7 @@ internal class DownloadTask private constructor(
                 fileName = fileName,
                 fileSize = fileSize,
                 _state = state,
-                expectedChecksum = expectedChecksum,
+                _expectedChecksum = expectedChecksum,
                 _checksum = checksum
             )
         }

@@ -150,8 +150,9 @@ public interface NimbusAPI {
      * underneath it — which is the very thing the caller is asking about.
      *
      * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.DownloadNotFound]
-     * when no task exists for [fileUrl], and with [PermanentNimbusErrorCause.InvalidState]
-     * when the task has not finished or no digest algorithm is configured.
+     * when no task exists for [fileUrl], with [PermanentNimbusErrorCause.InvalidState] when
+     * the task has not finished, and with [PermanentNimbusErrorCause.ContentDigestDisabled]
+     * when no digest algorithm is configured.
      */
     public suspend fun checksum(fileUrl: String): KResult<Checksum, NimbusError>
 }

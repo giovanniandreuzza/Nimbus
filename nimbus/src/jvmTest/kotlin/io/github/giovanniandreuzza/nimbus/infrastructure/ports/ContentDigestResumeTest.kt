@@ -13,6 +13,7 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storag
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
+import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -218,7 +219,8 @@ private class Harness(
         notifyEveryBytes = 64 * 1024L,
         maxRetryAttempts = 3,
         retryBaseDelayMs = 1L,
-        digestAlgorithm = algorithm
+        digestAlgorithm = algorithm,
+                contentDigestPort = digestPortFor(storage)
     )
 
     private suspend fun execute(adapter: DownloadAdapter, expectFinish: Boolean): Box? {

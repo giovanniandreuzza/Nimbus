@@ -13,6 +13,9 @@ import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import io.github.giovanniandreuzza.nimbus.core.ports.ContentDigestPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.ports.ContentDigestAdapter
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
+import kotlinx.coroutines.Dispatchers
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
@@ -158,3 +161,14 @@ internal class RecordingLogger : NimbusLogger {
     inline fun <reified T : NimbusLogEvent> firstOrNull(): T? =
         events.filterIsInstance<T>().firstOrNull()
 }
+
+/**
+ * The real digest adapter over a test's storage.
+ *
+ * Real rather than faked on purpose: a test that asserts a specific SHA-256 is only
+ * meaningful if the library computed it, and the expected value comes from outside the
+ * codebase. [Dispatchers.Unconfined] keeps the read on the calling coroutine so a test does
+ * not have to advance a scheduler to get an answer.
+ */
+internal fun digestPortFor(storage: NimbusStoragePort): ContentDigestPort =
+    ContentDigestAdapter(storage, Dispatchers.Unconfined)

@@ -12,6 +12,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeErr
 import io.github.giovanniandreuzza.nimbus.core.application.errors.PermanentDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
+import io.github.giovanniandreuzza.nimbus.core.ports.ContentDigestPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.digest.ContentDigest
 import io.github.giovanniandreuzza.nimbus.infrastructure.digest.readFullyInto
@@ -65,7 +66,9 @@ internal class DownloadAdapter(
     private val maxRetryAttempts: Int,
     private val retryBaseDelayMs: Long,
     /** When non-null, every transfer is digested with it. Null means no hashing at all. */
-    private val digestAlgorithm: DigestAlgorithm? = null
+    private val digestAlgorithm: DigestAlgorithm? = null,
+    /** Hashes a file that is already on disk, for the case where nothing is transferred. */
+    private val contentDigestPort: ContentDigestPort
 ) : DownloadPort {
 
     private val semaphore = Semaphore(concurrencyLimit)
@@ -85,8 +88,7 @@ internal class DownloadAdapter(
             is Failure -> null
         }
         if (quickSize != null && quickSize == downloadTask.fileSize) {
-            downloadProgressCallback.onDownloadFinished(id)
-            return Success(Unit)
+            return finishCompleteFileOnDisk(downloadTask, id)
         }
 
         val job = downloadScope.launch(
@@ -630,6 +632,49 @@ internal class DownloadAdapter(
             code = "download_unexpected_error",
             message = throwable.message ?: "An unexpected error occurred during download."
         )
+    }
+
+    /**
+     * Reports a file that is already on disk at the expected length as finished.
+     *
+     * Nothing is transferred here, and for a long time nothing was checked either: the file
+     * was accepted on its length alone. That is the one case the digest exists for. A player
+     * that keeps its assets between runs meets this path on every start, so a digest that
+     * cannot answer here answers only where nobody was asking — and a caller's
+     * [DownloadTaskDTO.expectedChecksum] was silently never consulted.
+     *
+     * The file is therefore hashed from disk and put through the same verification a
+     * streamed transfer gets. With no algorithm configured nothing is hashed, exactly as
+     * during a transfer.
+     */
+    private suspend fun finishCompleteFileOnDisk(
+        downloadTask: DownloadTaskDTO,
+        id: String
+    ): KResult<Unit, DownloadError> {
+        val algorithm = digestAlgorithm
+        if (algorithm == null) {
+            downloadProgressCallback.onDownloadFinished(id)
+            return Success(Unit)
+        }
+
+        val checksum = when (val r = contentDigestPort.digestOf(downloadTask.filePath, algorithm)) {
+            is Success -> r.value
+            is Failure -> {
+                // The bytes are there but could not be read. Temporary: the same file may
+                // read cleanly on the next attempt, and calling it permanent would strand a
+                // download that has already fully transferred.
+                notifyFailureAndCleanup(
+                    id,
+                    DownloadError.TemporaryError(TemporaryDownloadErrorCause.FileNotAccessible)
+                )
+                return Success(Unit)
+            }
+        }
+
+        if (!verifyFileIntegrity(downloadTask, id, checksum)) return Success(Unit)
+
+        downloadProgressCallback.onDownloadFinished(id, checksum)
+        return Success(Unit)
     }
 
     private suspend fun notifyFailureAndCleanup(id: String, error: DownloadError) {

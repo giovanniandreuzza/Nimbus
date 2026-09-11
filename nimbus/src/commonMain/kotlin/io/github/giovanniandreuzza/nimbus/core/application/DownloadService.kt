@@ -490,6 +490,39 @@ internal class DownloadService(
         }
     }
 
+    /**
+     * Applies [expectedChecksum] to a task that already exists.
+     *
+     * A task still in flight simply adopts it: nothing has been verified yet, so the latest
+     * word is the one the transfer should be checked against. A finished task cannot — its
+     * file was accepted against the old expectation, and rewriting the expectation would
+     * describe bytes nobody checked. Asking for different bytes at a url that has already
+     * been satisfied makes what is on disk stale, so it is removed and downloaded again,
+     * the same conclusion this method already reaches when a finished file has vanished.
+     */
+    private suspend fun carryExpectationToExistingTask(
+        fileUrl: String,
+        expectedChecksum: Checksum
+    ): KResult<Unit, NimbusError> {
+        val id = DownloadId.create(idProvider.generateUniqueId(fileUrl))
+        val task = repository.getDownloadTask(id).getOr { return Success(Unit) }
+        if (task.expectedChecksum == expectedChecksum) return Success(Unit)
+
+        if (task.updateExpectedChecksum(expectedChecksum)) {
+            repository.saveDownloadTask(task).onFailure {
+                return Failure(
+                    NimbusError.PermanentError(PermanentNimbusErrorCause.StorageError(it))
+                )
+            }
+            return Success(Unit)
+        }
+
+        removeDownload(fileUrl, deleteAssociatedFile = true)
+            .onFailure { return Failure(it) }
+        logger?.log(NimbusLogEvent.EnsureDownloadedStaleFinishedRemoved(fileUrl))
+        return Success(Unit)
+    }
+
     override suspend fun ensureDownloaded(
         fileUrl: String,
         filePath: String,
@@ -501,6 +534,15 @@ internal class DownloadService(
             filePath,
             fileName
         ).onFailure { return@withReady Failure(it) }
+
+        // Carry the caller's expectation into a task that already exists, before anything
+        // below can report the file complete. Forwarding it only to enqueueDownload would
+        // honour it exactly where the caller could have called enqueueDownload themselves,
+        // and drop it everywhere they reached for this method instead.
+        if (expectedChecksum != null) {
+            carryExpectationToExistingTask(fileUrl, expectedChecksum)
+                .onFailure { return@withReady Failure(it) }
+        }
 
         // The loop only continues when a stale Finished task is removed (at most once),
         // after which the task no longer exists and the loop exits via the Failure branch.
@@ -564,15 +606,7 @@ internal class DownloadService(
 
     override suspend fun checksum(fileUrl: String): KResult<Checksum, NimbusError> = withReady {
         val algorithm = digestAlgorithm ?: return@withReady Failure(
-            NimbusError.PermanentError(
-                PermanentNimbusErrorCause.UnexpectedError(
-                    KError(
-                        "content_digest_disabled",
-                        "No digest algorithm is configured. Call " +
-                                "Nimbus.Builder().withContentDigest(...) to enable it."
-                    )
-                )
-            )
+            NimbusError.PermanentError(PermanentNimbusErrorCause.ContentDigestDisabled)
         )
 
         val id = idProvider.generateUniqueId(fileUrl)

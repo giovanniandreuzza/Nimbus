@@ -13,6 +13,7 @@ import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
+import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -176,7 +177,8 @@ class DownloadAdapterConcurrencyTest {
             notifyEveryBytes = 128L,
             maxRetryAttempts = maxRetryAttempts,
             retryBaseDelayMs = 1L,
-            digestAlgorithm = null
+            digestAlgorithm = null,
+                contentDigestPort = digestPortFor(storage)
         )
     }
 
