@@ -115,6 +115,26 @@ because fine-grained PATs expire — at most a year — and the failure lands mo
 opaque permissions error on a release nobody can ship. The App's installation token is minted per
 run and scoped to this repository alone.
 
+### The conventions gate runs from the base branch
+
+For a `pull_request` event GitHub evaluates the workflow, and any script it calls, from the
+**merge ref** — head merged into base. A pull request can therefore rewrite `ci.yml` or
+`check-conventions.sh`, keep the job names, and turn its own required checks into no-ops. With a
+zero-approval ruleset that would leave the maintainer's eyes as the only gate.
+
+So the conventions check runs on `pull_request_target`, which takes the workflow from the base
+branch. It never touches pull request content: it checks out the base, and reads commit subjects
+through the API rather than fetching or executing anything from the head. That removes the usual
+`pull_request_target` hazard, which is checking out head code with a privileged token.
+
+`build` stays on `pull_request` and stays rewritable, because it inherently executes pull request
+code and no configuration changes that. Its job is to answer "does this compile", not to be a
+security boundary. It is a required check because a red build should block a merge, not because
+a green one proves anything about a hostile pull request.
+
+Consequence to plan around: a `pull_request_target` workflow only runs once it is on the base
+branch, so the gate does not run on the pull request that introduces it.
+
 ### Conventions enforced in CI, not in the ruleset
 
 GitHub's list of available ruleset rules covers creations, updates, deletions, linear history,
@@ -179,31 +199,46 @@ current version in the absence of tags.
 
 **`version.txt`** — `2.2.0`. Written by release-please from here on; never edited by hand.
 
+### `conventions.yml` — on `pull_request_target`
+
+One job, `conventions` (ubuntu), running the base branch's copy of
+`.github/scripts/check-conventions.sh` and validating, against a single list of allowed types
+defined at the top of that script:
+
+- the branch name, against the Conventional Branch vocabulary: `main`, `develop`, and `feature/`,
+  `bugfix/`, `hotfix/`, `release/`, `chore/` followed by lowercase alphanumeric segments separated
+  by single `-`, `_` or `.`; `release-please--branches--main` is allowed explicitly, since the
+  bot's own branch cannot satisfy a convention that forbids consecutive hyphens
+- every non-merge commit in the pull request, as `type(optional-scope)!: subject`
+- the pull request title, in the same form — it becomes the commit message when squashing
+
+The script reads subjects from stdin rather than calling git itself, so the caller chooses the
+source. This workflow supplies them from `gh api .../pulls/N/commits`, filtered to commits with
+fewer than two parents — no fetch of head, nothing from the pull request on disk.
+
+Merge commits are excluded deliberately: only squash and rebase merges are allowed into `main`,
+and neither puts a merge commit there, so validating one would fail a branch that merged `main`
+into itself over a commit that will never exist on `main`.
+
 ### `ci.yml` — on `pull_request`
 
-- **`conventions`** (ubuntu): one job validating, against a single list of allowed types defined
-  at the top of the file:
-  - the branch name, against the Conventional Branch vocabulary:
-    `main`, `develop`, and `feature/`, `bugfix/`, `hotfix/`, `release/`, `chore/` followed by
-    lowercase alphanumeric segments separated by single `-`, `_` or `.`;
-    `release-please--branches--main` is allowed explicitly, since the bot's own branch cannot
-    satisfy a convention that forbids consecutive hyphens
-  - every commit in the pull request, as `type(optional-scope)!: subject`
-  - the pull request title, in the same form — it becomes the commit message when squashing
-- **`build`** (macos-latest): JDK 17 Temurin, `gradle/actions/setup-gradle` for caching,
-  `./gradlew build` — every target, every test, sample app included. macOS because the iOS
-  targets do not compile anywhere else; the repository is public, so macOS minutes are free.
-  Test reports uploaded as an artifact on failure.
+One job, `build` (macos-latest): JDK 17 Temurin, `gradle/actions/setup-gradle` for caching,
+`./gradlew build` — every target, every test, sample app included. macOS because the iOS targets
+do not compile anywhere else; the repository is public, so macOS minutes are free. Test reports
+uploaded as an artifact on failure.
 
-Both are required status checks.
+`conventions` and `build` are both required status checks.
 
 ### `release.yml` — on `push` to `main`
 
 `permissions: contents: write, pull-requests: write, issues: write`.
 
-- **`release-please`** (ubuntu): mints an App token via `actions/create-github-app-token`, then
+Permissions are per job rather than workflow-wide, so the publish job does not hold write access
+while the signing and Maven Central secrets are in scope.
+
+- **`release-please`** (ubuntu, `contents`/`pull-requests`/`issues: write`): mints an App token via `actions/create-github-app-token`, then
   runs `googleapis/release-please-action@v4` with it. Outputs `release_created` and `tag_name`.
-- **`publish`** (macos-latest, `needs: release-please`, `if: release_created`): checks out
+- **`publish`** (macos-latest, `contents: read`, `needs: release-please`, `if: release_created`): checks out
   `tag_name`, then `./gradlew publishAndReleaseToMavenCentral` — the task that uploads *and*
   releases, so no manual click in the Central Portal. Credentials arrive as environment
   variables: `ORG_GRADLE_PROJECT_mavenCentralUsername`, `…Password`, `…signingInMemoryKey`,

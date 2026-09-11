@@ -1,0 +1,45 @@
+name: Conventions
+
+# pull_request_target, not pull_request: this workflow and the script it runs
+# are taken from the BASE branch, so a pull request cannot neuter its own gate
+# by editing them. For pull_request, GitHub evaluates the workflow from the
+# merge ref, which would let a pull request keep the job name and empty the
+# check.
+#
+# The usual pull_request_target hazard is checking out and executing pull
+# request code with a privileged token. This workflow never does: it checks out
+# the base branch and reads commit subjects through the API. Nothing from the
+# pull request is written to disk or executed.
+on:
+  pull_request_target:
+    # 'edited' is not a default activity type, and the title becomes the commit
+    # message on a squash merge.
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: conventions-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conventions:
+    runs-on: ubuntu-latest
+    steps:
+      # No ref: for pull_request_target this is the base branch, which is the
+      # point — the script must be the trusted one.
+      - uses: actions/checkout@v5
+      - name: Check branch, commit and pull request conventions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Subjects come from the API: first line of each message, merge
+          # commits (two or more parents) excluded.
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/commits" \
+            --jq '.[] | select((.parents | length) < 2) | .commit.message | split("\n")[0]' \
+            | bash .github/scripts/check-conventions.sh

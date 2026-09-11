@@ -3,7 +3,13 @@
 # Conventional Commits and Conventional Branch.
 #
 # Sourced: exposes is_valid_branch and is_valid_subject.
-# Executed: reads HEAD_REF, PR_TITLE, BASE_SHA, HEAD_SHA from the environment.
+# Executed: reads HEAD_REF and PR_TITLE from the environment, and one commit
+# subject per line from stdin.
+#
+# Subjects arrive on stdin rather than being read from git here so the caller
+# decides where they come from. The gate that counts runs from the base branch
+# and takes them from the API, which keeps pull request content off the runner
+# entirely.
 set -uo pipefail
 
 TYPES='feat|fix|perf|refactor|docs|test|build|ci|chore|revert'
@@ -42,8 +48,8 @@ main() {
     failures=$((failures + 1))
   fi
 
-  # --no-merges is deliberate: only squash and rebase merges are allowed into
-  # main, and neither puts a merge commit there — rebase replays the commits and
+  # Callers pass non-merge commits only: merge commits cannot reach main, since
+  # only squash and rebase merges are allowed — rebase replays the commits and
   # drops the merges, squash collapses everything into one. Checking merge
   # subjects would fail a branch that merged main into itself, over a commit
   # that will never exist on main.
@@ -57,7 +63,7 @@ main() {
       echo "::error::Allowed types: ${TYPES//|/ }"
       failures=$((failures + 1))
     fi
-  done < <(git log --no-merges --format=%s "${BASE_SHA}..${HEAD_SHA}")
+  done
 
   if [ "$failures" -gt 0 ]; then
     echo "::error::$failures convention violation(s)."
