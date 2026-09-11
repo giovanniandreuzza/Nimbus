@@ -1,8 +1,11 @@
 # Content digest — design
 
 Date: 2026-09-11
-Status: proposed
+Status: implemented in 2.3.0
 Target: 2.3.0
+
+Landed as `c18ab95`. Both open questions below were settled as this document expected, and are
+recorded there.
 
 ## Problem
 
@@ -261,8 +264,11 @@ Neither blocks implementation.
   the invalidation problem into Nimbus, which has no way to know the file changed underneath
   it — the very thing the caller is asking about. Left uncached deliberately; revisit only
   if a consumer demonstrates the read is a real cost in its access pattern.
+  *Settled: no.* `DownloadService.checksum` calls `contentDigestPort.digestOf` on every
+  invocation and holds nothing.
 - **Whether a cheaper algorithm is worth adding.** For detecting bit rot and truncation
   rather than an adversary, CRC32 is adequate and far cheaper on old ARM cores. It is not in
   2.3.0 because it is a new dependency for every consumer, and because in `commonMain` a
   Kotlin implementation gets no hardware acceleration, so the saving is smaller than it looks.
   Decide with a measurement on real target hardware, not from the instruction set on paper.
+  *Settled: not in 2.3.0.* `DigestAlgorithm` ships with `SHA256` as its only entry.

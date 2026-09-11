@@ -17,5 +17,9 @@ captures
 !*.xcodeproj/project.xcworkspace/
 !*.xcworkspace/contents.xcworkspacedata
 **/xcshareddata/WorkspaceSettings.xcsettings
+
+# local agent tooling state
 .claude/
+
+# graphify knowledge-graph output (regenerable tooling artefact)
 graphify-out/
