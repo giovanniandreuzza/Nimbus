@@ -273,19 +273,28 @@ internal class DownloadRepository(
         }
 
         suspend fun load(): KResult<Unit, InitStoreError> {
-            val result = init(DownloadStore())
+            val result = init(DownloadStore(schemaVersion = DownloadStore.SCHEMA_VERSION))
             if (result.isFailure()) {
                 return result
             }
 
             val stored = data
-            if (stored != null && stored.schemaVersion != DownloadStore.SCHEMA_VERSION) {
-                // Written by a build with a different understanding of the format.
+            if (stored != null && stored.schemaVersion > DownloadStore.SCHEMA_VERSION) {
+                // Written by a newer build, whose fields this one would misread.
                 return reset(
-                    DownloadStore(),
+                    DownloadStore(schemaVersion = DownloadStore.SCHEMA_VERSION),
                     "unknown schema version ${stored.schemaVersion}, " +
-                            "expected ${DownloadStore.SCHEMA_VERSION}"
+                            "expected at most ${DownloadStore.SCHEMA_VERSION}"
                 )
+            }
+
+            if (stored != null && stored.schemaVersion < DownloadStore.SCHEMA_VERSION) {
+                // Every version this build still understands decodes into the current
+                // shape, with fields added since then absent and therefore null. Restamp
+                // it so the migration is paid once rather than on every boot; the tasks
+                // themselves are kept, because discarding them would cost the device a
+                // re-download of everything it had already fetched.
+                update { it.copy(schemaVersion = DownloadStore.SCHEMA_VERSION) }
             }
 
             return result

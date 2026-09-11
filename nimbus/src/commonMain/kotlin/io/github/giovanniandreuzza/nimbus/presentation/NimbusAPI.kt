@@ -58,7 +58,8 @@ public interface NimbusAPI {
     public suspend fun enqueueDownload(
         fileUrl: String,
         filePath: String,
-        fileName: String
+        fileName: String,
+        expectedChecksum: Checksum? = null
     ): KResult<DownloadTaskDTO, NimbusError>
 
     /**
@@ -129,6 +130,28 @@ public interface NimbusAPI {
     public suspend fun ensureDownloaded(
         fileUrl: String,
         filePath: String,
-        fileName: String
+        fileName: String,
+        expectedChecksum: Checksum? = null
     ): KResult<Flow<DownloadState>, NimbusError>
+
+    /**
+     * Recomputes the content digest of an already-downloaded file, reading it from disk.
+     *
+     * Uses the algorithm configured with
+     * [Nimbus.Builder.withContentDigest][io.github.giovanniandreuzza.nimbus.Nimbus.Builder.withContentDigest].
+     *
+     * This is what separates a file whose bytes have changed since it was downloaded from a
+     * file that is intact and simply cannot be used — the two look identical to a consumer
+     * that only sees "it did not work", and treating the second as the first means deleting
+     * and re-downloading a perfectly good file forever.
+     *
+     * It reads the whole file: an explicit verification step, not a cheap accessor. The
+     * result is deliberately not cached, because Nimbus cannot know the file changed
+     * underneath it — which is the very thing the caller is asking about.
+     *
+     * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.DownloadNotFound]
+     * when no task exists for [fileUrl], and with [PermanentNimbusErrorCause.InvalidState]
+     * when the task has not finished or no digest algorithm is configured.
+     */
+    public suspend fun checksum(fileUrl: String): KResult<Checksum, NimbusError>
 }

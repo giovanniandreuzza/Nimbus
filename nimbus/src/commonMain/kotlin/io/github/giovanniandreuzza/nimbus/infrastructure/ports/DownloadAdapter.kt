@@ -13,10 +13,14 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.PermanentDownl
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
+import io.github.giovanniandreuzza.nimbus.infrastructure.digest.ContentDigest
+import io.github.giovanniandreuzza.nimbus.infrastructure.digest.readFullyInto
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.CreateFileError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.DeleteFileError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.GetFileSinkError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.presentation.Checksum
+import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.shared.utils.getDownloadProgress
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -59,7 +63,9 @@ internal class DownloadAdapter(
     private val bufferSize: Long,
     private val notifyEveryBytes: Long,
     private val maxRetryAttempts: Int,
-    private val retryBaseDelayMs: Long
+    private val retryBaseDelayMs: Long,
+    /** When non-null, every transfer is digested with it. Null means no hashing at all. */
+    private val digestAlgorithm: DigestAlgorithm? = null
 ) : DownloadPort {
 
     private val semaphore = Semaphore(concurrencyLimit)
@@ -119,10 +125,11 @@ internal class DownloadAdapter(
         try {
             val bytesAlreadyDownloaded = resolvePartialBytesOnDisk(downloadTask, id) ?: return
             if (!ensureDownloadTargetReady(downloadTask.filePath, id)) return
-            if (!downloadWithRetry(downloadTask, id, bytesAlreadyDownloaded)) return
-            if (!verifyFileIntegrity(downloadTask, id)) return
 
-            downloadProgressCallback.onDownloadFinished(id)
+            val transfer = downloadWithRetry(downloadTask, id, bytesAlreadyDownloaded) ?: return
+            if (!verifyFileIntegrity(downloadTask, id, transfer.checksum)) return
+
+            downloadProgressCallback.onDownloadFinished(id, transfer.checksum)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -173,9 +180,18 @@ internal class DownloadAdapter(
     }
 
     /**
-     * Verifies that the file on disk matches the expected size after download.
+     * Verifies the file on disk against what the caller expects of it.
+     *
+     * Size first: it is free, and a truncated transfer should report the more specific
+     * cause rather than the digest mismatch that follows from it.
+     *
+     * @param checksum what the transferred bytes hashed to, when a digest was computed.
      */
-    private suspend fun verifyFileIntegrity(downloadTask: DownloadTaskDTO, id: String): Boolean {
+    private suspend fun verifyFileIntegrity(
+        downloadTask: DownloadTaskDTO,
+        id: String,
+        checksum: Checksum?
+    ): Boolean {
         val actualSize = when (val r = nimbusStoragePort.size(downloadTask.filePath)) {
             is Success -> r.value
             is Failure -> 0L
@@ -184,6 +200,20 @@ internal class DownloadAdapter(
             notifyFailureAndCleanup(
                 id,
                 DownloadError.TemporaryError(TemporaryDownloadErrorCause.FileIntegrityMismatch)
+            )
+            return false
+        }
+
+        val expected = downloadTask.expectedChecksum
+        if (expected != null && checksum != null && expected != checksum) {
+            // Temporary, never permanent. A mismatch is a statement about this transfer —
+            // a corrupted proxy response, a truncated body a correct Content-Length hid, a
+            // cache serving something stale — not about the file at the origin. Calling it
+            // permanent would mark the download unrecoverable and leave the caller to
+            // delete and refetch, which is the pattern this feature exists to end.
+            notifyFailureAndCleanup(
+                id,
+                DownloadError.TemporaryError(TemporaryDownloadErrorCause.ChecksumMismatch)
             )
             return false
         }
@@ -298,13 +328,37 @@ internal class DownloadAdapter(
         downloadTask: DownloadTaskDTO,
         id: String,
         initialProgressBytes: Long
-    ): Boolean {
+    ): TransferOutcome? {
         var progressBytes = initialProgressBytes
         val totalFileSize = downloadTask.fileSize
         var retryAttempt = 0
+        var digest: ContentDigest? = null
 
         downloadLoop@ while (currentCoroutineContext().isActive) {
-            val sink = openSink(downloadTask.filePath, id) ?: return false
+            // Prime from disk at the start of every attempt, then feed the digest the bytes
+            // streamed after that.
+            //
+            // The resume offset comes from the length of the file on disk and nothing about
+            // it is held in memory, so a resume survives a process restart. A digest
+            // accumulated only across a streaming session would therefore cover only what
+            // that session transferred: after a restart-and-resume it would hash the tail
+            // alone and produce a value that is well-formed, plausible and wrong. The
+            // consumer would compare it later, conclude the file is corrupt, and delete and
+            // re-download it on every pass, forever.
+            //
+            // One code path, no condition. On a fresh download the prime reads nothing. On
+            // a resume it re-reads the prefix already fetched — a cost paid only when a
+            // transfer was already interrupted, which is to say when far more has already
+            // been wasted. Re-priming at the top of each attempt is also what makes the
+            // rule hold across a 416 truncation and every transport retry.
+            val algorithm = digestAlgorithm
+            if (algorithm != null) {
+                val primed = ContentDigest(algorithm)
+                if (!primeFromDisk(downloadTask.filePath, id, primed)) return null
+                digest = primed
+            }
+
+            val sink = openSink(downloadTask.filePath, id) ?: return null
 
             val result = nimbusDownloadPort.downloadFile(
                 fileUrl = downloadTask.fileUrl,
@@ -316,7 +370,8 @@ internal class DownloadAdapter(
                         sink = output,
                         id = id,
                         totalFileSize = totalFileSize,
-                        initialProgressBytes = progressBytes
+                        initialProgressBytes = progressBytes,
+                        digest = digest
                     )
                 }
             }
@@ -332,7 +387,7 @@ internal class DownloadAdapter(
                     when {
                         downloadError is DownloadError.TemporaryError &&
                                 downloadError.errorCause is TemporaryDownloadErrorCause.RangeNotSatisfiable -> {
-                            if (!truncateLocalFileAfter416(downloadTask.filePath, id)) return false
+                            if (!truncateLocalFileAfter416(downloadTask.filePath, id)) return null
                             progressBytes = 0L
                             retryAttempt = 0
                         }
@@ -345,7 +400,7 @@ internal class DownloadAdapter(
                             )
                             if (!shouldRetry) {
                                 notifyFailureAndCleanup(id, downloadError)
-                                return false
+                                return null
                             }
                             retryAttempt += 1
                             delay(retryBaseDelayMs * retryAttempt)
@@ -355,7 +410,55 @@ internal class DownloadAdapter(
             }
         }
 
-        return true
+        return TransferOutcome(checksum = digest?.finish())
+    }
+
+    /**
+     * The result of a transfer that completed. A type rather than a nullable [Checksum]
+     * because null there would mean both "the transfer failed" and "no digest was
+     * configured", which are not the same thing and lead to opposite handling.
+     */
+    private class TransferOutcome(val checksum: Checksum?)
+
+    /**
+     * Feeds [digest] the bytes already on disk for this download.
+     *
+     * @return false when the file could not be read (failure already notified).
+     */
+    private suspend fun primeFromDisk(
+        filePath: String,
+        id: String,
+        digest: ContentDigest
+    ): Boolean {
+        val exists = nimbusStoragePort.exists(filePath).getOr { error ->
+            notifyFailureAndCleanup(
+                id,
+                DownloadError.PermanentError(PermanentDownloadErrorCause.StorageError(error))
+            )
+            return false
+        }
+        if (!exists) return true
+
+        val source = nimbusStoragePort.source(filePath).getOr { error ->
+            notifyFailureAndCleanup(
+                id,
+                DownloadError.PermanentError(PermanentDownloadErrorCause.StorageError(error))
+            )
+            return false
+        }
+
+        return try {
+            source.use { it.readFullyInto(ByteArray(bufferSize.toInt()), digest) }
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            notifyFailureAndCleanup(
+                id,
+                DownloadError.TemporaryError(TemporaryDownloadErrorCause.FileNotAccessible)
+            )
+            false
+        }
     }
 
     private suspend fun openSink(filePath: String, id: String): Sink? {
@@ -382,19 +485,42 @@ internal class DownloadAdapter(
         }
     }
 
+    /**
+     * @param digest fed every byte that passes, when a digest is being computed.
+     */
     @OptIn(InternalIoApi::class)
     private suspend fun copySourceToSink(
         source: Source,
         sink: Sink,
         id: String,
         totalFileSize: Long,
-        initialProgressBytes: Long
+        initialProgressBytes: Long,
+        digest: ContentDigest?
     ): Long {
         var progressBytes = initialProgressBytes
         source.use { input ->
             var bytesSinceLastProgressUpdate = 0L
+
+            // Chosen once per transfer, not per chunk. With no digest configured this is
+            // the 2.2.0 path byte for byte: the read goes straight into the sink's own
+            // buffer and nothing else touches the bytes. Hashing needs the bytes in a
+            // ByteArray the digest can read, so it reads into one — reused for every chunk,
+            // so the memory is the buffer and never the file. An earlier double-buffered
+            // version of this loop accumulated the whole file in memory, which on a 2 GB
+            // appliance is not a performance note but a crash.
+            val chunk = digest?.let { ByteArray(bufferSize.toInt()) }
+
             while (!input.exhausted() && currentCoroutineContext().isActive) {
-                val bytesRead = input.readAtMostTo(sink.buffer, bufferSize)
+                val bytesRead = if (chunk == null) {
+                    input.readAtMostTo(sink.buffer, bufferSize)
+                } else {
+                    val read = input.readAtMostTo(chunk, 0, chunk.size)
+                    if (read > 0) {
+                        digest.update(chunk, 0, read)
+                        sink.write(chunk, 0, read)
+                    }
+                    read.toLong()
+                }
                 if (bytesRead <= 0) continue
 
                 progressBytes += bytesRead

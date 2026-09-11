@@ -20,7 +20,10 @@ import io.github.giovanniandreuzza.nimbus.core.ports.CreateOutcome
 import io.github.giovanniandreuzza.nimbus.core.ports.DeleteOutcome
 import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
 import io.github.giovanniandreuzza.nimbus.core.ports.StoragePort
+import io.github.giovanniandreuzza.nimbus.core.ports.ContentDigestPort
 import io.github.giovanniandreuzza.nimbus.core.ports.StoragePortError
+import io.github.giovanniandreuzza.nimbus.presentation.Checksum
+import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -66,6 +69,8 @@ class DownloadServiceInitRetryTest {
         downloadPort = NoopDownloadPort,
         repository = repository,
         storagePort = NoopStoragePort,
+        contentDigestPort = NoopContentDigestPort,
+        digestAlgorithm = null,
         minReservedDiskBytes = null,
         logger = null,
         autoStart = false,
@@ -121,6 +126,13 @@ private object NoopStoragePort : StoragePort {
         Success(DeleteOutcome.Deleted)
 
     override fun usableSpaceBytes(path: String): KResult<Long?, StoragePortError> = Success(null)
+}
+
+private object NoopContentDigestPort : ContentDigestPort {
+    override suspend fun digestOf(
+        path: String,
+        algorithm: DigestAlgorithm
+    ): KResult<Checksum, StoragePortError> = Success(Checksum(algorithm, "0".repeat(64)))
 }
 
 private object EchoIdProvider : IdProviderPort {

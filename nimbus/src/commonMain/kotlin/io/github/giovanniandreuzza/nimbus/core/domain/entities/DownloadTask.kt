@@ -9,6 +9,7 @@ import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.FileName
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.FilePath
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.FileSize
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.FileUrl
+import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 
 /**
  * Download Task.
@@ -22,7 +23,10 @@ internal class DownloadTask private constructor(
     val filePath: FilePath,
     val fileName: FileName,
     fileSize: FileSize,
-    private var _state: DownloadState
+    private var _state: DownloadState,
+    /** What the caller said the finished file should hash to, if anything. */
+    val expectedChecksum: Checksum?,
+    private var _checksum: Checksum?
 ) : Entity<DownloadId>(id = id) {
 
     private var storedFileSize: FileSize = fileSize
@@ -32,6 +36,13 @@ internal class DownloadTask private constructor(
 
     val state: DownloadState
         get() = _state
+
+    /**
+     * What the finished file actually hashed to, once it finished and a digest algorithm
+     * was configured. Null otherwise.
+     */
+    val checksum: Checksum?
+        get() = _checksum
 
     fun start(): Boolean {
         if (state !is DownloadState.Enqueued) return false
@@ -105,8 +116,15 @@ internal class DownloadTask private constructor(
         }
     }
 
-    fun finish() {
+    /**
+     * @param checksum what the transferred bytes hashed to, when a digest was computed.
+     * Recorded with the transition rather than separately: a task that is Finished and a
+     * task whose content is identified are the same fact, and splitting them would allow a
+     * window where one is true and the other is not.
+     */
+    fun finish(checksum: Checksum? = null) {
         _state = DownloadState.Finished
+        if (checksum != null) _checksum = checksum
     }
 
     override fun toString(): String {
@@ -129,7 +147,8 @@ internal class DownloadTask private constructor(
             fileUrl: String,
             filePath: String,
             fileName: String,
-            fileSize: Long
+            fileSize: Long,
+            expectedChecksum: Checksum? = null
         ): DownloadTask {
             val id = DownloadId.create(id)
             val fileUrl = FileUrl.create(fileUrl)
@@ -143,7 +162,9 @@ internal class DownloadTask private constructor(
                 filePath = filePath,
                 fileName = fileName,
                 fileSize = fileSize,
-                _state = DownloadState.Enqueued
+                _state = DownloadState.Enqueued,
+                expectedChecksum = expectedChecksum,
+                _checksum = null
             )
         }
 
@@ -164,7 +185,9 @@ internal class DownloadTask private constructor(
             filePath: String,
             fileName: String,
             fileSize: Long,
-            state: DownloadState
+            state: DownloadState,
+            expectedChecksum: Checksum? = null,
+            checksum: Checksum? = null
         ): DownloadTask {
             val id = DownloadId.create(id)
             val fileUrl = FileUrl.create(fileUrl)
@@ -178,7 +201,9 @@ internal class DownloadTask private constructor(
                 filePath = filePath,
                 fileName = fileName,
                 fileSize = fileSize,
-                _state = state
+                _state = state,
+                expectedChecksum = expectedChecksum,
+                _checksum = checksum
             )
         }
     }

@@ -8,6 +8,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.toNimbusError
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
+import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 
@@ -54,11 +55,11 @@ internal class DownloadProgressService(
         onAutoRetry?.invoke(downloadTask.fileUrl.value)
     }
 
-    override suspend fun onDownloadFinished(id: String) {
+    override suspend fun onDownloadFinished(id: String, checksum: Checksum?) {
         val downloadTask = downloadTaskRepository.getDownloadTask(DownloadId.create(id)).getOr {
             return
         }
-        downloadTask.finish()
+        downloadTask.finish(checksum)
         downloadTaskRepository.saveDownloadTask(downloadTask).onFailure {
             logger?.log(NimbusLogEvent.PersistenceFailed(downloadTask.fileUrl.value, it))
         }

@@ -62,5 +62,19 @@ public sealed class TemporaryDownloadErrorCause(
         code = "truncate_race",
         message = "Could not recreate the file after HTTP 416 truncation."
     )
+
+    /**
+     * The transferred bytes did not hash to the checksum the caller supplied.
+     * The download will be retried.
+     *
+     * Temporary, never permanent. A mismatch is a statement about this transfer — a
+     * corrupted proxy response, a truncated body a correct `Content-Length` hid, a cache
+     * serving something stale — not about the file at the origin. There is no checksum
+     * failure that is a property of the URL rather than of the attempt.
+     */
+    public data object ChecksumMismatch : TemporaryDownloadErrorCause(
+        code = "checksum_mismatch",
+        message = "The downloaded bytes did not match the expected checksum."
+    )
 }
 

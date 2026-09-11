@@ -55,7 +55,8 @@ sample_android/                      ← Android demo app (Koin DI, KtorDownload
   `TemporaryNimbusErrorCause`, `PermanentNimbusErrorCause`, `DownloadState`, `DownloadError`,
   `TemporaryDownloadErrorCause`, `PermanentDownloadErrorCause`, `GetFileSizeError`,
   `TemporaryGetFileSizeErrorCause`, `PermanentGetFileSizeErrorCause`, `DownloadTaskDTO`,
-  `NimbusDownloadPort`, `NimbusStoragePort`, `NimbusLogger`, `NimbusLogEvent`).
+  `NimbusDownloadPort`, `NimbusStoragePort`, `NimbusLogger`, `NimbusLogEvent`,
+  `Checksum`, `DigestAlgorithm`).
   Everything else is `internal`.
 - **`DownloadService`** is the single application service. Do not split it into use cases.
 - **`DownloadTask`** owns all state-transition logic. Call `.start()`, `.pause()`, `.resume()`,
@@ -63,6 +64,10 @@ sample_android/                      ← Android demo app (Koin DI, KtorDownload
   `.updateExpectedFileSize()` on the domain entity — never mutate state directly.
 - **`DownloadRepository`** is the only repository class. All map accesses must be inside
   `mutex.withLock {}`.  `observeDownloadTask` is `suspend` so it can use the mutex.
+  The hot path publishes a monotonic `revision` counter and nothing else — never a copy of
+  the task map. `DownloadTask` is an `Entity` whose `equals` is identity on the id, so a
+  `StateFlow` holding tasks conflates every state change away; and copying the map on each
+  progress tick allocates proportionally to the catalogue whether or not anyone observes.
 - **`DownloadAdapter`** owns concurrency control (Semaphore) and retry logic. Jobs are registered
   with `CoroutineStart.LAZY` and started after the mutex-protected map insert to avoid the
   "job starts before it's registered" race.
@@ -74,6 +79,13 @@ sample_android/                      ← Android demo app (Koin DI, KtorDownload
 - **Error mapping lives in `NimbusErrorMappers.kt`**. Internal errors (`DownloadError`,
   `GetFileSizeError`) are mapped to `NimbusError` via internal extension functions there —
   do not scatter mapping logic into `DownloadService`.
+- **Core never imports infrastructure.** `core/ports/StoragePort` (four methods: `size`,
+  `create`, `delete`, `usableSpaceBytes`) and `core/ports/ContentDigestPort` are what core
+  depends on; `StorageAdapter` and `ContentDigestAdapter` translate to `NimbusStoragePort`.
+  `ArchitectureTest` enforces this. Components outside core (`DownloadAdapter`,
+  `StoreManager`, `DownloadRepository`) use the plugin port directly, which is fine.
+- **Benign storage outcomes are success values**, not errors to exempt: `CreateOutcome`,
+  `DeleteOutcome`, and a null `usableSpaceBytes` for a platform that cannot answer.
 
 ## Error handling conventions
 
@@ -107,6 +119,10 @@ sample_android/                      ← Android demo app (Koin DI, KtorDownload
 | `DownloadProgressCallback.onDownloadFailed` is `suspend`                            | Allows logger call (`NimbusLogger.log`) which is also suspend                                                                                           |
 | `Nimbus.init()` is non-suspend                                                      | Loading starts in background via `CoroutineStart.LAZY` deferred; `awaitReady()` inside each service method gates on completion transparently to callers |
 | `autoStart` fires `startDownload` as a background `launch` inside `enqueueDownload` | Non-blocking — enqueue returns the DTO immediately; start failure is emitted as `NimbusLogEvent.AutoStartFailed` and task stays `Enqueued`              |
+| Store commits coalesce for non-terminal states                                      | A commit rewrites every task; committing each transition makes one download's cost grow with the catalogue. Terminal states stay durable before the save returns |
+| Digest primed from disk at the start of every streaming attempt                     | The resume offset comes from the file's length, so a session-only digest would hash the tail alone after a restart and produce a plausible wrong value  |
+| `schemaVersion` defaults to a value no build writes                                 | ProtoBuf omits values equal to their default, so a stamp defaulting to "current" never reaches the disk and every old store claims to be current        |
+| `TemporaryDownloadErrorCause.ChecksumMismatch` is temporary, never permanent        | A mismatch describes the transfer, not the file at the origin; marking it permanent sends the caller back to delete-and-refetch                          |
 
 ## DownloadTask recovery methods
 
@@ -128,6 +144,7 @@ These are used internally during boot (`loadDownloadTasks`) and retry flows:
 
 | Variant                 | When                                                                           |
 |-------------------------|--------------------------------------------------------------------------------|
+| `ChecksumMismatch`      | Transferred bytes did not match the caller's `expectedChecksum`; will retry     |
 | `ServerError(status)`   | HTTP 5xx                                                                       |
 | `RangeNotSatisfiable`   | HTTP 416 — adapter truncates local file and retries from byte 0                |
 | `FileIntegrityMismatch` | Downloaded size ≠ expected size; will retry                                    |

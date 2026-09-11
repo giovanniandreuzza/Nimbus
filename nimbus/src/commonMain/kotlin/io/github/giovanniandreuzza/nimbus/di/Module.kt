@@ -7,14 +7,17 @@ import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
+import io.github.giovanniandreuzza.nimbus.core.ports.ContentDigestPort
 import io.github.giovanniandreuzza.nimbus.core.ports.StoragePort
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage.FileSystemNimbusStorageAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.DownloadAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.IdProviderAdapter
+import io.github.giovanniandreuzza.nimbus.infrastructure.ports.ContentDigestAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.StorageAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.DownloadRepository
+import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 import kotlinx.coroutines.CoroutineDispatcher
@@ -47,6 +50,7 @@ internal fun init(
     retryBaseDelayMs: Long,
     minReservedDiskBytes: Long?,
     autoStart: Boolean,
+    digestAlgorithm: DigestAlgorithm?,
     logger: NimbusLogger?
 ): DownloadService {
     val storage: NimbusStoragePort = nimbusStoragePort ?: FileSystemNimbusStorageAdapter()
@@ -76,18 +80,23 @@ internal fun init(
         bufferSize = downloadBufferSize,
         notifyEveryBytes = downloadNotifyEveryBytes,
         maxRetryAttempts = maxRetryAttempts,
-        retryBaseDelayMs = retryBaseDelayMs
+        retryBaseDelayMs = retryBaseDelayMs,
+        digestAlgorithm = digestAlgorithm
     )
 
     val idProvider: IdProviderPort = IdProviderAdapter()
 
     val storagePort: StoragePort = StorageAdapter(storage)
 
+    val contentDigestPort: ContentDigestPort = ContentDigestAdapter(storage, ioDispatcher)
+
     val service = DownloadService(
         idProvider = idProvider,
         downloadPort = downloadPort,
         repository = repository,
         storagePort = storagePort,
+        contentDigestPort = contentDigestPort,
+        digestAlgorithm = digestAlgorithm,
         minReservedDiskBytes = minReservedDiskBytes,
         logger = logger,
         autoStart = autoStart,

@@ -2,6 +2,7 @@ package io.github.giovanniandreuzza.nimbus.core.ports
 
 import io.github.giovanniandreuzza.explicitarchitecture.core.application.ports.IsPort
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
+import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 
 /**
  * Download Progress Callback.
@@ -15,6 +16,10 @@ internal interface DownloadProgressCallback {
 
     suspend fun onDownloadFailed(id: String, error: DownloadError)
 
-    suspend fun onDownloadFinished(id: String)
+    /**
+     * @param checksum what the transferred bytes hashed to, or null when no digest
+     * algorithm is configured.
+     */
+    suspend fun onDownloadFinished(id: String, checksum: Checksum? = null)
 
 }

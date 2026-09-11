@@ -3,9 +3,12 @@ package io.github.giovanniandreuzza.nimbus.infrastructure.repositories.mappers
 import io.github.giovanniandreuzza.explicitarchitecture.infrastructure.mappers.IsInfrastructureMapper
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.ChecksumStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadTaskStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.mappers.DownloadStateStoreMappers.toState
 import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.mappers.DownloadStateStoreMappers.toStore
+import io.github.giovanniandreuzza.nimbus.presentation.Checksum
+import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 
 /**
  * Download Task Store Mappers.
@@ -27,7 +30,9 @@ internal object DownloadTaskStoreMappers {
             fileUrl = fileUrl,
             filePath = filePath,
             fileSize = fileSize,
-            state = state.toState()
+            state = state.toState(),
+            expectedChecksum = expectedChecksum.toChecksum(),
+            checksum = checksum.toChecksum()
         )
     }
 
@@ -56,7 +61,25 @@ internal object DownloadTaskStoreMappers {
             fileUrl = fileUrl.value,
             filePath = filePath.value,
             fileSize = fileSize.value,
-            state = state.toStore()
+            state = state.toStore(),
+            expectedChecksum = expectedChecksum.toStore(),
+            checksum = checksum.toStore()
         )
+    }
+
+    private fun Checksum?.toStore(): ChecksumStore? =
+        this?.let { ChecksumStore(algorithm = it.algorithm.name, value = it.value) }
+
+    /**
+     * A digest whose algorithm this build no longer recognises is dropped rather than
+     * guessed at. The task then reports no checksum, which is the honest answer: reporting
+     * one under the wrong algorithm would have every later comparison fail and send the
+     * caller into the re-download loop this feature exists to end.
+     */
+    private fun ChecksumStore?.toChecksum(): Checksum? {
+        val store = this ?: return null
+        val algorithm = DigestAlgorithm.entries.firstOrNull { it.name == store.algorithm }
+            ?: return null
+        return Checksum(algorithm, store.value)
     }
 }
