@@ -37,6 +37,7 @@ internal abstract class StoreManager<T>(
     private val nimbusStoragePort: NimbusStoragePort,
     private val serializer: KSerializer<T>,
     private val dispatcher: CoroutineDispatcher,
+    private val onReset: (suspend (reason: String) -> Unit)? = null,
 ) {
     private val protoBuf: ProtoBuf = ProtoBuf
     private val mutex = Mutex()
@@ -67,7 +68,7 @@ internal abstract class StoreManager<T>(
         create().onFailure {
             with(it) {
                 val error = when (this) {
-                    CreateStoreError.StoreAlreadyExists -> return load()
+                    CreateStoreError.StoreAlreadyExists -> return loadOrReset(initValue)
                     is CreateStoreError.IOError -> InitStoreError.IOError(cause)
                     is CreateStoreError.ReadPermissionDenied -> InitStoreError.ReadPermissionDenied(
                         cause
@@ -359,6 +360,44 @@ internal abstract class StoreManager<T>(
         is MoveFileError.IOError -> StoreError.IOError(cause)
         is MoveFileError.ReadPermissionDenied -> StoreError.ReadPermissionDenied(cause)
         is MoveFileError.WritePermissionDenied -> StoreError.WritePermissionDenied(cause)
+    }
+
+    /**
+     * Loads an existing store, discarding it when it cannot be decoded.
+     *
+     * The store is a cache, not a source of truth: a blob written by an older,
+     * incompatible schema must not brick every later call. On a deserialization
+     * error the file (and any interrupted-write temp file) is dropped and the
+     * store restarts from [initValue].
+     *
+     * @param initValue the default value to restart from when the store is unreadable
+     */
+    private suspend fun loadOrReset(initValue: T): KResult<Unit, InitStoreError> {
+        load().onFailure { error ->
+            if (error !is InitStoreError.DeserializationError) {
+                return Failure(error)
+            }
+
+            return reset(initValue, "store could not be decoded: ${error.cause.message}")
+        }
+
+        return Success(Unit)
+    }
+
+    /**
+     * Drops the store (and any interrupted-write temp file) and restarts from
+     * [initValue].
+     *
+     * @param initValue the default value to restart from
+     * @param reason why the store was discarded, reported through [onReset]
+     */
+    protected suspend fun reset(initValue: T, reason: String): KResult<Unit, InitStoreError> {
+        nimbusStoragePort.delete(filePath)
+        nimbusStoragePort.delete(tempFilePath)
+
+        onReset?.invoke(reason)
+
+        return storeDefault(initValue)
     }
 
     /**

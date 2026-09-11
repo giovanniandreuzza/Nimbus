@@ -145,7 +145,39 @@ internal class FileSystemNimbusStorageAdapter : NimbusStoragePort {
         } catch (_: FileNotFoundException) {
             Failure(MoveFileError.FileNotFound)
         } catch (e: IOException) {
-            Failure(MoveFileError.IOError(ioError(e, "IO Error during file move")))
+            if (e.message?.contains("not supported", ignoreCase = true) == true) {
+                fallbackMove(sourcePath, destinationPath)
+            } else {
+                Failure(MoveFileError.IOError(ioError(e, "IO Error during file move")))
+            }
+        } catch (t: Throwable) {
+            if (t.message?.contains("not supported", ignoreCase = true) == true) {
+                fallbackMove(sourcePath, destinationPath)
+            } else {
+                Failure(MoveFileError.WritePermissionDenied(writePermissionError(t)))
+            }
+        }
+    }
+
+    private fun fallbackMove(
+        sourcePath: String,
+        destinationPath: String
+    ): KResult<Unit, MoveFileError> {
+        return try {
+            if (fileSystem.exists(Path(destinationPath))) {
+                fileSystem.delete(Path(destinationPath))
+            }
+            fileSystem.source(Path(sourcePath)).buffered().use { source ->
+                fileSystem.sink(Path(destinationPath), append = false).buffered().use { sink ->
+                    source.transferTo(sink)
+                }
+            }
+            fileSystem.delete(Path(sourcePath))
+            Success(Unit)
+        } catch (_: FileNotFoundException) {
+            Failure(MoveFileError.FileNotFound)
+        } catch (e: IOException) {
+            Failure(MoveFileError.IOError(ioError(e, "IO Error during fallback file move")))
         } catch (t: Throwable) {
             Failure(MoveFileError.WritePermissionDenied(writePermissionError(t)))
         }

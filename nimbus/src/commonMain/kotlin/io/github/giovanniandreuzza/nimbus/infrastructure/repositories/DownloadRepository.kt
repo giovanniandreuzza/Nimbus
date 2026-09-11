@@ -4,6 +4,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.errors.KError
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
 import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
@@ -18,6 +19,8 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.mappers.DownloadTaskStoreMappers.toDomains
 import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.mappers.DownloadTaskStoreMappers.toStore
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,14 +51,17 @@ import kotlinx.serialization.ExperimentalSerializationApi
 internal class DownloadRepository(
     storePath: String,
     dispatcher: CoroutineDispatcher,
-    private val nimbusStoragePort: NimbusStoragePort
+    private val nimbusStoragePort: NimbusStoragePort,
+    logger: NimbusLogger? = null
 ) : DownloadTaskRepository {
 
     private val mutex = Mutex()
     private val tasks = mutableMapOf<DownloadId, DownloadTask>()
     private val stateFlows = mutableMapOf<DownloadId, MutableStateFlow<DownloadState>>()
     private val _allTasksFlow = MutableStateFlow<Map<DownloadId, DownloadTask>>(emptyMap())
-    private val diskStore = DiskStore(storePath, dispatcher, nimbusStoragePort)
+    private val diskStore = DiskStore(storePath, dispatcher, nimbusStoragePort) { reason ->
+        logger?.log(NimbusLogEvent.StoreReset(reason))
+    }
 
     // -----------------------------------------------------------------------
     // DownloadTaskRepository implementation
@@ -159,14 +165,33 @@ internal class DownloadRepository(
     private class DiskStore(
         storePath: String,
         dispatcher: CoroutineDispatcher,
-        nimbusStoragePort: NimbusStoragePort
+        nimbusStoragePort: NimbusStoragePort,
+        onReset: suspend (reason: String) -> Unit
     ) : StoreManager<DownloadStore>(
         filePath = storePath,
         nimbusStoragePort = nimbusStoragePort,
         serializer = DownloadStore.serializer(),
-        dispatcher = dispatcher
+        dispatcher = dispatcher,
+        onReset = onReset
     ) {
-        suspend fun load(): KResult<Unit, InitStoreError> = init(DownloadStore())
+        suspend fun load(): KResult<Unit, InitStoreError> {
+            val result = init(DownloadStore())
+            if (result.isFailure()) {
+                return result
+            }
+
+            val stored = data
+            if (stored != null && stored.schemaVersion != DownloadStore.SCHEMA_VERSION) {
+                // Written by a build with a different understanding of the format.
+                return reset(
+                    DownloadStore(),
+                    "unknown schema version ${stored.schemaVersion}, " +
+                            "expected ${DownloadStore.SCHEMA_VERSION}"
+                )
+            }
+
+            return result
+        }
 
         fun getAll(): Map<DownloadId, DownloadTask> =
             data?.downloads?.toDomains() ?: emptyMap()

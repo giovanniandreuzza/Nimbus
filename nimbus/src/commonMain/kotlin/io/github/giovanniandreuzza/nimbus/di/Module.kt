@@ -52,7 +52,8 @@ internal fun init(
     val repository: DownloadTaskRepository = DownloadRepository(
         storePath = downloadManagerPath,
         dispatcher = ioDispatcher,
-        nimbusStoragePort = storage
+        nimbusStoragePort = storage,
+        logger = logger
     )
 
     val autoRetryRef = AutoRetryRef()

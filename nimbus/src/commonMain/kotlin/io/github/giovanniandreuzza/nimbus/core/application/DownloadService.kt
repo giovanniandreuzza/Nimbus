@@ -25,9 +25,6 @@ import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 import io.github.giovanniandreuzza.nimbus.presentation.PermanentNimbusErrorCause
 import io.github.giovanniandreuzza.nimbus.shared.utils.takeUntil
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -69,27 +66,40 @@ internal class DownloadService(
         var refCount = 0
     }
 
-    // Created LAZY so loading only begins when startLoad() is called from Nimbus.init().
-    // Every NimbusAPI method awaits this before touching the repository.
-    private val loadDeferred: Deferred<KResult<Unit, NimbusError>> =
-        downloadScope.async(start = CoroutineStart.LAZY) { loadDownloadTasks() }
+    private val loadMutex = Mutex()
+    private var isLoaded = false
 
     private val scope = downloadScope
 
     /** Called by [io.github.giovanniandreuzza.nimbus.Nimbus.init] to kick off background loading. */
     internal fun startLoad() {
-        loadDeferred.start()
+        scope.launch { ensureLoaded() }
+    }
+
+    /**
+     * Loads the persisted tasks once, on the first call that needs them.
+     *
+     * Only a **successful** load is remembered: a failure is retried by the next
+     * call. Caching the failure would disable the whole API for the rest of the
+     * process — on an unattended device that means no download can ever start
+     * again until the app data is wiped by hand.
+     */
+    private suspend fun ensureLoaded(): KResult<Unit, NimbusError> = loadMutex.withLock {
+        if (isLoaded) {
+            return@withLock Success(Unit)
+        }
+
+        loadDownloadTasks().onSuccess { isLoaded = true }
     }
 
     /**
      * Runs [block] only after loading has completed successfully.
      * Returns [NimbusError.InitializationFailed] immediately if loading failed.
-     * Result is cached — subsequent calls do not re-suspend.
      */
     private suspend fun <T> withReady(
         block: suspend () -> KResult<T, NimbusError>
     ): KResult<T, NimbusError> {
-        loadDeferred.await().onFailure { return Failure(it) }
+        ensureLoaded().onFailure { return Failure(it) }
         return block()
     }
 
@@ -107,7 +117,7 @@ internal class DownloadService(
     }
 
     override suspend fun isDownloaded(fileUrl: String): Boolean {
-        loadDeferred.await().onFailure { return false }
+        ensureLoaded().onFailure { return false }
         val id = idProvider.generateUniqueId(fileUrl)
         val task = repository.getDownloadTask(DownloadId.create(id)).getOr { return false }
         if (task.state !is DownloadState.Finished) return false

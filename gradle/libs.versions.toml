@@ -18,7 +18,7 @@ kotlinx_io_version = "0.9.0"
 hash_sha2_version = "0.8.0"
 
 ## Android
-agp = "9.1.1"
+agp = "9.3.2"
 coreKtx = "1.18.0"
 lifecycleRuntimeKtx = "2.10.0"
 activityCompose = "1.13.0"
