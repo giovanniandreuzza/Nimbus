@@ -10,6 +10,13 @@
 
 The build must stay green at all times. Never downgrade dependency versions to fix a build.
 
+Tests live in two source sets. `commonTest` is the default and runs on JVM, iOS and Android host;
+put a test there unless it genuinely cannot run on all three. `jvmTest` is for what is
+platform-bound: the architecture source scan, the real-filesystem adapter, the concurrency test
+that wants real threads, and the digest test that checks the library's SHA-256 against the JVM's
+own (an independent oracle is the point of that one). `testing/Fakes.kt` and
+`testing/InMemoryStorage.kt` are what let a test avoid a temp directory.
+
 ## Project layout
 
 ```
@@ -19,6 +26,7 @@ nimbus/src/commonMain/kotlin/…nimbus/
     NimbusAPI.kt                     ← public interface (all suspend, KResult returns)
     NimbusError.kt                   ← single public sealed error type
     NimbusLogEvent.kt                ← NimbusLogEvent sealed class + NimbusLogger fun interface
+    Checksum.kt                      ← public Checksum + DigestAlgorithm
   core/
     application/DownloadService.kt   ← implements NimbusAPI; all business logic lives here
     application/NimbusErrorMappers.kt ← internal extension functions mapping internal errors → NimbusError
@@ -28,18 +36,36 @@ nimbus/src/commonMain/kotlin/…nimbus/
     domain/entities/DownloadTask.kt  ← aggregate root; owns state transitions
     domain/states/DownloadState.kt   ← sealed: Enqueued / Downloading / Paused / Failed / Finished
     domain/value_objects/            ← DownloadId, FileName, FilePath, FileUrl, FileSize
-    ports/                           ← internal interfaces (DownloadPort, DownloadTaskRepository, DownloadProgressCallback)
+    ports/                           ← internal interfaces core depends on:
+      DownloadPort.kt                ←   download execution (impl: DownloadAdapter)
+      StoragePort.kt                 ←   size/create/delete/usableSpaceBytes (impl: StorageAdapter)
+      StoragePortError.kt            ←   core-side storage error family + CreateOutcome/DeleteOutcome
+      ContentDigestPort.kt           ←   digest accumulation (impl: ContentDigestAdapter)
+      DownloadTaskRepository.kt, DownloadProgressCallback.kt, IdProviderPort.kt
   infrastructure/
     ports/DownloadAdapter.kt         ← HTTP download execution, semaphore concurrency, retry
+    ports/StorageAdapter.kt          ← implements StoragePort over NimbusStoragePort
+    ports/ContentDigestAdapter.kt    ← implements ContentDigestPort over ContentDigest
     ports/IdProviderAdapter.kt       ← SHA-256(url) → stable task ID
+    digest/ContentDigest.kt          ← streaming digest accumulator
     repositories/DownloadRepository.kt ← in-memory (Mutex-guarded) + ProtoBuf disk store
     plugins/ports/download/NimbusDownloadPort.kt  ← public interface for HTTP client
     plugins/ports/storage/NimbusStoragePort.kt    ← public interface for file I/O
-    plugins/adapters/storage/FileSystemNimbusStorageAdapter.kt  ← KMP-native SystemFileSystem impl
+    plugins/adapters/storage/FileSystemNimbusStorageAdapter.kt  ← KMP-native impl
+    plugins/adapters/storage/NimbusFileSystem.kt  ← internal seam over SystemFileSystem (testability)
     plugins/adapters/storage/UsableSpace.kt       ← expect/actual for platform usable-space query
   di/Module.kt                       ← wires all internal components together
   frameworks/store/StoreManager.kt   ← generic ProtoBuf persistence layer
   shared/utils/                      ← FlowUtils (takeUntil), DownloadUtils (progress calc)
+
+nimbus/src/commonTest/kotlin/…nimbus/   ← runs on JVM, iOS and Android host
+  testing/Fakes.kt                   ← fake ports (no filesystem, no network)
+  testing/InMemoryStorage.kt         ← in-memory NimbusStoragePort
+
+nimbus/src/jvmTest/kotlin/…nimbus/      ← only what is genuinely platform-bound
+  ArchitectureTest.kt                ← source scan: no core/ import of infrastructure
+  FileSystemNimbusStorageAdapterTest.kt, ContentDigestResumeTest.kt,
+  DownloadRepository{Observability,Persistence}Test.kt, DownloadStoreWriteAmplificationTest.kt
 
 nimbus-ktor/src/commonMain/kotlin/…ktor/
   KtorDownloadAdapter.kt             ← NimbusDownloadPort backed by Ktor HttpClient
@@ -102,6 +128,10 @@ sample_android/                      ← Android demo app (Koin DI, KtorDownload
 - `DownloadAdapter.downloadJobs` is protected by `jobsMutex`.
 - `DownloadService` uses per-task operation locks (`withOperationLock(id)`) to serialise
   concurrent calls for the same URL.
+- `StoreManager.data` is `private set`. Subclasses may read it, but deriving a new value from it
+  and persisting that must go through `update()` (durable) or `mutate()` + `flush()` (coalesced) —
+  all three do the read-modify-write under the store lock. Reading `data`, deriving, then calling
+  a separate write is the shape that let two concurrent saves drop each other's work.
 
 ## Key design decisions to preserve
 
@@ -115,11 +145,15 @@ sample_android/                      ← Android demo app (Koin DI, KtorDownload
 | Single buffer (no double `.buffered()`)                                             | Double-wrap causes full file to accumulate in memory                                                                                                    |
 | Singleton removed from `Builder.build()`                                            | `synchronized` unavailable in KMP common; DI container handles it                                                                                       |
 | `FileSystemNimbusStorageAdapter` uses `kotlinx.io.files.SystemFileSystem`           | KMP-native; no `java.io.File`; auto-creates parent directories on `create()`                                                                            |
+| `FileSystemNimbusStorageAdapter` goes through the `NimbusFileSystem` seam, never `SystemFileSystem` directly | `kotlinx.io`'s `FileSystem` is sealed and cannot be substituted in a test, which is how every catch-all in the adapter came to report unrelated failures as permission denials and survived review |
+| Storage catch-alls map to each family's `UnexpectedError`, never to a named cause  | A caller acting on "permission denied" for a `SecurityException` or an `OutOfMemoryError` acts on a false diagnosis                                     |
 | Error mappers extracted to `NimbusErrorMappers.kt`                                  | Keeps `DownloadService` focused on orchestration                                                                                                        |
 | `DownloadProgressCallback.onDownloadFailed` is `suspend`                            | Allows logger call (`NimbusLogger.log`) which is also suspend                                                                                           |
 | `Nimbus.init()` is non-suspend                                                      | Loading starts in background via `CoroutineStart.LAZY` deferred; `awaitReady()` inside each service method gates on completion transparently to callers |
 | `autoStart` fires `startDownload` as a background `launch` inside `enqueueDownload` | Non-blocking — enqueue returns the DTO immediately; start failure is emitted as `NimbusLogEvent.AutoStartFailed` and task stays `Enqueued`              |
 | Store commits coalesce for non-terminal states                                      | A commit rewrites every task; committing each transition makes one download's cost grow with the catalogue. Terminal states stay durable before the save returns |
+| A failed coalesced flush is reported as `NimbusLogEvent.StoreFlushFailed`           | The flush runs in the background, so its caller is already gone and there is no `KResult` to return it in. A terminal save reports to the caller and must *not* also log |
+| `DownloadRepository` publishes a revision counter, not a copy of the task map       | `DownloadTask` is an `Entity` whose `equals` is identity on the id, so a map of the same tasks in new states compares equal and `StateFlow` conflates the emission away — `observeAllDownloads()` emitted only additions and removals |
 | Digest primed from disk at the start of every streaming attempt                     | The resume offset comes from the file's length, so a session-only digest would hash the tail alone after a restart and produce a plausible wrong value  |
 | `schemaVersion` defaults to a value no build writes                                 | ProtoBuf omits values equal to their default, so a stamp defaulting to "current" never reaches the disk and every old store claims to be current        |
 | `TemporaryDownloadErrorCause.ChecksumMismatch` is temporary, never permanent        | A mismatch describes the transfer, not the file at the origin; marking it permanent sends the caller back to delete-and-refetch                          |

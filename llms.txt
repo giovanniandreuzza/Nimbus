@@ -3,6 +3,7 @@
 > Kotlin Multiplatform (Android · JVM · iOS) download manager library.
 > Targets: Android minSdk 21, JVM 17, iOS.
 > All errors are returned as typed values — no exceptions thrown across the public API.
+> Optional content digest: hash the bytes in the pass that already writes them to disk.
 
 ## Coordinates
 
@@ -31,6 +32,7 @@ val api: NimbusAPI = Nimbus.Builder()
     .withRetryBaseDelayMs(500L)               // optional, default 500 ms
     .withMinReservedDiskBytes(50 * 1024 * 1024L) // optional — disk headroom guard
     .withAutoStart(true)                      // optional, default false
+    .withContentDigest(DigestAlgorithm.SHA256)// optional, default null (no hashing at all)
     .withNimbusLogger(myLogger)               // optional
     .build()
     .init()
@@ -45,17 +47,24 @@ first API call rather than at `init()` time.
 ## NimbusAPI — complete method reference
 
 All methods are `suspend` unless noted. All return `KResult<T, NimbusError>` except
-`isDownloaded` (returns `Boolean`) and `getAllDownloads` (returns `List<DownloadTaskDTO>`).
+`isDownloaded` (returns `Boolean`) and `observeAllDownloads` (non-suspend, returns a `Flow`).
 
 ```kotlin
 // Query
 suspend fun isDownloaded(fileUrl: String): Boolean
 suspend fun getFileSize(fileUrl: String): KResult<Long, NimbusError>
 suspend fun getDownloadTask(fileUrl: String): KResult<DownloadTaskDTO, NimbusError>
-suspend fun getAllDownloads(): List<DownloadTaskDTO>
+suspend fun getAllDownloads(): KResult<List<DownloadTaskDTO>, NimbusError>
+fun observeAllDownloads(): Flow<List<DownloadTaskDTO>>   // NOT suspend — cold Flow, never completes
+// Emits the whole catalogue on every change, including progress ticks. This is the hook for a
+// supervisor loop that watches for DownloadState.Failed and schedules its own retry.
+suspend fun checksum(fileUrl: String): KResult<Checksum, NimbusError>
+// Re-derives the digest of a finished file by reading it back off disk. Requires
+// withContentDigest(...) to be configured and the task to be Finished. Not cached —
+// every call reads the whole file.
 
 // Lifecycle
-suspend fun enqueueDownload(fileUrl: String, filePath: String, fileName: String): KResult<DownloadTaskDTO, NimbusError>
+suspend fun enqueueDownload(fileUrl: String, filePath: String, fileName: String, expectedChecksum: Checksum? = null): KResult<DownloadTaskDTO, NimbusError>
 suspend fun startDownload(fileUrl: String): KResult<Unit, NimbusError>
 suspend fun observeDownload(fileUrl: String): KResult<Flow<DownloadState>, NimbusError>
 suspend fun pauseDownload(fileUrl: String): KResult<Unit, NimbusError>
@@ -77,7 +86,7 @@ suspend fun retryFailedDownload(fileUrl: String): KResult<Unit, NimbusError>
 // Refetches remote size, deletes partial file, resets state to Enqueued. Call startDownload after.
 
 // High-level convenience
-suspend fun ensureDownloaded(fileUrl: String, filePath: String, fileName: String): KResult<Flow<DownloadState>, NimbusError>
+suspend fun ensureDownloaded(fileUrl: String, filePath: String, fileName: String, expectedChecksum: Checksum? = null): KResult<Flow<DownloadState>, NimbusError>
 // Handles the full lifecycle automatically:
 //   already finished  → returns flowOf(DownloadState.Finished)
 //   stale finished    → clears metadata, re-downloads
@@ -112,9 +121,67 @@ data class DownloadTaskDTO(
     val filePath: String,
     val fileSize: Long,    // bytes
     val state: DownloadState,
-    val version: Int
+    val expectedChecksum: Checksum? = null,  // what the caller asked for, if anything
+    val checksum: Checksum? = null           // what the bytes hashed to, once Finished
 )
 ```
+
+## Content digest (optional — 2.3.0)
+
+Off by default. With no algorithm configured nothing is hashed and the transfer path is the one
+2.2.0 shipped. Enable it on the Builder:
+
+```kotlin
+Nimbus.Builder().withContentDigest(DigestAlgorithm.SHA256)
+```
+
+```kotlin
+data class Checksum(val algorithm: DigestAlgorithm, val value: String) {
+    companion object {
+        // Validates length and hex alphabet, lowercases the value. Throws IllegalArgumentException
+        // on a malformed digest — this is construction, not a download, so it is not a KResult.
+        fun of(algorithm: DigestAlgorithm, value: String): Checksum
+    }
+}
+
+enum class DigestAlgorithm { SHA256 }   // 64 hex characters
+```
+
+Three things it gives you, all the same capability:
+
+```kotlin
+// 1. Verify a transfer against a digest your backend published.
+api.enqueueDownload(url, path, name, expectedChecksum = Checksum.of(DigestAlgorithm.SHA256, sha))
+api.ensureDownloaded(url, path, name, expectedChecksum = Checksum.of(DigestAlgorithm.SHA256, sha))
+// A mismatch is TemporaryDownloadErrorCause.ChecksumMismatch and is RETRIED — it describes the
+// transfer (a corrupted proxy response, a stale cache), not the file at the origin.
+
+// 2. Learn what you downloaded — DownloadTaskDTO.checksum is populated once Finished.
+val what = api.getDownloadTask(url).getOr { return }.checksum
+
+// 3. Re-verify a file later, without reading and hashing it yourself.
+when (val r = api.checksum(url)) { … }
+```
+
+Point 3 is what separates a file whose bytes changed since download from a file that is intact
+and simply cannot be used. A consumer that treats the second as the first deletes and
+re-downloads a good file on every failure, forever.
+
+`checksum(fileUrl)` fails with:
+- `PermanentNimbusErrorCause.UnexpectedError` (code `content_digest_disabled`) — no algorithm configured
+- `PermanentNimbusErrorCause.DownloadNotFound` — no task for this URL
+- `PermanentNimbusErrorCause.InvalidState(state)` — the task is not `Finished`
+
+**Resume correctness.** The resume offset comes from the length of the partial file on disk, so a
+digest accumulated only across one streaming session would hash the tail alone after a process
+restart and produce a value that is well-formed, plausible and wrong. The digest is therefore
+primed from the bytes already on disk at the start of *every* streaming attempt, with no
+conditional: a fresh download reads nothing, a resume re-reads its prefix, and retries and 416
+truncations are covered by the same rule. A download that ran straight through and one that was
+interrupted and resumed produce the same digest.
+
+**Cost.** Every byte already passes through the write path exactly once, so hashing adds the hash
+and no extra pass. `checksum(fileUrl)` is the exception: it reads the whole file back.
 
 ## NimbusError sealed class — exhaustive list
 
@@ -179,6 +246,7 @@ sealed class TemporaryDownloadErrorCause {
     data object FileIntegrityMismatch          // downloaded size ≠ expected size; will retry
     data object FileNotAccessible              // local file could not be opened for writing; will retry
     data object TruncateRace                   // could not recreate file after 416 truncation; will retry
+    data object ChecksumMismatch               // transferred bytes ≠ expectedChecksum; will retry
 }
 
 sealed class PermanentDownloadErrorCause {
@@ -278,6 +346,27 @@ api.observeDownload(url).getOr { return@launch }.collect { … }
 api.retryFailedDownload(url).getOr { return@launch }
 api.startDownload(url).getOr { return@launch }
 api.observeDownload(url).getOr { return@launch }.collect { … }
+```
+
+### Verified download, and re-verification later
+
+```kotlin
+val expected = Checksum.of(DigestAlgorithm.SHA256, shaFromYourBackend)
+
+// Verified on the way in — a mismatch is temporary and retried automatically.
+api.ensureDownloaded(url, filePath, fileName, expectedChecksum = expected)
+    .getOr { return@launch }
+    .collect { state -> when (state) { … } }
+
+// Re-verified later, e.g. when the file fails to play and you need to know why.
+when (val r = api.checksum(url)) {
+    is Success -> if (r.value == expected) {
+        // bytes are intact — the problem is elsewhere; do NOT re-download
+    } else {
+        api.removeDownload(url, deleteAssociatedFile = true)  // bytes changed on disk
+    }
+    is Failure -> log(r.error)
+}
 ```
 
 ### Cleanup after finish

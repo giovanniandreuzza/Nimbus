@@ -1,8 +1,12 @@
 # Storage port layering — design
 
 Date: 2026-09-11
-Status: proposed
+Status: implemented in 2.3.0
 Target: 2.3.0 (internal only; no public API change)
+
+Landed as `91907b5` (the two defects below) and `c4b319e` (the layering). What follows is the
+design as written before implementation; **As built** at the end records where the code went
+further and how the open questions were settled.
 
 ## Problem
 
@@ -164,7 +168,7 @@ families in core; they describe filesystem outcomes, and core does not reason ab
 
 ## Two defects found alongside, independent of the above
 
-Both are self-contained and neither depends on the layering change.
+Both are self-contained and neither depends on the layering change. Both fixed in `91907b5`.
 
 **`FileSystemNimbusStorageAdapter` mislabels its catch-all.** Every one of its eight methods ends
 this way — L34, L57, L78, L96, L114, L133, L153, L181 — and every one maps the catch-all to a
@@ -258,7 +262,8 @@ the release notes beyond a line noting the internal restructuring.
 
 ## Open questions
 
-Neither blocks implementation.
+Neither blocks implementation. Both were settled in the implementation — see *The open questions,
+as settled* below.
 
 - **Whether `DownloadAdapter` should also consume `StoragePort`.** It would centralise the
   hand-written retryability mapping described above, and would let `StoragePortError` carry a
@@ -274,3 +279,48 @@ Neither blocks implementation.
   and binary-breaking for any third-party `NimbusStoragePort` implementor — and the
   anti-corruption layer proposed here removes the architectural motivation for doing it. Revisit
   only if a second reason appears; do not break implementors for symmetry alone.
+
+## As built
+
+The implementation follows this design. Three things are worth recording because the code decided
+them and this document could not.
+
+**`StoragePortError` is one case, not a sealed family.** The design said "a sealed family
+carrying a `KError` cause plus enough structure for `PermanentNimbusErrorCause.StorageError`".
+The implementation went further and made it a single `data class` wrapping the plugin's own
+error, on the reasoning that core draws no distinction at all once the three benign outcomes are
+success values — every remaining failure reached `PermanentNimbusErrorCause.StorageError` unread.
+Anything more would describe filesystem outcomes to a layer with no use for them, and nothing is
+lost because `cause` carries the plugin error out to the caller intact.
+
+**The catch-all fix needed a seam this design did not anticipate.** The Testing section below
+asks for "a regression test that a non-`IOException` throwable from the filesystem does not
+surface as `WritePermissionDenied`". That test could not be written: `kotlinx.io`'s `FileSystem`
+is sealed, so it cannot be implemented outside its own module and cannot be substituted. The
+adapter now works through an internal `NimbusFileSystem` interface (`SystemNimbusFileSystem` in
+production), which is what makes the branch reachable at all. That the branch was untestable is
+the best available explanation for how the same mislabelling reached all eight methods and
+survived review.
+
+Also found while fixing it: `CreateStoreError` was `public` by accident — it is not in the public
+surface list and never escapes `frameworks/store`. Now `internal`.
+
+### The open questions, as settled
+
+- **Should `DownloadAdapter` consume `StoragePort`?** No, and it still does not — it uses
+  `NimbusStoragePort` directly, as do `StoreManager` and `DownloadRepository`. The longhand
+  retryability mapping described under *What this does not fix* is therefore still there, by the
+  argument given in that section: `DownloadAdapter` needs `sink` and `exists`, which core does
+  not, so serving it would have grown `StoragePort` past the four operations core performs and
+  stopped it being a core-shaped interface.
+- **Should the eight public storage error types move into `core/application/errors/`?** No. They
+  remain in `infrastructure/plugins/errors/storage/`, all eight, unmoved. The anti-corruption
+  layer removed the motivation, and moving them would have been a package change on public types
+  — source- and binary-breaking for any third-party implementor, for symmetry alone.
+
+### The architecture test
+
+`nimbus/src/jvmTest/.../ArchitectureTest.kt` asserts no file under `core/` carries an `import
+io.github.giovanniandreuzza.nimbus.infrastructure`. It was red before `c4b319e`, naming exactly
+the four imports this document opens with. It is a source scan rather than a runtime check,
+because the rule is about what the code is allowed to name.
