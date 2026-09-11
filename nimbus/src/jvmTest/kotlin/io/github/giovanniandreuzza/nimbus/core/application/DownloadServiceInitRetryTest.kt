@@ -16,8 +16,11 @@ import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
+import io.github.giovanniandreuzza.nimbus.core.ports.CreateOutcome
+import io.github.giovanniandreuzza.nimbus.core.ports.DeleteOutcome
 import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
-import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage.FileSystemNimbusStorageAdapter
+import io.github.giovanniandreuzza.nimbus.core.ports.StoragePort
+import io.github.giovanniandreuzza.nimbus.core.ports.StoragePortError
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -62,7 +65,7 @@ class DownloadServiceInitRetryTest {
         idProvider = EchoIdProvider,
         downloadPort = NoopDownloadPort,
         repository = repository,
-        nimbusStoragePort = FileSystemNimbusStorageAdapter(),
+        storagePort = NoopStoragePort,
         minReservedDiskBytes = null,
         logger = null,
         autoStart = false,
@@ -101,6 +104,23 @@ private class FlakyRepository(private val failuresBeforeSuccess: Int) : Download
         Success(Unit)
 
     override suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, KError> = Success(Unit)
+}
+
+/**
+ * The point of the core-owned storage port: a service test needs no filesystem at all.
+ * Before it existed this test had to stand up a real FileSystemNimbusStorageAdapter to
+ * satisfy a constructor parameter it never exercised.
+ */
+private object NoopStoragePort : StoragePort {
+    override fun size(path: String): KResult<Long, StoragePortError> = Success(0L)
+
+    override fun create(path: String): KResult<CreateOutcome, StoragePortError> =
+        Success(CreateOutcome.Created)
+
+    override fun delete(path: String): KResult<DeleteOutcome, StoragePortError> =
+        Success(DeleteOutcome.Deleted)
+
+    override fun usableSpaceBytes(path: String): KResult<Long?, StoragePortError> = Success(null)
 }
 
 private object EchoIdProvider : IdProviderPort {

@@ -14,10 +14,7 @@ import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
-import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.CreateFileError
-import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.DeleteFileError
-import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.GetUsableSpaceError
-import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
+import io.github.giovanniandreuzza.nimbus.core.ports.StoragePort
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusError
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
@@ -41,7 +38,7 @@ import kotlinx.coroutines.sync.withLock
  * @param idProvider   SHA-256-based stable task ID generator.
  * @param downloadPort Drives actual HTTP download execution.
  * @param repository   Source of truth for all task state (in-memory + disk).
- * @param nimbusStoragePort File-system port used for file deletion on cancel.
+ * @param storagePort Storage the service needs: sizes, creation, deletion, free space.
  * @param minReservedDiskBytes When non-null, requires at least this many free bytes **after** the
  *   remaining download bytes. When null, no disk headroom check is performed.
  * @param logger Optional structured logging (e.g. remote log in kiosk deployments).
@@ -51,7 +48,7 @@ internal class DownloadService(
     private val idProvider: IdProviderPort,
     private val downloadPort: DownloadPort,
     private val repository: DownloadTaskRepository,
-    private val nimbusStoragePort: NimbusStoragePort,
+    private val storagePort: StoragePort,
     private val minReservedDiskBytes: Long?,
     private val logger: NimbusLogger?,
     private val autoStart: Boolean,
@@ -125,7 +122,7 @@ internal class DownloadService(
         // Verify the file still exists on disk with the expected size.
         // The in-memory state alone is insufficient: the file could have been
         // deleted externally after the download completed.
-        val actualSize = nimbusStoragePort.size(task.filePath.value).getOr { return false }
+        val actualSize = storagePort.size(task.filePath.value).getOr { return false }
         return actualSize == task.fileSize.value
     }
 
@@ -429,14 +426,10 @@ internal class DownloadService(
                     )
                 )
             }
-            nimbusStoragePort.delete(task.filePath.value).onFailure {
-                if (it !is DeleteFileError.FileNotFound) {
-                    return@withOperationLock Failure(
-                        NimbusError.PermanentError(
-                            PermanentNimbusErrorCause.StorageError(it)
-                        )
-                    )
-                }
+            storagePort.delete(task.filePath.value).onFailure {
+                return@withOperationLock Failure(
+                    NimbusError.PermanentError(PermanentNimbusErrorCause.StorageError(it))
+                )
             }
 
             Success(Unit)
@@ -475,14 +468,10 @@ internal class DownloadService(
             }
 
             if (deleteAssociatedFile) {
-                nimbusStoragePort.delete(path).onFailure {
-                    if (it !is DeleteFileError.FileNotFound) {
-                        return@withOperationLock Failure(
-                            NimbusError.PermanentError(
-                                PermanentNimbusErrorCause.StorageError(it)
-                            )
-                        )
-                    }
+                storagePort.delete(path).onFailure {
+                    return@withOperationLock Failure(
+                        NimbusError.PermanentError(PermanentNimbusErrorCause.StorageError(it))
+                    )
                 }
             }
 
@@ -595,23 +584,19 @@ internal class DownloadService(
                     )
                 }
 
-                nimbusStoragePort.delete(task.filePath.value).onFailure { deleteError ->
-                    if (deleteError !is DeleteFileError.FileNotFound) {
-                        return@withOperationLock Failure(
-                            NimbusError.PermanentError(
-                                PermanentNimbusErrorCause.StorageError(deleteError)
-                            )
+                storagePort.delete(task.filePath.value).onFailure { deleteError ->
+                    return@withOperationLock Failure(
+                        NimbusError.PermanentError(
+                            PermanentNimbusErrorCause.StorageError(deleteError)
                         )
-                    }
+                    )
                 }
-                nimbusStoragePort.create(task.filePath.value).onFailure { createError ->
-                    if (createError !is CreateFileError.FileAlreadyExists) {
-                        return@withOperationLock Failure(
-                            NimbusError.PermanentError(
-                                PermanentNimbusErrorCause.StorageError(createError)
-                            )
+                storagePort.create(task.filePath.value).onFailure { createError ->
+                    return@withOperationLock Failure(
+                        NimbusError.PermanentError(
+                            PermanentNimbusErrorCause.StorageError(createError)
                         )
-                    }
+                    )
                 }
 
                 if (!task.resetFromFailedToEnqueued()) {
@@ -637,7 +622,7 @@ internal class DownloadService(
         }
 
     private fun partialBytesOnDiskForPath(filePath: String, expectedSize: Long): Long {
-        return when (val s = nimbusStoragePort.size(filePath)) {
+        return when (val s = storagePort.size(filePath)) {
             is Success -> s.value.coerceIn(0L, expectedSize)
             is Failure -> 0L
         }
@@ -652,26 +637,26 @@ internal class DownloadService(
         val minReserved = minReservedDiskBytes ?: return Success(Unit)
         val remaining = (expectedFileSize - partialBytesOnDisk).coerceAtLeast(0L)
         val required = remaining + minReserved
-        when (val space = nimbusStoragePort.usableSpaceBytes(filePath)) {
+        when (val space = storagePort.usableSpaceBytes(filePath)) {
             is Failure -> {
-                return when (val e = space.error) {
-                    is GetUsableSpaceError.Unsupported -> Success(Unit)
-                    is GetUsableSpaceError.IoFailed -> Failure(
-                        NimbusError.PermanentError(
-                            PermanentNimbusErrorCause.StorageError(e)
-                        )
+                return Failure(
+                    NimbusError.PermanentError(
+                        PermanentNimbusErrorCause.StorageError(space.error)
                     )
-                }
+                )
             }
 
             is Success -> {
-                if (space.value < required) {
+                // A platform that cannot report free space answers null; skip the check
+                // rather than refuse the download.
+                val available = space.value ?: return Success(Unit)
+                if (available < required) {
                     logger?.log(
                         NimbusLogEvent.InsufficientDiskSpace(
                             fileUrl = fileUrl,
                             path = filePath,
                             requiredBytes = required,
-                            availableBytes = space.value
+                            availableBytes = available
                         )
                     )
                     return Failure(
@@ -679,7 +664,7 @@ internal class DownloadService(
                             PermanentNimbusErrorCause.InsufficientDiskSpace(
                                 path = filePath,
                                 requiredBytes = required,
-                                availableBytes = space.value
+                                availableBytes = available
                             )
                         )
                     )
