@@ -147,6 +147,8 @@ sample_android/                      ← Android demo app (Koin DI, KtorDownload
 | `FileSystemNimbusStorageAdapter` uses `kotlinx.io.files.SystemFileSystem`           | KMP-native; no `java.io.File`; auto-creates parent directories on `create()`                                                                            |
 | `FileSystemNimbusStorageAdapter` goes through the `NimbusFileSystem` seam, never `SystemFileSystem` directly | `kotlinx.io`'s `FileSystem` is sealed and cannot be substituted in a test, which is how every catch-all in the adapter came to report unrelated failures as permission denials and survived review |
 | Storage catch-alls map to each family's `UnexpectedError`, never to a named cause  | A caller acting on "permission denied" for a `SecurityException` or an `OutOfMemoryError` acts on a false diagnosis                                     |
+| `KtorDownloadAdapter` maps only Ktor's three timeout types to `TemporaryError`, not `IOException` broadly | `downloadFile` invokes the caller's callback inside its own `try`, so a sink failure arrives at the same `catch` as a dead socket — both are `kotlinx.io.IOException`. Treating `IOException` as transient would retry a full disk as a congested link |
+| A new `Temporary`/`Permanent` cause needs a branch in `DownloadStateStoreMappers` | The store flattens a cause to its code and rebuilds it by switching on that code. A missing branch is not a compile error: the state persists and comes back as something else (the `else` is `FileNotAccessible`, which the adapter retries) |
 | Error mappers extracted to `NimbusErrorMappers.kt`                                  | Keeps `DownloadService` focused on orchestration                                                                                                        |
 | `DownloadProgressCallback.onDownloadFailed` is `suspend`                            | Allows logger call (`NimbusLogger.log`) which is also suspend                                                                                           |
 | `Nimbus.init()` is non-suspend                                                      | Loading starts in background via `CoroutineStart.LAZY` deferred; `awaitReady()` inside each service method gates on completion transparently to callers |
@@ -179,6 +181,7 @@ These are used internally during boot (`loadDownloadTasks`) and retry flows:
 | Variant                 | When                                                                           |
 |-------------------------|--------------------------------------------------------------------------------|
 | `ChecksumMismatch`      | Transferred bytes did not match the caller's `expectedChecksum`; will retry     |
+| `NetworkTimeout(cause)` | Connect, socket or request timeout; will retry                                  |
 | `ServerError(status)`   | HTTP 5xx                                                                       |
 | `RangeNotSatisfiable`   | HTTP 416 — adapter truncates local file and retries from byte 0                |
 | `FileIntegrityMismatch` | Downloaded size ≠ expected size; will retry                                    |
@@ -204,9 +207,10 @@ These are used internally during boot (`loadDownloadTasks`) and retry flows:
 
 **`TemporaryGetFileSizeErrorCause` variants:**
 
-| Variant               | When     |
-|-----------------------|----------|
-| `ServerError(status)` | HTTP 5xx |
+| Variant                 | When                                   |
+|-------------------------|----------------------------------------|
+| `ServerError(status)`   | HTTP 5xx                               |
+| `NetworkTimeout(cause)` | Connect, socket or request timeout     |
 
 **`PermanentGetFileSizeErrorCause` variants:**
 

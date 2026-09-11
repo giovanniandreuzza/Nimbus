@@ -25,5 +25,17 @@ public sealed class TemporaryGetFileSizeErrorCause(
         code = "server_error",
         message = "HTTP server error $statusCode."
     )
+
+    /**
+     * The transport timed out while asking the remote how large the file is. See
+     * [TemporaryDownloadErrorCause.NetworkTimeout] for why this is never permanent.
+     *
+     * @param cause The underlying transport error.
+     */
+    public data class NetworkTimeout(override val cause: KError) : TemporaryGetFileSizeErrorCause(
+        code = "network_timeout",
+        message = cause.message,
+        cause = cause
+    )
 }
 
