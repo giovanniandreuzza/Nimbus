@@ -637,7 +637,12 @@ internal class DownloadAdapter(
                     }
                     read.toLong()
                 }
-                if (bytesRead <= 0) continue
+                // `exhausted()` said bytes were waiting, so a read that returns nothing is a
+                // source that will not produce any: continuing here spins the loop against
+                // it forever. Leaving instead ends the attempt with fewer bytes than the
+                // declared length, which the size check turns into FileIntegrityMismatch —
+                // temporary, and retried.
+                if (bytesRead <= 0) break
 
                 progressBytes += bytesRead
                 bytesSinceLastProgressUpdate += bytesRead

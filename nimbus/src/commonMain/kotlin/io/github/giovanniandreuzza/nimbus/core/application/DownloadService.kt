@@ -173,7 +173,8 @@ internal class DownloadService(
         validateEnqueueRequest(
             fileUrl,
             filePath,
-            fileName
+            fileName,
+            expectedChecksum
         ).onFailure { return@withReady Failure(it) }
 
         val id = idProvider.generateUniqueId(fileUrl)
@@ -262,6 +263,12 @@ internal class DownloadService(
                     )
                 )
             }
+
+            // The expectation was checked when the task was created, but a task outlives the
+            // build that created it: a store written while a digest was configured is read
+            // back by a build where it is not, and nothing downstream would say so.
+            validateChecksumExpectation(task.expectedChecksum)
+                .onFailure { return@withOperationLock Failure(it) }
 
             ensureDiskHeadroom(
                 fileUrl = fileUrl,
@@ -372,6 +379,12 @@ internal class DownloadService(
                     )
                 )
             }
+
+            // The expectation was checked when the task was created, but a task outlives the
+            // build that created it: a store written while a digest was configured is read
+            // back by a build where it is not, and nothing downstream would say so.
+            validateChecksumExpectation(task.expectedChecksum)
+                .onFailure { return@withOperationLock Failure(it) }
 
             ensureDiskHeadroom(
                 fileUrl = fileUrl,
@@ -532,7 +545,8 @@ internal class DownloadService(
         validateEnqueueRequest(
             fileUrl,
             filePath,
-            fileName
+            fileName,
+            expectedChecksum
         ).onFailure { return@withReady Failure(it) }
 
         // Carry the caller's expectation into a task that already exists, before anything
@@ -811,7 +825,8 @@ internal class DownloadService(
     private fun validateEnqueueRequest(
         fileUrl: String,
         filePath: String,
-        fileName: String
+        fileName: String,
+        expectedChecksum: Checksum?
     ): KResult<Unit, NimbusError> {
         if (!fileUrl.hasUriScheme()) return Failure(
             NimbusError.PermanentError(
@@ -828,6 +843,49 @@ internal class DownloadService(
                 PermanentNimbusErrorCause.InvalidFileName
             )
         )
+        validateChecksumExpectation(expectedChecksum).onFailure { return Failure(it) }
+        return Success(Unit)
+    }
+
+    /**
+     * Rejects an expectation the configured digest could never check.
+     *
+     * A caller passing `expectedChecksum` has asked for a verification, and until now was
+     * told nothing when it did not happen: with no algorithm configured nothing is hashed,
+     * the comparison has no value to compare against and is skipped, and the download
+     * reports finished. The caller believes bytes were checked that nobody read — the
+     * silently wrong answer this library prefers a loud failure to, and an asymmetry with
+     * `checksum`, which has always answered
+     * [PermanentNimbusErrorCause.ContentDigestDisabled] for the same configuration.
+     *
+     * A checksum naming a different algorithm is the same mistake with a worse ending: the
+     * two values are compared, never agree, and the transfer is failed as a mismatch —
+     * temporary, so it is retried, and the whole file is fetched again on every pass, for a
+     * condition no retry can change.
+     *
+     * Both are settled before a task exists rather than at the point of comparison: the
+     * adapter sees only a task, and a task that cannot be verified should never have been
+     * created. The start and resume paths re-check, because a task outlives the build that
+     * created it.
+     */
+    private fun validateChecksumExpectation(
+        expectedChecksum: Checksum?
+    ): KResult<Unit, NimbusError> {
+        if (expectedChecksum == null) return Success(Unit)
+
+        val configured = digestAlgorithm ?: return Failure(
+            NimbusError.PermanentError(PermanentNimbusErrorCause.ContentDigestDisabled)
+        )
+
+        if (expectedChecksum.algorithm != configured) return Failure(
+            NimbusError.PermanentError(
+                PermanentNimbusErrorCause.ChecksumAlgorithmMismatch(
+                    expected = expectedChecksum.algorithm,
+                    configured = configured
+                )
+            )
+        )
+
         return Success(Unit)
     }
 

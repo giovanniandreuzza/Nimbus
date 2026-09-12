@@ -71,6 +71,26 @@ public sealed class PermanentNimbusErrorCause(
                 "Call Nimbus.Builder().withContentDigest(...) to enable it."
     )
 
+    /**
+     * The caller's expected checksum names a digest other than the configured one.
+     *
+     * Comparing them would never agree, and the disagreement reads exactly like a corrupted
+     * transfer: the download is failed as a mismatch, retried, failed again, and a
+     * configuration mistake that a restart cannot change spends the network forever. It is
+     * a permanent condition and says so, once, before anything is transferred.
+     *
+     * @param expected the algorithm the caller's checksum was produced with.
+     * @param configured the algorithm Nimbus was built with.
+     */
+    public data class ChecksumAlgorithmMismatch(
+        val expected: DigestAlgorithm,
+        val configured: DigestAlgorithm
+    ) : PermanentNimbusErrorCause(
+        code = "checksum_algorithm_mismatch",
+        message = "Expected checksum is ${expected.name}, but Nimbus is configured for " +
+                "${configured.name}."
+    )
+
     /** The requested download task was not found. */
     public data object DownloadNotFound : PermanentNimbusErrorCause(
         code = "download_not_found",
