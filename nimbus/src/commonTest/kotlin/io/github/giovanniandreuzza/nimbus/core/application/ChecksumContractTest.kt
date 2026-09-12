@@ -172,6 +172,90 @@ class ChecksumContractTest {
         )
     }
 
+    @Test
+    fun `resumeDownload refuses a stored expectation this build cannot check`() = runTest {
+        // Same gate as startDownload, reached by the other door: a paused task resumed by a
+        // build with no digest would transfer the rest and report finished, with the
+        // expectation it is carrying never consulted.
+        val f = fixture(digestAlgorithm = null)
+        f.repository.saveDownloadTask(
+            DownloadTask.restore(
+                id = URL,
+                fileUrl = URL,
+                filePath = PATH,
+                fileName = NAME,
+                fileSize = 1_024L,
+                state = DownloadState.Paused(0.5),
+                expectedChecksum = EXPECTED
+            )
+        )
+
+        val result = f.service.resumeDownload(URL)
+
+        val error = when (result) {
+            is Failure -> result.error
+            is Success -> throw AssertionError("the transfer must not resume")
+        }
+        assertEquals(
+            "content_digest_disabled",
+            (error as NimbusError.PermanentError).errorCause.code
+        )
+        assertTrue(
+            f.downloadPort.started.isEmpty(),
+            "nothing may be transferred for an expectation that cannot be checked"
+        )
+    }
+
+    @Test
+    fun `a stale expectation this build cannot honour does not wall off the download`() =
+        runTest {
+            // The other half of carrying an expectation across a stale Finished task. This
+            // build has no digest, the caller asked for no verification, and the task is
+            // being recreated from scratch: carrying the leftover would refuse the enqueue
+            // and leave an appliance unable to fetch its asset at all. It is dropped, and
+            // the DTO says so rather than claiming a check nobody will make.
+            val f = fixture(digestAlgorithm = null)
+            val finished = DownloadTask.restore(
+                id = URL,
+                fileUrl = URL,
+                filePath = PATH,
+                fileName = NAME,
+                fileSize = 1_024L,
+                state = DownloadState.Finished,
+                expectedChecksum = EXPECTED,
+                checksum = EXPECTED
+            )
+            f.repository.saveDownloadTask(finished)
+            // Nothing on disk, so the finished task is stale and is removed and re-enqueued.
+
+            val result = f.service.ensureDownloaded(URL, PATH, NAME, expectedChecksum = null)
+
+            assertTrue(result is Success, "the download must still be possible, got $result")
+            val task = when (val r = f.service.getDownloadTask(URL)) {
+                is Success -> r.value
+                is Failure -> throw AssertionError("no task was created: ${r.error}")
+            }
+            assertEquals(
+                null,
+                task.expectedChecksum,
+                "an expectation this build cannot check must not be carried into a new task"
+            )
+        }
+
+    @Test
+    fun `a second digest algorithm makes the mismatch branch reachable and testable`() {
+        // `ChecksumAlgorithmMismatch` cannot be provoked while `DigestAlgorithm` has one
+        // entry: no caller can build a checksum that disagrees with the only algorithm
+        // there is. The branch is written for the day that changes, and this is the tripwire
+        // that says so — when it fails, the mismatch is reachable and owes a real test.
+        assertEquals(
+            1,
+            DigestAlgorithm.entries.size,
+            "a second algorithm exists now: add a test that an expectation naming the other " +
+                    "one is refused with ChecksumAlgorithmMismatch, then update this count"
+        )
+    }
+
     private fun TestScope.fixture(digestAlgorithm: DigestAlgorithm?): Fixture {
         val storage = InMemoryStorage()
         val repository = FakeDownloadTaskRepository()
