@@ -65,10 +65,36 @@ class DownloadServiceLifecycleTest {
     }
 
     @Test
-    fun `a url that is not http is rejected before anything is stored`() = runTest {
+    fun `a scheme the library has never heard of reaches the port`() = runTest {
         val f = fixture()
 
         val result = f.service.enqueueDownload("ftp://example.com/f.bin", PATH, NAME)
+
+        // Core used to reject anything that was not http, which put a transport decision in
+        // the one layer that is supposed to know nothing about transports — and made the
+        // download port un-implementable for ftp, a local share, or anything else, however
+        // capable the adapter was.
+        assertTrue(result is Success, "core rejected a scheme it has no business judging: $result")
+        assertEquals(1, f.repository.getAllDownloadTask().size)
+    }
+
+    @Test
+    fun `a url with no scheme at all is still rejected`() = runTest {
+        val f = fixture()
+
+        val result = f.service.enqueueDownload("example.com/f.bin", PATH, NAME)
+
+        // Not a transport judgement: a string with no scheme is not a URL, and the url is
+        // also the task's identity, so garbage here becomes a task nobody can address.
+        assertEquals(PermanentNimbusErrorCause.InvalidUrl, result.causeOrFail())
+        assertTrue(f.repository.getAllDownloadTask().isEmpty())
+    }
+
+    @Test
+    fun `a blank url is rejected`() = runTest {
+        val f = fixture()
+
+        val result = f.service.enqueueDownload("   ", PATH, NAME)
 
         assertEquals(PermanentNimbusErrorCause.InvalidUrl, result.causeOrFail())
         assertTrue(f.repository.getAllDownloadTask().isEmpty())

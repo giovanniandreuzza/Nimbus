@@ -21,7 +21,7 @@ import java.io.File
 /**
  * Main ViewModel — MVI style.
  *
- * Nimbus is configured with [withAutoStart(true)][io.github.giovanniandreuzza.nimbus.Nimbus.Companion.Builder.withAutoStart],
+ * Nimbus is configured with [withAutoStart(true)][io.github.giovanniandreuzza.nimbus.Nimbus.Builder.withAutoStart],
  * so [MainUiAction.Enqueue] is the only action needed to kick off a download;
  * the library starts it automatically in the background.
  *

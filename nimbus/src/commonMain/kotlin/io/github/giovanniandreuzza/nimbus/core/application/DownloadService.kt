@@ -813,7 +813,7 @@ internal class DownloadService(
         filePath: String,
         fileName: String
     ): KResult<Unit, NimbusError> {
-        if (!fileUrl.isSupportedNetworkUrl()) return Failure(
+        if (!fileUrl.hasUriScheme()) return Failure(
             NimbusError.PermanentError(
                 PermanentNimbusErrorCause.InvalidUrl
             )
@@ -852,8 +852,27 @@ internal class DownloadService(
 private fun String.containsPathTraversal(): Boolean =
     split('/', '\\').any { it == ".." }
 
-private fun String.isSupportedNetworkUrl(): Boolean =
-    startsWith("http://", ignoreCase = true) || startsWith("https://", ignoreCase = true)
+/**
+ * Whether this looks like a URI at all — syntax only, never which transport it names.
+ *
+ * Core used to require http or https here, which put a transport decision in the one layer
+ * that is supposed to know nothing about transports: it made [NimbusDownloadPort] unusable
+ * for ftp, a local share, or anything else, however capable the adapter was, because the
+ * request was refused before the port was ever asked. Which schemes exist is the port's
+ * business; an adapter that does not recognise one fails it.
+ *
+ * What is still checked is that the string carries a scheme, per RFC 3986:
+ * `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) ":"`. That is not a judgement about
+ * transports — the url is also the task's identity, so a string that is not a URL becomes a
+ * task nobody can address.
+ */
+private fun String.hasUriScheme(): Boolean {
+    val colon = indexOf(':')
+    if (colon <= 0) return false
+    val scheme = substring(0, colon)
+    return scheme[0].isLetter() &&
+            scheme.all { it.isLetterOrDigit() || it == '+' || it == '-' || it == '.' }
+}
 
 private fun String.isValidFileName(): Boolean {
     if (isBlank() || this == "." || this == "..") return false

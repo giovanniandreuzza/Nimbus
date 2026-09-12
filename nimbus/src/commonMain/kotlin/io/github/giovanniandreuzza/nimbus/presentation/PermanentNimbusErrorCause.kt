@@ -28,7 +28,7 @@ public sealed class PermanentNimbusErrorCause(
     /** The supplied URL is not a supported network URL (`http`/`https`). */
     public data object InvalidUrl : PermanentNimbusErrorCause(
         code = "invalid_url",
-        message = "File URL must use http or https."
+        message = "File URL must carry a scheme, e.g. https://host/path."
     )
 
     /** The supplied file name is invalid or unsafe for filesystem usage. */
