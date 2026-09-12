@@ -168,7 +168,7 @@ and simply cannot be used. A consumer that treats the second as the first delete
 re-downloads a good file on every failure, forever.
 
 `checksum(fileUrl)` fails with:
-- `PermanentNimbusErrorCause.UnexpectedError` (code `content_digest_disabled`) — no algorithm configured
+- `PermanentNimbusErrorCause.ContentDigestDisabled` — no algorithm configured on the Builder
 - `PermanentNimbusErrorCause.DownloadNotFound` — no task for this URL
 - `PermanentNimbusErrorCause.InvalidState(state)` — the task is not `Finished`
 
@@ -212,6 +212,7 @@ sealed class PermanentNimbusErrorCause {
     data object DownloadNotFound   // no task registered for this fileUrl
     data class  FilePathInUse(filePath: String)
     data class  InsufficientDiskSpace(path: String, requiredBytes: Long, availableBytes: Long)
+    data object ContentDigestDisabled  // checksum() called with no withContentDigest(...)
 
     // State machine violations
     data class  InvalidState(currentState: DownloadState)  // operation not allowed in this state
@@ -255,6 +256,7 @@ sealed class PermanentDownloadErrorCause {
     data class  ClientError(statusCode: Int)               // HTTP 4xx (excluding 404)
     data class  InconsistentRangeResponse(reason: String)  // server returned 200 when 206 expected on resume
     data object LocalFileOversized                         // local file > expected download size
+    data class  InsufficientDiskSpace(cause: KError)       // the volume filled up mid-transfer
     data class  StorageError(cause: KError)                // I/O or permission failure
     data class  UnexpectedError(cause: KError? = null)
 }
@@ -397,8 +399,40 @@ Enqueued  ──startDownload──►  Downloading  ──pauseDownload──�
 `cancelDownload` is valid from any state and removes both metadata and the partial file.
 `removeDownload` is only valid from `Finished` or `Failed`.
 
+## Guarantees that are easy to assume wrongly
+
+Read this before writing integration code — each line is a behaviour a caller would otherwise
+have to discover from a bug report.
+
+- **A file already on disk at the expected length is still verified.** `startDownload` short-circuits
+  when the destination already has the right size, and that path hashes the file from disk and
+  checks it against `expectedChecksum` like any transfer. A digest-enabled task therefore always
+  finishes with `DownloadTaskDTO.checksum` populated, including on a device that kept its files
+  between runs.
+- **`ensureDownloaded`'s `expectedChecksum` reaches a task that already exists.** A task still in
+  flight adopts the new expectation; a *finished* task whose expectation differs is treated as
+  stale — its file is removed and fetched again, since what is on disk was accepted against the
+  old one.
+- **A body that stops arriving part-way is a `TransportFailure`, and is retried.** It is measured
+  against the declared `Content-Length` rather than inferred from an error, because a connection
+  closed mid-body reads as an ordinary end of stream.
+- **`withMaxRetryAttempts` / `withRetryBaseDelayMs` apply to network failures.** Before 2.3.0 every
+  transport error was classified permanent and nothing was ever retried; timeouts, connection
+  resets and failed name resolution are now temporary.
+- **A volume that fills up mid-transfer reports `PermanentDownloadErrorCause.InsufficientDiskSpace`,**
+  not a generic storage error. Detail is in its `cause`. The pre-flight headroom guard
+  (`withMinReservedDiskBytes`) reports `PermanentNimbusErrorCause.InsufficientDiskSpace` instead —
+  same condition, two channels, because one is a returned error and the other is a task state.
+- **A digest survives a resume.** It is primed from the bytes already on disk at the start of every
+  attempt, so an interrupted-and-resumed download hashes to the same value as one that ran straight
+  through.
+
 ## What Nimbus does NOT do
 
+- **Does not work across processes.** The task store is held in memory and committed to one file,
+  with no locking between processes. Two instances over the same `withDownloadManagerPath` — a UI
+  and a separate downloader service on Android, say — will overwrite each other's state. Run one
+  instance and reach it from elsewhere through your own boundary.
 - Does not validate that `filePath`'s parent directory exists — create it before calling `enqueueDownload`.
 - Does not enforce a process-wide singleton — use your DI container's `single {}` for that.
 - Does not support non-HTTP(S) URLs.
@@ -474,6 +508,10 @@ sealed class NimbusLogEvent {
     data class EnsureDownloadedStaleFinishedRemoved(val fileUrl: String)
     data class InsufficientDiskSpace(val fileUrl: String?, val path: String, val requiredBytes: Long, val availableBytes: Long)
     data class AutoStartFailed(val fileUrl: String, val error: NimbusError)
+    data class AutoRetryFailed(val fileUrl: String, val error: NimbusError)
+    data class PersistenceFailed(val fileUrl: String, val cause: KError)
+    data class StoreFlushFailed(val cause: KError)   // a coalesced background commit failed
+    data class StoreReset(val reason: String)        // the store was unreadable and was discarded
 }
 ```
 
