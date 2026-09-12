@@ -8,6 +8,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
 import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
+import io.github.giovanniandreuzza.nimbus.core.application.errors.TransitionFailure
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
@@ -53,16 +54,17 @@ internal class FakeDownloadTaskRepository(
     override suspend fun loadDownloadTasks(): KResult<Unit, FailedToLoadDownloadTasks> =
         loadFailure?.let { Failure(it) } ?: Success(Unit)
 
-    override suspend fun getDownloadTask(id: DownloadId): KResult<DownloadTask, DownloadTaskNotFound> =
-        tasks[id]?.let { Success(it) } ?: Failure(DownloadTaskNotFound)
+    override suspend fun getAllDownloadTasks(): List<DownloadTaskDTO> =
+        tasks.values.map { DownloadTaskDTO.fromDomain(it) }
 
-    override suspend fun getAllDownloadTask(): Map<DownloadId, DownloadTask> = tasks.toMap()
+    override suspend fun isFilePathInUse(filePath: String): Boolean =
+        tasks.values.any { it.filePath.value == filePath }
 
     override suspend fun observeDownloadTask(id: DownloadId): KResult<Flow<DownloadState>, DownloadTaskNotFound> =
         flows[id]?.asStateFlow()?.let { Success(it) } ?: Failure(DownloadTaskNotFound)
 
-    override fun observeAllDownloadTasks(): Flow<List<DownloadTask>> =
-        revision.map { tasks.values.toList() }
+    override fun observeAllDownloadTasks(): Flow<List<DownloadTaskDTO>> =
+        revision.map { tasks.values.map { task -> DownloadTaskDTO.fromDomain(task) } }
 
     override suspend fun saveDownloadTask(downloadTask: DownloadTask): KResult<Unit, KError> {
         saveFailure?.let { return Failure(it) }
@@ -74,11 +76,31 @@ internal class FakeDownloadTaskRepository(
         return Success(Unit)
     }
 
-    override suspend fun updateDownloadProgress(downloadTask: DownloadTask): KResult<Unit, KError> {
-        tasks[downloadTask.entityId.id] = downloadTask
-        flows[downloadTask.entityId.id]?.value = downloadTask.state
+    override suspend fun <T : Any> readDownloadTask(
+        id: DownloadId,
+        read: (DownloadTask) -> T?
+    ): KResult<T, TransitionFailure> {
+        val task = tasks[id] ?: return Failure(TransitionFailure.NotFound)
+        val value = read(task) ?: return Failure(TransitionFailure.Refused(task.state))
+        return Success(value)
+    }
+
+    override suspend fun <T : Any> transitionDownloadTask(
+        id: DownloadId,
+        persist: Boolean,
+        transition: (DownloadTask) -> T?
+    ): KResult<T, TransitionFailure> {
+        val task = tasks[id] ?: return Failure(TransitionFailure.NotFound)
+        val value = transition(task) ?: return Failure(TransitionFailure.Refused(task.state))
+
+        flows.getOrPut(id) { MutableStateFlow(task.state) }.value = task.state
         revision.value++
-        return Success(Unit)
+
+        if (!persist) return Success(value)
+
+        saveFailure?.let { return Failure(TransitionFailure.NotPersisted(it)) }
+        saveCount++
+        return Success(value)
     }
 
     override suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, KError> {
@@ -111,6 +133,12 @@ internal class ScriptedDownloadPort(
     var sizeFailure: GetFileSizeError? = null
     var startFailure: DownloadError? = null
 
+    /**
+     * Called while [stopDownload] runs, so a test can see what the world looked like at that
+     * moment — in particular whether the task had already been moved out of `Downloading`.
+     */
+    var onStop: (suspend (downloadId: String) -> Unit)? = null
+
     fun remoteSizeBecomes(size: Long) {
         remoteSize = size
     }
@@ -125,6 +153,7 @@ internal class ScriptedDownloadPort(
 
     override suspend fun stopDownload(downloadId: String) {
         stopped.add(downloadId)
+        onStop?.invoke(downloadId)
     }
 
     companion object {

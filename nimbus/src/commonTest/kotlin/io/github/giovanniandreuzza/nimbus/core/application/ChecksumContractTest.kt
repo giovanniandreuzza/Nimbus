@@ -98,7 +98,7 @@ class ChecksumContractTest {
             "the same cause `checksum` answers for the same configuration"
         )
         assertTrue(
-            f.repository.getAllDownloadTask().isEmpty(),
+            f.repository.getAllDownloadTasks().isEmpty(),
             "a task that cannot be verified must not have been created"
         )
     }
@@ -120,7 +120,7 @@ class ChecksumContractTest {
             "content_digest_disabled",
             (error as NimbusError.PermanentError).errorCause.code
         )
-        assertTrue(f.repository.getAllDownloadTask().isEmpty())
+        assertTrue(f.repository.getAllDownloadTasks().isEmpty())
     }
 
     @Test

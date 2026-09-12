@@ -40,7 +40,7 @@ class DownloadRepositoryPersistenceTest {
 
         assertEquals(
             count,
-            repository.getAllDownloadTask().size,
+            repository.allTasksForTest().size,
             "expected every task to be held in memory"
         )
 
@@ -50,7 +50,7 @@ class DownloadRepositoryPersistenceTest {
 
         assertEquals(
             count,
-            reloaded.getAllDownloadTask().size,
+            reloaded.allTasksForTest().size,
             "expected every saved task to survive a reload from disk"
         )
     }
@@ -72,7 +72,7 @@ class DownloadRepositoryPersistenceTest {
         val reloaded = repositoryOn(storeFile)
         reloaded.loadDownloadTasks()
 
-        val onDisk = reloaded.getAllDownloadTask()[DownloadId.create("a")]
+        val onDisk = reloaded.allTasksForTest()[DownloadId.create("a")]
         assertEquals(
             task.state,
             onDisk?.state,

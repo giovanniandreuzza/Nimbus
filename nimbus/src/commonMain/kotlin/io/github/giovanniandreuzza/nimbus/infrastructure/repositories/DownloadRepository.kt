@@ -6,8 +6,10 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
 import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
+import io.github.giovanniandreuzza.nimbus.core.application.errors.TransitionFailure
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
@@ -16,6 +18,7 @@ import io.github.giovanniandreuzza.nimbus.frameworks.store.StoreManager
 import io.github.giovanniandreuzza.nimbus.frameworks.store.errors.InitStoreError
 import io.github.giovanniandreuzza.nimbus.frameworks.store.errors.StoreError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadStore
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadTaskStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.mappers.DownloadTaskStoreMappers.toDomains
 import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.mappers.DownloadTaskStoreMappers.toStore
@@ -112,7 +115,7 @@ internal class DownloadRepository(
                         // Crash/restart recovery: Downloading tasks that were never
                         // paused are reset to Paused so they can be resumed cleanly.
                         task.pause()
-                        diskStore.publish(task)
+                        diskStore.publish(task.toStore())
                         recovered = true
                     }
 
@@ -124,7 +127,7 @@ internal class DownloadRepository(
                             .let { result -> if (result is Success) result.value else -1L }
                         if (actualSize != task.fileSize.value) {
                             task.resetToEnqueued()
-                            diskStore.publish(task)
+                            diskStore.publish(task.toStore())
                             recovered = true
                         }
                     }
@@ -151,14 +154,21 @@ internal class DownloadRepository(
      */
     internal suspend fun flushPendingState(): KResult<Unit, KError> = diskStore.flush()
 
-    override suspend fun getDownloadTask(id: DownloadId): KResult<DownloadTask, DownloadTaskNotFound> {
-        val task = mutex.withLock { tasks[id] }
-        return task?.let { Success(it) } ?: Failure(DownloadTaskNotFound)
+    override suspend fun getAllDownloadTasks(): List<DownloadTaskDTO> = mutex.withLock {
+        tasks.values.map { DownloadTaskDTO.fromDomain(it) }
     }
 
-    override suspend fun getAllDownloadTask(): Map<DownloadId, DownloadTask> {
-        return mutex.withLock { tasks.toMap() }
+    override suspend fun isFilePathInUse(filePath: String): Boolean = mutex.withLock {
+        tasks.values.any { it.filePath.value == filePath }
     }
+
+    /**
+     * The entities themselves, for the tests that exercise this class directly. Not on the
+     * port: everything else sees snapshots, which is what keeps the entity's mutable state
+     * inside this lock.
+     */
+    internal suspend fun allTasksForTest(): Map<DownloadId, DownloadTask> =
+        mutex.withLock { tasks.toMap() }
 
     override suspend fun observeDownloadTask(id: DownloadId): KResult<Flow<DownloadState>, DownloadTaskNotFound> {
         val flow = mutex.withLock { stateFlows[id] }
@@ -171,20 +181,25 @@ internal class DownloadRepository(
      * rendered anyway, so the cost of a snapshot is bounded by how fast it is consumed
      * rather than by how fast downloads report progress.
      */
-    override fun observeAllDownloadTasks(): Flow<List<DownloadTask>> =
-        revision.map { getAllDownloadTask().values.toList() }.conflate()
+    override fun observeAllDownloadTasks(): Flow<List<DownloadTaskDTO>> =
+        revision.map { getAllDownloadTasks() }.conflate()
 
     override suspend fun saveDownloadTask(downloadTask: DownloadTask): KResult<Unit, KError> {
-        mutex.withLock {
+        // The snapshot is taken inside the lock and the write happens outside it. A
+        // `DownloadTask` is mutable and shared, so serialising it out here would read fields
+        // another transition may be changing — and what reached the disk would be neither
+        // state in full.
+        val snapshot = mutex.withLock {
             tasks[downloadTask.entityId.id] = downloadTask
             stateFlows[downloadTask.entityId.id]?.update { downloadTask.state }
                 ?: run {
                     stateFlows[downloadTask.entityId.id] = MutableStateFlow(downloadTask.state)
                 }
             revision.value++
+            Snapshot(downloadTask.toStore(), downloadTask.state.mustBeDurable())
         }
 
-        diskStore.save(downloadTask, durable = downloadTask.state.mustBeDurable())
+        diskStore.save(snapshot.task, durable = snapshot.durable)
             .onFailure { return Failure(it) }
 
         return Success(Unit)
@@ -215,14 +230,46 @@ internal class DownloadRepository(
         is DownloadState.Paused -> false
     }
 
-    override suspend fun updateDownloadProgress(downloadTask: DownloadTask): KResult<Unit, KError> {
-        mutex.withLock {
-            tasks[downloadTask.entityId.id] = downloadTask
-            stateFlows[downloadTask.entityId.id]?.update { downloadTask.state }
-            revision.value++
-        }
-        return Success(Unit)
+    override suspend fun <T : Any> readDownloadTask(
+        id: DownloadId,
+        read: (DownloadTask) -> T?
+    ): KResult<T, TransitionFailure> = mutex.withLock {
+        val task = tasks[id] ?: return Failure(TransitionFailure.NotFound)
+        val value = read(task) ?: return Failure(TransitionFailure.Refused(task.state))
+        Success(value)
     }
+
+    override suspend fun <T : Any> transitionDownloadTask(
+        id: DownloadId,
+        persist: Boolean,
+        transition: (DownloadTask) -> T?
+    ): KResult<T, TransitionFailure> {
+        // Everything the entity touches happens here, inside the lock: the read, the
+        // transition, and whatever the caller needs to take away from it.
+        val applied = mutex.withLock {
+            val task = tasks[id] ?: return Failure(TransitionFailure.NotFound)
+            val value = transition(task)
+                ?: return Failure(TransitionFailure.Refused(task.state))
+
+            stateFlows[id]?.update { task.state } ?: run {
+                stateFlows[id] = MutableStateFlow(task.state)
+            }
+            revision.value++
+            Applied(Snapshot(task.toStore(), task.state.mustBeDurable()), value)
+        }
+
+        if (!persist) return Success(applied.value)
+
+        diskStore.save(applied.snapshot.task, durable = applied.snapshot.durable)
+            .onFailure { return Failure(TransitionFailure.NotPersisted(it)) }
+
+        return Success(applied.value)
+    }
+
+    /** A task as it was under the lock, ready to be written without reading the entity again. */
+    private class Snapshot(val task: DownloadTaskStore, val durable: Boolean)
+
+    private class Applied<T>(val snapshot: Snapshot, val value: T)
 
     override suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, KError> {
         mutex.withLock {
@@ -307,8 +354,7 @@ internal class DownloadRepository(
          * @param durable commit before returning, rather than letting the change ride along
          * with the next coalesced commit.
          */
-        suspend fun save(task: DownloadTask, durable: Boolean): KResult<Unit, StoreError> {
-            val taskStore = task.toStore()
+        suspend fun save(taskStore: DownloadTaskStore, durable: Boolean): KResult<Unit, StoreError> {
             val transform: (DownloadStore) -> DownloadStore = {
                 it.copy(downloads = it.downloads + (taskStore.id to taskStore))
             }
@@ -320,9 +366,8 @@ internal class DownloadRepository(
             return Success(Unit)
         }
 
-        /** Publishes [task] in memory without committing and without asking for a commit. */
-        suspend fun publish(task: DownloadTask) {
-            val taskStore = task.toStore()
+        /** Publishes [taskStore] in memory without committing and without asking for a commit. */
+        suspend fun publish(taskStore: DownloadTaskStore) {
             mutate { it.copy(downloads = it.downloads + (taskStore.id to taskStore)) }
         }
 

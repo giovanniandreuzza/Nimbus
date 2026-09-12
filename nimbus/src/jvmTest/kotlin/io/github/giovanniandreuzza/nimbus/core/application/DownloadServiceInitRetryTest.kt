@@ -10,6 +10,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
 import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
+import io.github.giovanniandreuzza.nimbus.core.application.errors.TransitionFailure
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
@@ -92,20 +93,27 @@ private class FlakyRepository(private val failuresBeforeSuccess: Int) : Download
         }
     }
 
-    override suspend fun getDownloadTask(id: DownloadId): KResult<DownloadTask, DownloadTaskNotFound> =
-        Failure(DownloadTaskNotFound)
+    override suspend fun getAllDownloadTasks(): List<DownloadTaskDTO> = emptyList()
 
-    override suspend fun getAllDownloadTask(): Map<DownloadId, DownloadTask> = emptyMap()
+    override suspend fun isFilePathInUse(filePath: String): Boolean = false
+
+    override suspend fun <T : Any> readDownloadTask(
+        id: DownloadId,
+        read: (DownloadTask) -> T?
+    ): KResult<T, TransitionFailure> = Failure(TransitionFailure.NotFound)
+
+    override suspend fun <T : Any> transitionDownloadTask(
+        id: DownloadId,
+        persist: Boolean,
+        transition: (DownloadTask) -> T?
+    ): KResult<T, TransitionFailure> = Failure(TransitionFailure.NotFound)
 
     override suspend fun observeDownloadTask(id: DownloadId): KResult<Flow<DownloadState>, DownloadTaskNotFound> =
         Failure(DownloadTaskNotFound)
 
-    override fun observeAllDownloadTasks(): Flow<List<DownloadTask>> = flowOf(emptyList())
+    override fun observeAllDownloadTasks(): Flow<List<DownloadTaskDTO>> = flowOf(emptyList())
 
     override suspend fun saveDownloadTask(downloadTask: DownloadTask): KResult<Unit, KError> =
-        Success(Unit)
-
-    override suspend fun updateDownloadProgress(downloadTask: DownloadTask): KResult<Unit, KError> =
         Success(Unit)
 
     override suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, KError> = Success(Unit)

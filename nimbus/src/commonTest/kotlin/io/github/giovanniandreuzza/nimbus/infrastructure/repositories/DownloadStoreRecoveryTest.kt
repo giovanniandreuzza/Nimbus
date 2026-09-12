@@ -65,7 +65,7 @@ class DownloadStoreRecoveryTest {
                 "expected the unreadable store to be discarded, got $result"
             )
             assertTrue(
-                repository.getAllDownloadTask().isEmpty(),
+                repository.allTasksForTest().isEmpty(),
                 "expected no tasks to survive the reset"
             )
         }

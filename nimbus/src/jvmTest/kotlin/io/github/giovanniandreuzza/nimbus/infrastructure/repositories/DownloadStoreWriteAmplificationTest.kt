@@ -83,7 +83,7 @@ class DownloadStoreWriteAmplificationTest {
 
         assertEquals(
             DownloadState.Finished,
-            reloaded.getAllDownloadTask()[DownloadId.create("task-0")]?.state,
+            reloaded.allTasksForTest()[DownloadId.create("task-0")]?.state,
             "expected a finished task to be on disk as soon as the save returned"
         )
     }
@@ -101,7 +101,7 @@ class DownloadStoreWriteAmplificationTest {
             while (true) {
                 val reloaded = repositoryCounting(AtomicInteger(), storeFile)
                 reloaded.loadDownloadTasks()
-                if (reloaded.getAllDownloadTask().containsKey(DownloadId.create("task-0"))) break
+                if (reloaded.allTasksForTest().containsKey(DownloadId.create("task-0"))) break
                 delay(25)
             }
             true

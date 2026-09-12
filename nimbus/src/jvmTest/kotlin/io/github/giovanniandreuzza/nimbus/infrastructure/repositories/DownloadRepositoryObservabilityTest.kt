@@ -69,8 +69,10 @@ class DownloadRepositoryObservabilityTest {
         try {
             awaitOrFail("the initial emission") { snapshots.isNotEmpty() }
 
-            task.updateProgress(42.0)
-            repository.updateDownloadProgress(task)
+            repository.transitionDownloadTask(
+                id = task.entityId.id,
+                persist = false
+            ) { it.updateProgress(42.0) }
 
             awaitOrFail("an emission carrying progress 42.0, got $snapshots") {
                 snapshots.any { states ->

@@ -443,6 +443,14 @@ have to discover from a bug report.
 - **A body that stops arriving part-way is a `TransportFailure`, and is retried.** It is measured
   against the declared `Content-Length` rather than inferred from an error, because a connection
   closed mid-body reads as an ordinary end of stream.
+- **`observeDownload` / `ensureDownloaded` flows end on a *permanent* failure even with
+  `autoStart`.** With auto-retry on, a temporary failure keeps the flow open — the retry is
+  coming and the flow is how a caller sees it happen — but a permanent one is never retried,
+  and a flow left open there suspends the caller for the life of the process. Before 2.5.0 a
+  404 did exactly that: a reconciliation loop awaiting each asset in a manifest stopped on the
+  first file the backend had removed. One case stays open by design: a *capped* auto-retry
+  policy that runs out leaves the task `Failed` with a temporary cause, so watch
+  `NimbusLogEvent.AutoRetryExhausted` if you set a cap.
 - **`withTransportRetry` applies to network failures.** Before 2.3.0 every transport error was
   classified permanent and nothing was ever retried; timeouts, connection resets and failed name
   resolution are now temporary. `withMaxRetryAttempts` / `withRetryBaseDelayMs` are shorthands

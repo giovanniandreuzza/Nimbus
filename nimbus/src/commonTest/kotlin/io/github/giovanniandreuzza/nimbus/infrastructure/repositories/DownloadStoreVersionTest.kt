@@ -48,7 +48,7 @@ class DownloadStoreVersionTest {
 
         assertTrue(result.isSuccess(), "expected the load to recover, got $result")
         assertTrue(
-            repository.getAllDownloadTask().isEmpty(),
+            repository.allTasksForTest().isEmpty(),
             "expected tasks from an unknown schema version to be discarded"
         )
     }
@@ -64,7 +64,7 @@ class DownloadStoreVersionTest {
         assertTrue(result.isSuccess(), "expected the load to succeed, got $result")
         assertEquals(
             1,
-            repository.getAllDownloadTask().size,
+            repository.allTasksForTest().size,
             "an app update must not throw away pending downloads: version 1 has no checksum " +
                     "fields, which decode as null, so its tasks are already valid version 2 tasks"
         )
