@@ -178,6 +178,18 @@ re-downloads a good file on every failure, forever.
 - `PermanentNimbusErrorCause.DownloadNotFound` — no task for this URL
 - `PermanentNimbusErrorCause.InvalidState(state)` — the task is not `Finished`
 
+**An expectation nothing could check is refused, never ignored.** `enqueueDownload` and
+`ensureDownloaded` fail with `PermanentNimbusErrorCause.ContentDigestDisabled` when an
+`expectedChecksum` is passed and no algorithm is configured, and with
+`PermanentNimbusErrorCause.ChecksumAlgorithmMismatch(expected, configured)` when it names a
+different algorithm than the configured one. Accepting either would report the download finished
+with the comparison never made — the caller believing bytes were verified that nobody read. A
+mismatched algorithm would be worse than silence: the values compare unequal, the transfer fails
+as `ChecksumMismatch`, which is *temporary*, and the whole file is refetched on every pass for a
+condition no retry can change. `startDownload` and `resumeDownload` apply the same check to an
+expectation that was already stored, because a store written by a build with a digest is read
+back by one without.
+
 **Resume correctness.** The resume offset comes from the length of the partial file on disk, so a
 digest accumulated only across one streaming session would hash the tail alone after a process
 restart and produce a value that is well-formed, plausible and wrong. The digest is therefore
@@ -218,7 +230,12 @@ sealed class PermanentNimbusErrorCause {
     data object DownloadNotFound   // no task registered for this fileUrl
     data class  FilePathInUse(filePath: String)
     data class  InsufficientDiskSpace(path: String, requiredBytes: Long, availableBytes: Long)
-    data object ContentDigestDisabled  // checksum() called with no withContentDigest(...)
+    data object ContentDigestDisabled  // a digest was asked for with no withContentDigest(...):
+                                       // checksum(), or an expectedChecksum passed to
+                                       // enqueueDownload/ensureDownloaded that nothing would check
+    data class  ChecksumAlgorithmMismatch(expected: DigestAlgorithm, configured: DigestAlgorithm)
+                                       // the expectedChecksum names a different digest than the
+                                       // configured one; comparing them would never agree
 
     // State machine violations
     data class  InvalidState(currentState: DownloadState)  // operation not allowed in this state

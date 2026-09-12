@@ -100,6 +100,41 @@ class EnsureDownloadedChecksumTest {
         )
     }
 
+    @Test
+    fun `a stale finished task carries its expectation into the download that replaces it`() =
+        runTest {
+            // The caller passes nothing, so nothing carries the expectation but the task —
+            // and the stale-Finished branch throws the task away. The replacement would then
+            // transfer unverified, which is the same silence as accepting an expectation
+            // nothing checks, reached from the other side.
+            val f = fixture()
+            val finished = DownloadTask.create(
+                id = URL,
+                fileUrl = URL,
+                filePath = PATH,
+                fileName = NAME,
+                fileSize = SIZE,
+                expectedChecksum = EXPECTED
+            )
+            finished.start()
+            finished.finish(EXPECTED)
+            f.repository.saveDownloadTask(finished)
+            // No file on disk: the finished task is stale and is removed and re-enqueued.
+
+            f.service.ensureDownloaded(URL, PATH, NAME, expectedChecksum = null)
+            advanceUntilIdle()
+
+            val task = when (val r = f.service.getDownloadTask(URL)) {
+                is Success -> r.value
+                is Failure -> throw AssertionError("task disappeared: ${r.error}")
+            }
+            assertEquals(
+                EXPECTED,
+                task.expectedChecksum,
+                "the expectation the store was holding must survive the task being recreated"
+            )
+        }
+
     private fun TestScope.fixture(): Fixture {
         val storage = InMemoryStorage()
         val repository = FakeDownloadTaskRepository()

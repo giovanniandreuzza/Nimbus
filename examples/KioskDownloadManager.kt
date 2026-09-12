@@ -405,6 +405,12 @@ private fun NimbusError.toReadable(): String = when (this) {
         PermanentNimbusErrorCause.InvalidUrl -> "invalid URL"
         PermanentNimbusErrorCause.InvalidFileName -> "invalid file name"
         is PermanentNimbusErrorCause.InvalidFileSize -> "invalid file size: ${c.cause?.message}"
+        PermanentNimbusErrorCause.ContentDigestDisabled ->
+            "no digest configured: call Nimbus.Builder().withContentDigest(...)"
+
+        is PermanentNimbusErrorCause.ChecksumAlgorithmMismatch ->
+            "expected ${c.expected.name} but Nimbus computes ${c.configured.name}"
+
         PermanentNimbusErrorCause.DownloadNotFound -> "download not found"
         is PermanentNimbusErrorCause.FilePathInUse -> "path already in use: ${c.filePath}"
         is PermanentNimbusErrorCause.InsufficientDiskSpace ->

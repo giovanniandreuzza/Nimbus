@@ -558,6 +558,16 @@ internal class DownloadService(
                 .onFailure { return@withReady Failure(it) }
         }
 
+        // What the caller asked for, or — when they asked for nothing — what the task was
+        // already carrying. The stale-Finished branch below removes the task and enqueues a
+        // replacement, and enqueueing with the argument alone drops an expectation the store
+        // was holding: the new transfer then runs unverified with nobody told, which is the
+        // silence this whole change exists to end. It is carried only when this build could
+        // honour it — a stale expectation from a build that had a digest must not wall off a
+        // build that has none, since the task is being recreated from scratch anyway and the
+        // caller asked for no verification.
+        var expectation = expectedChecksum
+
         // The loop only continues when a stale Finished task is removed (at most once),
         // after which the task no longer exists and the loop exits via the Failure branch.
         // A limit of 2 prevents an infinite loop if the state machine behaves unexpectedly.
@@ -571,6 +581,13 @@ internal class DownloadService(
                 is Success -> {
                     val dto = taskRes.value
                     if (dto.state is DownloadState.Finished) {
+                        val stored = dto.expectedChecksum
+                        if (expectation == null &&
+                            stored != null &&
+                            validateChecksumExpectation(stored) is Success
+                        ) {
+                            expectation = stored
+                        }
                         removeDownload(
                             fileUrl,
                             deleteAssociatedFile = true
@@ -599,7 +616,7 @@ internal class DownloadService(
                         fileUrl,
                         filePath,
                         fileName,
-                        expectedChecksum
+                        expectation
                     ).getOr { return@withReady Failure(it) }
                     startDownload(fileUrl).getOr { return@withReady Failure(it) }
                     return@withReady observeDownload(fileUrl)
