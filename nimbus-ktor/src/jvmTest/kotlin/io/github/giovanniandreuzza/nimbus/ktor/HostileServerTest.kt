@@ -134,11 +134,26 @@ class HostileServerTest {
         // which is how this reached a release pull request looking green.
         val outcomes = (1..10).map { collect(offset = 0L) }
 
-        val delivered = outcomes.mapNotNull { (it as? Success)?.value?.size }
+        val described = outcomes.map { outcome ->
+            when (outcome) {
+                is Success -> "completed, delivering ${outcome.value.size} bytes"
+                is Failure -> {
+                    val error = outcome.error
+                    if (error is DownloadError.TemporaryError &&
+                        error.errorCause is TemporaryDownloadErrorCause.TransportFailure
+                    ) {
+                        null
+                    } else {
+                        "$error"
+                    }
+                }
+            }
+        }
+        val wrong = described.filterNotNull()
         assertTrue(
-            delivered.isEmpty(),
-            "a connection that died must never read as a completed transfer; " +
-                    "${delivered.size} of ${outcomes.size} did, delivering $delivered bytes"
+            wrong.isEmpty(),
+            "every dropped connection has to be reported as a retryable transport failure; " +
+                    "${wrong.size} of ${outcomes.size} were not: $wrong"
         )
     }
 
