@@ -53,6 +53,29 @@ public sealed class PermanentDownloadErrorCause(
     )
 
     /**
+     * The volume ran out of room while the bytes were being written.
+     *
+     * Separate from [StorageError] because it is the one storage failure a caller can do
+     * something about, and because the headroom check that runs before a transfer starts
+     * already reports a shortage as a shortage — a device that fills up part-way deserves
+     * the same answer as one that was already full, not a generic failure that sends
+     * whoever reads the log looking at permissions.
+     *
+     * @param path The file being written.
+     * @param requiredBytes What was still left to write.
+     * @param availableBytes What the volume said was free.
+     */
+    public data class InsufficientDiskSpace(
+        val path: String,
+        val requiredBytes: Long,
+        val availableBytes: Long
+    ) : PermanentDownloadErrorCause(
+        code = "insufficient_disk_space",
+        message = "Insufficient disk space for $path " +
+                "(required $requiredBytes bytes, available $availableBytes)."
+    )
+
+    /**
      * A local storage error (I/O failure, permission denied) prevented the download
      * from proceeding.
      *

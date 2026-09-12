@@ -25,6 +25,7 @@ import kotlinx.io.Sink
 import kotlinx.io.buffered
 import kotlinx.io.Source
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
@@ -37,11 +38,14 @@ import kotlin.test.assertTrue
  *
  * What matters here is not that it fails — it must — but what it says.
  *
- * This pins today's answer: a permanent [PermanentDownloadErrorCause.StorageError] carrying
- * the reason the volume gave. Worth knowing that the same real condition wears a second face:
- * caught by the headroom check before a transfer starts it is reported as
- * `PermanentNimbusErrorCause.InsufficientDiskSpace`, and caught here it is not. A caller that
- * prunes its cache and retries on the first will not recognise the second.
+ * The same real condition used to wear two faces: caught by the headroom check before a
+ * transfer starts it was reported as insufficient space, and caught here it arrived as a
+ * generic storage failure with the reason buried in a string. A caller that prunes its cache
+ * and retries on the first would not have recognised the second.
+ *
+ * So a failed write now asks the volume how much room is left, and only calls it a shortage
+ * when the volume says there is one — a write that failed for any other reason stays exactly
+ * what it was.
  */
 class DiskFullDuringTransferTest {
 
@@ -56,13 +60,28 @@ class DiskFullDuringTransferTest {
         assertTrue(h.failures.isNotEmpty(), "running out of space has to fail the transfer")
         val cause = (h.failures.single() as DownloadError.PermanentError).errorCause
         assertTrue(
-            cause is PermanentDownloadErrorCause.StorageError,
-            "expected the write failure to surface as a storage error, got $cause"
+            cause is PermanentDownloadErrorCause.InsufficientDiskSpace,
+            "a volume that refused the write because it is full has to say so, not hide it " +
+                    "behind a generic storage failure that sends a reader looking at " +
+                    "permissions; got $cause"
         )
+        assertEquals(PATH, cause.path)
+        assertEquals(0L, cause.availableBytes)
+    }
+
+    @Test
+    fun `a write that fails for any other reason stays a storage error`() = runTest {
+        val h = Harness(this)
+        h.storage.onSink = { Success(h.failingSink()) }
+        // The volume has room: whatever stopped the write, it was not space.
+        h.storage.usableSpace = Long.MAX_VALUE
+
+        h.run()
+
+        val cause = (h.failures.single() as DownloadError.PermanentError).errorCause
         assertTrue(
-            cause.cause?.message?.contains("space", ignoreCase = true) == true,
-            "whatever the type, the reason the volume refused the write has to survive into " +
-                    "the cause chain, or the log cannot explain the device; got ${cause.cause}"
+            cause is PermanentDownloadErrorCause.StorageError,
+            "only a genuine shortage may be reported as one; got $cause"
         )
     }
 
