@@ -2,6 +2,10 @@
 
 > Kotlin Multiplatform (Android · JVM · iOS) download manager library.
 > Targets: Android minSdk 21, JVM 17, iOS.
+> Transport-agnostic: the library moves no bytes itself. HTTP(S) ships as the `nimbus-ktor`
+> artifact; any other transport (ftp, local/network share, a custom protocol) is an adapter
+> implementing `NimbusDownloadPort`. Core accepts any URL carrying a scheme and never judges
+> which schemes exist.
 > All errors are returned as typed values — no exceptions thrown across the public API.
 > Optional content digest: hash the bytes in the pass that already writes them to disk.
 
@@ -443,7 +447,26 @@ have to discover from a bug report.
 - Does not resume downloads that were `Enqueued` but never started across sessions —
   call `startDownload` again after `init()` if you want auto-resume on restart.
 
-## Implementing NimbusDownloadPort (required if not using nimbus-ktor)
+## Transports — implementing NimbusDownloadPort
+
+Nimbus moves no bytes. A transport adapter does. `nimbus-ktor` is the HTTP(S) one and ships with
+the library; every other transport is an adapter you write against this interface. Core checks
+only that a url carries a scheme (RFC 3986 syntax), so `ftp://`, `file://` or a scheme you invent
+reaches your adapter rather than being refused first.
+
+**Two requirements your transport must satisfy** — these are the real limits of the model:
+
+1. `getFileSize` must answer before the transfer. The size drives progress, the disk-headroom
+   check and the final integrity check. A transport that cannot announce a length does not fit.
+2. `downloadFile` must honour `offset`. On resume the bytes you supply are appended to what is
+   already on disk, so a transport that silently restarts from zero corrupts the file. If you
+   cannot seek, return a failure instead — Nimbus handles that.
+
+FTP satisfies both (`SIZE`, `REST`), as do local and network filesystems.
+
+The error vocabulary is deliberately HTTP-shaped (`ServerError(statusCode)`, `ResourceNotFound`,
+`RangeNotSatisfiable`). Map your transport's failures onto it, the way you map its wire format
+onto a `Source`.
 
 ```kotlin
 interface NimbusDownloadPort {
