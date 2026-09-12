@@ -121,6 +121,8 @@ class CompleteFileOnDiskTest {
                 notifyEveryBytes = 32L,
                 maxRetryAttempts = 1,
                 retryBaseDelayMs = 1L,
+                // The stall guard has its own test; these scenarios all deliver or fail promptly.
+                stallTimeoutMs = null,
                 digestAlgorithm = DigestAlgorithm.SHA256,
                 contentDigestPort = digestPortFor(storage)
             )

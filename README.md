@@ -202,6 +202,7 @@ Everything except the download port and the store location has a working default
 | `withContentDigest(algorithm)` | `null` | Hash content; `null` means no hashing at all |
 | `withMaxRetryAttempts(n)` | `3` | Retries for transient failures |
 | `withRetryBaseDelayMs(ms)` | `500` | Backoff base |
+| `withStallTimeoutMs(ms)` | `60_000` | Abandon a transfer that delivers nothing for this long; `null` disables |
 | `withMinReservedDiskBytes(bytes)` | `null` | Refuse to start without this much headroom |
 | `withDownloadBufferSize(bytes)` | `8 KB` | Transfer buffer |
 | `withDownloadNotifyEveryBytes(bytes)` | `512 KB` | How often progress is emitted |
@@ -293,6 +294,18 @@ maps its own wire format onto a `Source`.
 For HTTP specifically: when `offset > 0` send `Range: bytes=offset-`, accept **206** with a
 matching `Content-Range`, reject a **200** with a body (it would corrupt the file), and map **416**
 to `TemporaryDownloadErrorCause.RangeNotSatisfiable`. [`llms.txt`](llms.txt) has the full contract.
+
+Two rules that are easy to miss, and expensive to miss:
+
+- **Call `onSourceOpened` exactly once**, with one `Source` for the whole body. Nimbus opens the
+  destination file around that call and closes it when the call returns.
+- **Give the transport its own deadline for inactivity.** Nimbus abandons a transfer that delivers
+  nothing for `withStallTimeoutMs`, but abandoning it means cancelling your call — which only
+  unwinds an adapter that *suspends* while it waits. `KtorDownloadAdapter` blocks a thread inside
+  `runBlocking` when it reads the body, so it sets a socket timeout on every request instead
+  (30 s by default, `KtorDownloadAdapter(client, socketTimeoutMillis = …)`). Without one, a server
+  that answers with headers and then nothing wedges the transfer, holds its concurrency permit,
+  and `pauseDownload` hangs with it.
 
 ## What Nimbus does not do
 

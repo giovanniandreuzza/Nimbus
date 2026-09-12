@@ -45,6 +45,7 @@ public class Nimbus private constructor(
     downloadNotifyEveryBytes: Long,
     maxRetryAttempts: Int,
     retryBaseDelayMs: Long,
+    stallTimeoutMs: Long?,
     minReservedDiskBytes: Long?,
     autoStart: Boolean,
     digestAlgorithm: DigestAlgorithm?,
@@ -61,6 +62,7 @@ public class Nimbus private constructor(
         downloadNotifyEveryBytes = downloadNotifyEveryBytes,
         maxRetryAttempts = maxRetryAttempts,
         retryBaseDelayMs = retryBaseDelayMs,
+        stallTimeoutMs = stallTimeoutMs,
         minReservedDiskBytes = minReservedDiskBytes,
         autoStart = autoStart,
         digestAlgorithm = digestAlgorithm,
@@ -78,6 +80,7 @@ public class Nimbus private constructor(
         private var downloadNotifyEveryBytes: Long = 16 * 32 * 1024L
         private var maxRetryAttempts: Int = 3
         private var retryBaseDelayMs: Long = 500L
+        private var stallTimeoutMs: Long? = DEFAULT_STALL_TIMEOUT_MS
         private var minReservedDiskBytes: Long? = null
         private var autoStart: Boolean = false
         private var digestAlgorithm: DigestAlgorithm? = null
@@ -112,6 +115,29 @@ public class Nimbus private constructor(
 
         public fun withRetryBaseDelayMs(delayMs: Long): Builder =
             apply { retryBaseDelayMs = delayMs }
+
+        /**
+         * How long a transfer may deliver no bytes at all before it is abandoned and retried.
+         * Defaults to [DEFAULT_STALL_TIMEOUT_MS]; `null` disables the guard.
+         *
+         * A download that fails says so. A download that stalls says nothing: the task stays
+         * `Downloading`, its permit stays taken — with the default concurrency of one, that is
+         * the whole queue — and a device nobody is watching stops updating without a single
+         * event to explain why. The guard measures progress rather than elapsed time, so a
+         * transfer that legitimately takes hours is untouched.
+         *
+         * Note what a guard inside this library can and cannot do: it can cancel a transport
+         * that suspends while it waits, and it cannot interrupt one that blocks a thread.
+         * `KtorDownloadAdapter` therefore imposes a socket timeout of its own on every
+         * request; a hand-written [NimbusDownloadPort] should do the same.
+         */
+        public fun withStallTimeoutMs(timeoutMs: Long?): Builder =
+            apply {
+                require(timeoutMs == null || timeoutMs > 0L) {
+                    "stallTimeoutMs must be null or > 0"
+                }
+                stallTimeoutMs = timeoutMs
+            }
 
         /**
          * When non-null, requires at least this many bytes to remain free on the destination
@@ -160,6 +186,18 @@ public class Nimbus private constructor(
 
         public fun createAndInit(): NimbusAPI = build().init()
 
+        public companion object {
+            /**
+             * A minute of a transfer delivering nothing at all.
+             *
+             * Long enough that no congested link is mistaken for a dead one — a transfer
+             * moving even a single buffer a minute keeps itself alive — and short enough that
+             * an appliance recovers from a wedged connection while the day's content is still
+             * relevant.
+             */
+            public const val DEFAULT_STALL_TIMEOUT_MS: Long = 60_000L
+        }
+
         public fun build(): Nimbus {
             requireNotNull(downloadManagerPath) { "downloadManagerPath must be provided" }
             requireNotNull(nimbusDownloadPort) { "nimbusDownloadPort must be provided" }
@@ -189,6 +227,7 @@ public class Nimbus private constructor(
                 downloadNotifyEveryBytes = downloadNotifyEveryBytes,
                 maxRetryAttempts = maxRetryAttempts,
                 retryBaseDelayMs = retryBaseDelayMs,
+                stallTimeoutMs = stallTimeoutMs,
                 minReservedDiskBytes = minReservedDiskBytes,
                 autoStart = autoStart,
                 digestAlgorithm = digestAlgorithm,

@@ -204,6 +204,8 @@ class RangeNotSatisfiableTest {
                 notifyEveryBytes = 32L,
                 maxRetryAttempts = maxRetryAttempts,
                 retryBaseDelayMs = 1L,
+                // The stall guard has its own test; these scenarios all deliver or fail promptly.
+                stallTimeoutMs = null,
                 digestAlgorithm = digestAlgorithm,
                 contentDigestPort = digestPortFor(storage)
             )

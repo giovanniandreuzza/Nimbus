@@ -219,6 +219,8 @@ private class Harness(
         notifyEveryBytes = 64 * 1024L,
         maxRetryAttempts = 3,
         retryBaseDelayMs = 1L,
+        // The stall guard has its own test; these scenarios all deliver or fail promptly.
+        stallTimeoutMs = null,
         digestAlgorithm = algorithm,
                 contentDigestPort = digestPortFor(storage)
     )

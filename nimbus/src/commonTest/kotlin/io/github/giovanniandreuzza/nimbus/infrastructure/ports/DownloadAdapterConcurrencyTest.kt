@@ -177,6 +177,8 @@ class DownloadAdapterConcurrencyTest {
             notifyEveryBytes = 128L,
             maxRetryAttempts = maxRetryAttempts,
             retryBaseDelayMs = 1L,
+            // The stall guard has its own test; these scenarios all deliver or fail promptly.
+            stallTimeoutMs = null,
             digestAlgorithm = null,
                 contentDigestPort = digestPortFor(storage)
         )

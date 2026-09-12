@@ -11,6 +11,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.PermanentDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
+import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryGetFileSizeErrorCause
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.ContentDigestPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
@@ -28,7 +29,10 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -37,6 +41,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import kotlinx.io.InternalIoApi
 import kotlinx.io.Sink
@@ -65,6 +70,11 @@ internal class DownloadAdapter(
     private val notifyEveryBytes: Long,
     private val maxRetryAttempts: Int,
     private val retryBaseDelayMs: Long,
+    /**
+     * How long a transfer may make no progress at all before it is abandoned and retried.
+     * Null disables the guard entirely. See [runWithStallWatchdog].
+     */
+    private val stallTimeoutMs: Long?,
     /** When non-null, every transfer is digested with it. Null means no hashing at all. */
     private val digestAlgorithm: DigestAlgorithm? = null,
     /** Hashes a file that is already on disk, for the case where nothing is transferred. */
@@ -75,8 +85,28 @@ internal class DownloadAdapter(
     private val jobsMutex = Mutex()
     private val downloadJobs = mutableMapOf<String, Job>()
 
+    /**
+     * The size request gets the same deadline as a transfer, for the same reason.
+     *
+     * It is the first thing every enqueue and every retry does, and it runs on the caller's
+     * coroutine — so a server that accepts the connection and then answers nothing does not
+     * fail a download, it suspends whoever asked for one. On a device reconciling a manifest
+     * that is the loop that keeps the whole catalogue up to date.
+     */
     override suspend fun getFileSizeToDownload(fileUrl: String): KResult<Long, GetFileSizeError> {
-        return nimbusDownloadPort.getFileSize(fileUrl)
+        val timeout = stallTimeoutMs ?: return nimbusDownloadPort.getFileSize(fileUrl)
+
+        return withTimeoutOrNull(timeout) { nimbusDownloadPort.getFileSize(fileUrl) }
+            ?: Failure(
+                GetFileSizeError.TemporaryError(
+                    TemporaryGetFileSizeErrorCause.TransportFailure(
+                        KError(
+                            code = "size_request_stalled",
+                            message = "The size request made no progress for $timeout ms."
+                        )
+                    )
+                )
+            )
     }
 
     @OptIn(InternalIoApi::class)
@@ -372,6 +402,15 @@ internal class DownloadAdapter(
                 digest = primed
             }
 
+            // The file is already whole, so there is nothing left to ask for. Reached when an
+            // attempt delivered every byte and then failed on its way out — a port that hangs
+            // after the last chunk, a connection closed without a clean end — and without this
+            // the next attempt would ask to resume from the end of a complete file, which a
+            // server answers with a 416 and this adapter answers by truncating everything it
+            // just spent the bandwidth on. The digest was primed from the same file a moment
+            // ago, so what it reports describes the whole of it.
+            if (progressBytes == totalFileSize) break@downloadLoop
+
             val sink = openSink(downloadTask.filePath, id) ?: return null
 
             // Nothing this callback does may escape into the port implementation's `try`.
@@ -385,35 +424,42 @@ internal class DownloadAdapter(
             // from the body is the transport, anything else is this adapter's own storage.
             var transferFailure: DownloadError? = null
 
-            val result = nimbusDownloadPort.downloadFile(
-                fileUrl = downloadTask.fileUrl,
-                offset = progressBytes
-            ) { source ->
-                try {
-                    sink.use { output ->
-                        progressBytes = copySourceToSink(
-                            source = source,
-                            sink = output,
-                            id = id,
-                            totalFileSize = totalFileSize,
-                            initialProgressBytes = progressBytes,
-                            digest = digest
+            // One per attempt: the watchdog below reads it, the copy loop writes to it, and
+            // neither of them outlives the attempt.
+            val progressTicks = Channel<Unit>(Channel.CONFLATED)
+
+            val result = runWithStallWatchdog(progressTicks) {
+                nimbusDownloadPort.downloadFile(
+                    fileUrl = downloadTask.fileUrl,
+                    offset = progressBytes
+                ) { source ->
+                    try {
+                        sink.use { output ->
+                            progressBytes = copySourceToSink(
+                                source = source,
+                                sink = output,
+                                id = id,
+                                totalFileSize = totalFileSize,
+                                initialProgressBytes = progressBytes,
+                                digest = digest,
+                                progressTicks = progressTicks
+                            )
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: BodyReadFailure) {
+                        transferFailure = DownloadError.TemporaryError(
+                            TemporaryDownloadErrorCause.TransportFailure(unexpectedKError(e.cause))
+                        )
+                    } catch (e: Throwable) {
+                        transferFailure = DownloadError.PermanentError(
+                            storageFailureCause(
+                                filePath = downloadTask.filePath,
+                                totalFileSize = totalFileSize,
+                                cause = e
+                            )
                         )
                     }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: BodyReadFailure) {
-                    transferFailure = DownloadError.TemporaryError(
-                        TemporaryDownloadErrorCause.TransportFailure(unexpectedKError(e.cause))
-                    )
-                } catch (e: Throwable) {
-                    transferFailure = DownloadError.PermanentError(
-                        storageFailureCause(
-                            filePath = downloadTask.filePath,
-                            totalFileSize = totalFileSize,
-                            cause = e
-                        )
-                    )
                 }
             }
 
@@ -601,7 +647,83 @@ internal class DownloadAdapter(
     )
 
     /**
+     * Runs [block] and abandons it when it stops making progress.
+     *
+     * A transfer that fails announces itself. A transfer that *stalls* does not: a server that
+     * accepts the connection, returns its headers and then sends nothing is, to every layer
+     * below this one, a download still in progress. It holds its permit — with the default
+     * concurrency of one, that is the whole queue — and no state changes, so nothing is
+     * emitted, nothing is logged, and a device nobody is watching simply stops updating. It is
+     * the one failure mode in this library that is silent by construction, which on an
+     * unattended appliance is worse than a loud one.
+     *
+     * Progress is measured, not elapsed time: only [copySourceToSink] can say whether bytes
+     * are arriving, and it reports each read that delivered any. A transfer that takes hours
+     * is fine; a transfer that delivers nothing for [stallTimeoutMs] is not.
+     *
+     * **What this can and cannot interrupt.** Cancelling the transfer unwinds an
+     * implementation that suspends while it waits. An implementation that *blocks a thread*
+     * instead cannot be interrupted by anyone — `ByteReadChannel.asSource()` in Ktor reads
+     * through `runBlocking`, so the read is not a suspension point and the cancellation stays
+     * pending until the socket itself gives up. That is why `KtorDownloadAdapter` imposes a
+     * socket timeout on every request it makes: this watchdog names the condition, and the
+     * transport's own timeout is what ends it.
+     */
+    private suspend fun runWithStallWatchdog(
+        progressTicks: Channel<Unit>,
+        block: suspend () -> KResult<Unit, DownloadError>
+    ): KResult<Unit, DownloadError> {
+        val timeout = stallTimeoutMs ?: return block()
+
+        return coroutineScope {
+            var stalled = false
+
+            val transfer = async { block() }
+
+            // Cancelling a child cancels only that child, so the failure below is reported
+            // from a scope that is still very much alive.
+            val watchdog = launch {
+                while (true) {
+                    val tick = withTimeoutOrNull(timeout) { progressTicks.receive() }
+                    if (tick == null) {
+                        // The flag, not the cancellation cause, is what the catch below reads:
+                        // in common code `Job.cancel` wants kotlinx's CancellationException and
+                        // an unwinding transfer may wrap whatever it is given, so identity of
+                        // the cause is not something to depend on.
+                        stalled = true
+                        transfer.cancel()
+                        return@launch
+                    }
+                }
+            }
+
+            try {
+                transfer.await()
+            } catch (e: CancellationException) {
+                // Ours, or the caller's? A pause or a cancelDownload arrives the same way and
+                // must keep unwinding; only a stall becomes a failure to report.
+                if (!stalled || !currentCoroutineContext().isActive) throw e
+                Failure(
+                    DownloadError.TemporaryError(
+                        TemporaryDownloadErrorCause.TransportFailure(
+                            KError(
+                                code = "transfer_stalled",
+                                message = "The transfer delivered no bytes for $timeout ms."
+                            )
+                        )
+                    )
+                )
+            } finally {
+                watchdog.cancel()
+                progressTicks.close()
+            }
+        }
+    }
+
+    /**
      * @param digest fed every byte that passes, when a digest is being computed.
+     * @param progressTicks told about every read that delivered bytes, so
+     * [runWithStallWatchdog] can tell a slow transfer from a dead one.
      */
     @OptIn(InternalIoApi::class)
     private suspend fun copySourceToSink(
@@ -610,7 +732,8 @@ internal class DownloadAdapter(
         id: String,
         totalFileSize: Long,
         initialProgressBytes: Long,
-        digest: ContentDigest?
+        digest: ContentDigest?,
+        progressTicks: Channel<Unit>? = null
     ): Long {
         var progressBytes = initialProgressBytes
         source.use { input ->
@@ -647,6 +770,13 @@ internal class DownloadAdapter(
                 progressBytes += bytesRead
                 bytesSinceLastProgressUpdate += bytesRead
                 sink.emit()
+
+                // The only evidence the watchdog gets. Sent per read rather than per progress
+                // notification, because a link crawling along below the notification threshold
+                // is slow, not dead, and must not be killed as if it were. `trySend` on a
+                // conflated channel never suspends and never fails, so the hot path pays one
+                // atomic swap for it.
+                progressTicks?.trySend(Unit)
 
                 if (bytesSinceLastProgressUpdate >= notifyEveryBytes) {
                     val progress = getDownloadProgress(progressBytes, totalFileSize)

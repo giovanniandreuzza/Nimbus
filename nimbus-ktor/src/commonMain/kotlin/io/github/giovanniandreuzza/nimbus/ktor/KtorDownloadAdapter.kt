@@ -12,6 +12,8 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownl
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryGetFileSizeErrorCause
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.timeout
+import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.head
 import io.ktor.client.request.headers
 import io.ktor.client.request.prepareGet
@@ -49,15 +51,45 @@ import kotlin.coroutines.cancellation.CancellationException
  * not close it.
  *
  * @param httpClient the Ktor [HttpClient] used for HTTP requests.
+ * @param socketTimeoutMillis the longest this adapter will wait between two packets before
+ * giving up on a request. Applied per request, so it holds whatever the client was configured
+ * with; `null` leaves the client's own configuration alone.
+ *
+ * It is not a nicety. Reading the body goes through `ByteReadChannel.asSource()`, which waits
+ * for bytes inside `runBlocking` — the read is not a suspension point, so a server that
+ * accepts the connection, returns its headers and then sends nothing cannot be interrupted by
+ * cancelling the download. `pauseDownload` and `cancelDownload` would suspend, the
+ * concurrency permit would stay taken, and Nimbus's own stall guard could name the condition
+ * but not end it. Only the socket's own deadline ends it, which is why this adapter sets one
+ * on every request it makes rather than trusting that the client has one.
+ *
+ * No request timeout is set: a download of a large file over a slow link takes as long as it
+ * takes, and an overall deadline would kill exactly the transfers this library exists to
+ * finish. Inactivity is the thing being bounded, not duration.
+ *
  * @author Giovanni Andreuzza
  */
 public class KtorDownloadAdapter(
-    private val httpClient: HttpClient
+    private val httpClient: HttpClient,
+    private val socketTimeoutMillis: Long? = DEFAULT_SOCKET_TIMEOUT_MS
 ) : NimbusDownloadPort {
+
+    /**
+     * Applies this adapter's inactivity deadline to a request.
+     *
+     * `timeout {}` writes the engine capability directly on the request, so it takes effect
+     * whether or not the caller installed the `HttpTimeout` plugin. An engine that does not
+     * support the capability ignores it, and there the transport has no deadline this adapter
+     * can give it.
+     */
+    private fun HttpRequestBuilder.applySocketTimeout() {
+        val deadline = socketTimeoutMillis ?: return
+        timeout { socketTimeoutMillis = deadline }
+    }
 
     override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> {
         return try {
-            val headResponse = httpClient.head(fileUrl)
+            val headResponse = httpClient.head(fileUrl) { applySocketTimeout() }
             when (val head = mapFileSizeResponse(headResponse)) {
                 is Success -> {
                     if (head.value > 0L) Success(head.value)
@@ -90,6 +122,7 @@ public class KtorDownloadAdapter(
     private suspend fun probeTotalSizeWithRangeGet(fileUrl: String): KResult<Long, GetFileSizeError> {
         return try {
             httpClient.prepareGet(fileUrl) {
+                applySocketTimeout()
                 headers { append("Range", "bytes=0-0") }
             }.execute { response ->
                 when (response.status.value) {
@@ -178,6 +211,7 @@ public class KtorDownloadAdapter(
     ): KResult<Unit, DownloadError> {
         return try {
             httpClient.prepareGet(fileUrl) {
+                applySocketTimeout()
                 if (offset > 0) {
                     headers { append("Range", "bytes=$offset-") }
                 }
@@ -369,6 +403,19 @@ public class KtorDownloadAdapter(
 
     private fun unexpectedError(e: Exception): KError =
         KError(code = "unexpected_error", message = e.message ?: "An unexpected error occurred")
+
+    public companion object {
+        /**
+         * Thirty seconds without a single packet.
+         *
+         * Deliberately below Nimbus's own stall deadline
+         * (`Nimbus.Builder.DEFAULT_STALL_TIMEOUT_MS`, a minute): the socket has to be the one
+         * to let go first, because it is the only one that can. By the time the library's
+         * guard looks, the read has already failed with a `SocketTimeoutException` — an
+         * `IOException`, so a temporary error, so retried from the bytes already on disk.
+         */
+        public const val DEFAULT_SOCKET_TIMEOUT_MS: Long = 30_000L
+    }
 }
 
 /** Parses total length from Content-Range (value after slash; ignores unknown total `*` ). */

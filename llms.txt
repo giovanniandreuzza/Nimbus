@@ -34,6 +34,7 @@ val api: NimbusAPI = Nimbus.Builder()
     .withDownloadNotifyEveryBytes(512 * 1024L)// optional, default ~512 KB
     .withMaxRetryAttempts(3)                  // optional, default 3
     .withRetryBaseDelayMs(500L)               // optional, default 500 ms
+    .withStallTimeoutMs(60_000L)              // optional, default 60 s; null disables
     .withMinReservedDiskBytes(50 * 1024 * 1024L) // optional — disk headroom guard
     .withAutoStart(true)                      // optional, default false
     .withContentDigest(DigestAlgorithm.SHA256)// optional, default null (no hashing at all)
@@ -449,6 +450,21 @@ have to discover from a bug report.
 - **A digest survives a resume.** It is primed from the bytes already on disk at the start of every
   attempt, so an interrupted-and-resumed download hashes to the same value as one that ran straight
   through.
+- **A transfer that delivers nothing for `withStallTimeoutMs` (60 s by default) is abandoned and
+  retried,** reported as `TemporaryDownloadErrorCause.TransportFailure` with cause code
+  `transfer_stalled`; a size request that never answers fails with `size_request_stalled`. The
+  guard measures *progress*, not elapsed time, so a transfer that legitimately takes hours is
+  untouched. It exists because a stall is the one failure this library cannot otherwise see: the
+  task stays `Downloading`, its concurrency permit stays taken, and nothing is logged.
+- **A transport that blocks a thread cannot be interrupted by that guard.** Cancelling a transfer
+  unwinds an adapter that suspends while waiting for bytes; Ktor's `ByteReadChannel.asSource()`
+  waits inside `runBlocking`, so `KtorDownloadAdapter` imposes a 30 s socket timeout on every
+  request it makes (`KtorDownloadAdapter(client, socketTimeoutMillis = …)`, `null` to opt out).
+  A hand-written port must do the same, or a wedged read outlives both `pauseDownload` and the
+  stall guard.
+- **A body that arrived in full is finished even if the transport then hangs.** The attempt is
+  abandoned at the deadline, and because nothing is left to fetch, no further request is made —
+  asking to resume from the end of a complete file invites a 416, which truncates it.
 
 ## What Nimbus does NOT do
 

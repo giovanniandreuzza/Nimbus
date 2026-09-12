@@ -101,6 +101,8 @@ class ZeroLengthReadTest {
             notifyEveryBytes = 512L,
             maxRetryAttempts = 2,
             retryBaseDelayMs = 1L,
+            // The stall guard has its own test; these scenarios all deliver or fail promptly.
+            stallTimeoutMs = null,
             digestAlgorithm = DigestAlgorithm.SHA256,
             contentDigestPort = digestPortFor(storage)
         )

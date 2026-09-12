@@ -48,6 +48,7 @@ internal fun init(
     downloadNotifyEveryBytes: Long,
     maxRetryAttempts: Int,
     retryBaseDelayMs: Long,
+    stallTimeoutMs: Long?,
     minReservedDiskBytes: Long?,
     autoStart: Boolean,
     digestAlgorithm: DigestAlgorithm?,
@@ -83,6 +84,7 @@ internal fun init(
         notifyEveryBytes = downloadNotifyEveryBytes,
         maxRetryAttempts = maxRetryAttempts,
         retryBaseDelayMs = retryBaseDelayMs,
+        stallTimeoutMs = stallTimeoutMs,
         digestAlgorithm = digestAlgorithm,
         contentDigestPort = contentDigestPort
     )

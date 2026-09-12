@@ -49,6 +49,19 @@ public interface NimbusDownloadPort {
      * The one thing to pass through rather than catch is `CancellationException`: it is how a
      * paused or cancelled download unwinds, and swallowing it prevents that.
      *
+     * **Call [onSourceOpened] exactly once**, with a single [Source] covering the whole body.
+     * Nimbus opens the destination file around that one call and closes it when the call
+     * returns, so a second invocation writes to a closed sink and is reported as a storage
+     * failure — a permanent one, which stops the download. Stream the body through the one
+     * [Source] instead; a chunked or multi-part wire format is the adapter's to join up.
+     *
+     * **A transport that blocks a thread cannot be interrupted.** Nimbus abandons a transfer
+     * that delivers nothing for `withStallTimeoutMs`, and abandoning it means cancelling this
+     * call — which only unwinds an implementation that *suspends* while it waits for bytes. An
+     * implementation that blocks (Ktor's `ByteReadChannel.asSource()` reads through
+     * `runBlocking`) must impose a deadline of its own on the transport, the way
+     * `KtorDownloadAdapter` sets a socket timeout on every request it makes.
+     *
      * @param fileUrl The file URL.
      * @param offset The byte offset to resume from, or 0 for a fresh download.
      * @param onSourceOpened Receives the response body. Never throws on Nimbus's behalf.
