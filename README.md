@@ -8,13 +8,18 @@ that have to survive the conditions they actually run in: a link that drops half
 killed mid-download, a volume that fills up, a device that comes back a day later and should not
 start from zero.
 
-You bring the HTTP client and choose where files land. Nimbus owns the state machine, resume,
-retries, the concurrency limit and persistence. Every failure comes back as a typed value you can
-match on exhaustively — nothing is thrown across the public boundary.
+**Nimbus does not speak any transport itself.** It owns the state machine, resume, retries, the
+concurrency limit and persistence; moving the bytes is an adapter you plug in. HTTP(S) ships ready
+to use as [`nimbus-ktor`](#install) — anything else, `ftp://`, a local or network share, a device
+protocol of your own, is an adapter you write against one small interface. Nothing in the library
+decides which schemes exist.
+
+You also choose where files land. Every failure comes back as a typed value you can match on
+exhaustively — nothing is thrown across the public boundary.
 
 **Contents** · [Install](#install) · [Quickstart](#quickstart) · [Using the API](#using-the-api) ·
 [API reference](#api-reference) · [Configuration](#configuration) · [Errors](#handling-errors) ·
-[Limitations](#what-nimbus-does-not-do)
+[Transports](#transports) · [Limitations](#what-nimbus-does-not-do)
 
 ---
 
@@ -24,7 +29,8 @@ match on exhaustively — nothing is thrown across the public boundary.
 ```kotlin
 dependencies {
     implementation("io.github.giovanniandreuzza:nimbus:2.3.0")
-    // Optional but recommended — saves you implementing NimbusDownloadPort yourself:
+    // The HTTP(S) transport adapter. Optional: leave it out if you are writing your own
+    // adapter for a different transport.
     implementation("io.github.giovanniandreuzza:nimbus-ktor:2.3.0")
 }
 ```
@@ -221,9 +227,10 @@ A failed download carries the same detail in its state: `DownloadState.Failed(er
 
 The full hierarchy — every variant and when it occurs — is in [`llms.txt`](llms.txt).
 
-## Bring your own HTTP client
+## Transports
 
-Use `KtorDownloadAdapter` from the `nimbus-ktor` artifact and skip this. Otherwise implement:
+Nimbus moves no bytes. A **transport adapter** does, and the library talks to it through one
+interface:
 
 ```kotlin
 interface NimbusDownloadPort {
@@ -236,21 +243,50 @@ interface NimbusDownloadPort {
 }
 ```
 
-Stream the body to the `Source` you are handed — do not buffer the whole response. When
-`offset > 0` send `Range: bytes=offset-`, accept **206** with a matching `Content-Range`, reject a
-**200** with a body (it would corrupt the file), and map **416** to
-`TemporaryDownloadErrorCause.RangeNotSatisfiable`. `llms.txt` has the full contract.
+A URL, a byte offset, and a stream of bytes. There is no HTTP in that shape, and core does not
+judge the scheme either — it only checks the url *has* one, so `ftp://`, `file://`, `s3://` or a
+scheme you invent reaches your adapter instead of being refused before it is asked.
 
-### Other transports
+### What ships with Nimbus
 
-Nothing in the port is HTTP-specific — it is a URL, a byte offset and a stream — and core accepts
-any URL that carries a scheme, so `ftp://`, `file://` or a scheme of your own reaches your adapter
-rather than being refused before it. Two things your transport has to be able to do: report the
-size before the transfer starts, and begin at a byte offset when asked to resume.
+| Transport | Adapter | Artifact |
+|---|---|---|
+| HTTP(S) | `KtorDownloadAdapter` | `io.github.giovanniandreuzza:nimbus-ktor` |
+| anything else | yours | — |
 
-The error vocabulary is deliberately HTTP-shaped (`ServerError(statusCode)`, `ResourceNotFound`,
-`RangeNotSatisfiable`). It is precise and widely understood, so an adapter for another transport
-maps its own failures onto it — the same way it maps its own wire format onto a `Source`.
+```kotlin
+Nimbus.Builder()
+    .withNimbusDownloadPort(KtorDownloadAdapter(httpClient))   // or your own adapter
+```
+
+More first-party adapters may follow. Nothing stops you shipping one in the meantime — the
+interface is public and stable.
+
+### What your transport has to be able to do
+
+Two requirements, and they are the honest limits of the design:
+
+1. **Report the size before the transfer.** `getFileSize` is called at enqueue time, and the size
+   drives progress, the disk-headroom check and the integrity check at the end.
+2. **Start from a byte offset.** `downloadFile` is called with `offset > 0` to resume, and the
+   bytes you supply are appended to what is already on disk. A transport that cannot seek will
+   corrupt the file if it silently restarts from zero — fail instead, and Nimbus will handle it.
+
+FTP satisfies both (`SIZE` and `REST`), as do local and network filesystems. A protocol that
+streams without announcing a length, or cannot resume mid-file, does not fit this model today.
+
+### Writing the adapter
+
+Stream the body into the `Source` you are handed — never buffer the whole response.
+
+Failures are reported with an error vocabulary that is deliberately HTTP-shaped
+(`ServerError(statusCode)`, `ResourceNotFound`, `RangeNotSatisfiable`). It is precise and widely
+understood, so an adapter for another transport maps its own failures onto it — the same way it
+maps its own wire format onto a `Source`.
+
+For HTTP specifically: when `offset > 0` send `Range: bytes=offset-`, accept **206** with a
+matching `Content-Range`, reject a **200** with a body (it would corrupt the file), and map **416**
+to `TemporaryDownloadErrorCause.RangeNotSatisfiable`. [`llms.txt`](llms.txt) has the full contract.
 
 ## What Nimbus does not do
 
@@ -260,8 +296,8 @@ maps its own failures onto it — the same way it maps its own wire format onto 
   each other's state. Run one instance and reach it from elsewhere through your own boundary.
 - It does not create the parent directory of `filePath` for you.
 - It does not enforce a process-wide singleton — your DI container's `single {}` does that.
-- It does not speak any transport itself. Any URL with a scheme is accepted; what actually
-  works is decided by the `NimbusDownloadPort` you supply.
+- It does not speak any transport itself — see [Transports](#transports). A transport that cannot
+  report a size up front, or cannot resume from a byte offset, does not fit the model today.
 - It does not auto-start tasks that were `Enqueued` but never started in a previous session; call
   `startDownload` after `init()` if you want that.
 
