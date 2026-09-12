@@ -3,15 +3,36 @@
 > [!TIP]
 > Want to chat live with me? Join me on [Discord server](https://discord.gg/EBXRXPRD).
 
-Nimbus is a Kotlin Multiplatform library that makes it quick and easy to download any file in your
-app, whether it's a large image, a video, or a PDF.
-It exposes low-level APIs to manage downloads with the provider you love the most and to store the
-downloaded files in the location you prefer.
+Nimbus is a Kotlin Multiplatform download manager for Android, JVM and iOS — built for transfers
+that have to survive the conditions they actually run in.
 
-You heard it right! Nimbus is designed to be easily integrated into Android, iOS, and KMM.
-It allows you to download files via Internet, via Bluetooth, or from any other source you can think.
-Store the file in the location you prefer, whether it's in the app's cache, in the app's files, or
-even in a remote location.
+It is designed around the awkward cases rather than the happy path: a link that drops halfway, a
+process killed mid-download, a volume that fills up, a device that comes back a day later and
+should not start from zero. Downloads resume from the bytes already on disk, every failure arrives
+as a typed value you can match on exhaustively — nothing is thrown across the public boundary —
+and an optional content digest lets you tell a file whose bytes changed from one that is intact
+and simply cannot be used.
+
+You bring the HTTP client and you choose where files land. Nimbus owns the state machine,
+the retries, the concurrency limit and the persistence.
+
+```kotlin
+val nimbus = Nimbus.Builder()
+    .withNimbusDownloadPort(KtorDownloadAdapter(httpClient))
+    .withDownloadManagerPath(storePath)
+    .createAndInit()
+
+nimbus.ensureDownloaded(url, directory, fileName)
+    .getOr { return }
+    .collect { state -> render(state) }
+```
+
+`ensureDownloaded` covers the whole lifecycle: enqueue, start, resume a paused task, retry a failed
+one, or return immediately if the file is already there.
+
+> [!NOTE]
+> **Working with an AI agent?** Point it at [`llms.txt`](llms.txt) — a complete, single-file API
+> reference written for coding agents, including the behaviours that are easy to assume wrongly.
 
 Get started with
 our [📚 installation guide](#installation)
