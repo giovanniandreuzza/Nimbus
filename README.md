@@ -28,10 +28,10 @@ exhaustively — nothing is thrown across the public boundary.
 <!-- x-release-please-start-version -->
 ```kotlin
 dependencies {
-    implementation("io.github.giovanniandreuzza:nimbus:2.3.0")
+    implementation("io.github.giovanniandreuzza:nimbus:2.4.0")
     // The HTTP(S) transport adapter. Optional: leave it out if you are writing your own
     // adapter for a different transport.
-    implementation("io.github.giovanniandreuzza:nimbus-ktor:2.3.0")
+    implementation("io.github.giovanniandreuzza:nimbus-ktor:2.4.0")
 }
 ```
 <!-- x-release-please-end -->

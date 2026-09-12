@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.4.0](https://github.com/giovanniandreuzza/Nimbus/compare/v2.3.0...v2.4.0) (2026-09-12)
+
+
+### Features
+
+* Nimbus.Builder() without the companion, and any scheme reaches the port ([040e0ae](https://github.com/giovanniandreuzza/Nimbus/commit/040e0ae747032b6c2ccc07ea6256d9dea12fcd17))
+
+
+### Bug Fixes
+
+* spell the scheme check in ASCII, and say what filePath actually is ([3fa5010](https://github.com/giovanniandreuzza/Nimbus/commit/3fa5010d2373acc3fba3280f0d41da9b25143edb))
+
+
+### Documentation
+
+* bring the agent-facing files up to what 2.3.0 shipped ([08e3672](https://github.com/giovanniandreuzza/Nimbus/commit/08e3672ec4054432eac2ee74299079316e37341d))
+* correct the plan's ruleset verification steps ([da514f4](https://github.com/giovanniandreuzza/Nimbus/commit/da514f499f6257554ffd73901b9af55411a788ba))
+* make the README show how the API is used ([bd0d941](https://github.com/giovanniandreuzza/Nimbus/commit/bd0d9413738cf522e2bd26bcaf7ea77624e06a49))
+* say plainly that the transport is pluggable and HTTP is one of them ([b30ff9a](https://github.com/giovanniandreuzza/Nimbus/commit/b30ff9ab2fd307e658360d3335f0b0de9df6c8eb))
+* stop telling maintainers to create a secret nothing reads ([71dd7fc](https://github.com/giovanniandreuzza/Nimbus/commit/71dd7fc32b02f7bf26c834cf4a16b9aff3c6e2a5))
+
 ## [2.3.0](https://github.com/giovanniandreuzza/Nimbus/compare/v2.2.0...v2.3.0) (2026-09-12)
 
 
