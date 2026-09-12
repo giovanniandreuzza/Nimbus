@@ -410,7 +410,7 @@ internal class DownloadAdapter(
                     transferFailure = DownloadError.PermanentError(
                         storageFailureCause(
                             filePath = downloadTask.filePath,
-                            remainingBytes = totalFileSize - progressBytes,
+                            totalFileSize = totalFileSize,
                             cause = e
                         )
                     )
@@ -563,18 +563,33 @@ internal class DownloadAdapter(
      */
     private fun storageFailureCause(
         filePath: String,
-        remainingBytes: Long,
+        totalFileSize: Long,
         cause: Throwable
     ): PermanentDownloadErrorCause {
         val available = when (val space = nimbusStoragePort.usableSpaceBytes(filePath)) {
             is Success -> space.value
             is Failure -> return PermanentDownloadErrorCause.StorageError(unexpectedKError(cause))
         }
-        if (available < remainingBytes) {
+
+        // What is left to write comes from the file, not from the byte counter. The counter
+        // is advanced before the buffered sink flushes, so the write that fails is often the
+        // flush of bytes the counter has already counted — leaving nothing outstanding by
+        // its reckoning, and a shortage that could never be recognised. It is the same
+        // lesson the resume offset had to learn.
+        val onDisk = when (val size = nimbusStoragePort.size(filePath)) {
+            is Success -> size.value
+            is Failure -> return PermanentDownloadErrorCause.StorageError(unexpectedKError(cause))
+        }
+        val outstanding = (totalFileSize - onDisk).coerceAtLeast(1L)
+
+        if (available < outstanding) {
             return PermanentDownloadErrorCause.InsufficientDiskSpace(
-                path = filePath,
-                requiredBytes = remainingBytes,
-                availableBytes = available
+                KError(
+                    code = "insufficient_disk_space",
+                    message = "Writing $filePath needed $outstanding more bytes, " +
+                            "the volume had $available.",
+                    cause = unexpectedKError(cause)
+                )
             )
         }
         return PermanentDownloadErrorCause.StorageError(unexpectedKError(cause))
