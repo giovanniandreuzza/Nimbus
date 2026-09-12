@@ -1,5 +1,58 @@
 # Changelog
 
+## [2.4.0](https://github.com/giovanniandreuzza/Nimbus/compare/v2.3.0...v2.4.0) (2026-09-12)
+
+### Changed
+
+- **`Nimbus.Builder()` no longer needs the companion object.** `Builder` was nested inside a
+  `companion object` that existed only to hold it, and Kotlin reaches a nested classifier as
+  `Outer.Companion.Nested` rather than `Outer.Nested` — so every caller had to write
+  `Nimbus.Companion.Builder()`. The companion is gone and `Builder` is nested directly in
+  `Nimbus`. No `Builder()` function was left in its place: a function and a class of the same
+  name in one scope is an ambiguity, and a deprecation shim for an entry point confuses more than
+  it saves.
+
+  **This is a source and binary break, released as a minor deliberately.** Semantic versioning
+  would call it a major; with 2.3.0 hours old and effectively no adopters, the maintainer chose
+  the smaller number and this note over a 3.0.0. Update call sites to `Nimbus.Builder()` — the
+  JVM class moves from `Nimbus$Companion$Builder` to `Nimbus$Builder`.
+
+### Added
+
+- **Any transport, not just HTTP.** Core used to require `http` or `https` before anything else
+  ran, which made `NimbusDownloadPort` unimplementable for ftp, a local or network share, or a
+  protocol of your own, however capable the adapter was: the request was refused before the port
+  was ever asked. A transport decision does not belong in the layer whose design rule is that it
+  knows nothing about transports.
+
+  What is still checked is that the url carries a scheme, as RFC 3986 spells it in ASCII —
+  a syntax check, not a judgement about transports. The url is also the task's identity, so a
+  string that is not a URL becomes a task nobody can address. `PermanentNimbusErrorCause.InvalidUrl`
+  now means *no scheme*.
+
+  Two things a transport must still be able to do, and they are the honest limits of the model:
+  report the size before the transfer, and start from a byte offset when resuming. `nimbus-ktor`
+  remains the HTTP(S) adapter; see README → Transports.
+
+### Documentation
+
+- The README is ordered by what a reader does — install, one working download, then each
+  operation with the code for it — instead of listing capabilities in prose. It also states two
+  things that were previously discoverable only by getting them wrong: `filePath` is the full
+  destination path of the file and is never joined with `fileName`, and progress is not persisted
+  — the partial file is what makes a resume work, and the offset is read back from its length.
+- `llms.txt` matches the shipped API again and gained a section on the guarantees that are easy to
+  assume wrongly. `AGENTS.md` is new, and routes to `CLAUDE.md` or `llms.txt` rather than
+  restating either.
+- The one-process limitation is stated where an integrator will see it. The store has no locking
+  between processes; two instances over one `withDownloadManagerPath` overwrite each other.
+
+### Migration
+
+- `Nimbus.Companion.Builder()` → `Nimbus.Builder()`.
+- Nothing else changes for existing callers. `InvalidUrl` is now returned in strictly fewer cases
+  than before, so no url that used to be accepted is rejected now.
+
 ## [2.3.0](https://github.com/giovanniandreuzza/Nimbus/compare/v2.2.0...v2.3.0) (2026-09-12)
 
 
