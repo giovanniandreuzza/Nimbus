@@ -89,6 +89,10 @@ internal object DownloadStateStoreMappers {
             )
 
             "local_file_oversized" -> PermanentDownloadErrorCause.LocalFileOversized
+            "insufficient_disk_space" -> PermanentDownloadErrorCause.InsufficientDiskSpace(
+                this.errorCause?.toKError() ?: toKError()
+            )
+
             "storage_error" -> PermanentDownloadErrorCause.StorageError(
                 this.errorCause?.toKError() ?: toKError()
             )

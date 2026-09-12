@@ -65,8 +65,10 @@ class DiskFullDuringTransferTest {
                     "behind a generic storage failure that sends a reader looking at " +
                     "permissions; got $cause"
         )
-        assertEquals(PATH, cause.path)
-        assertEquals(0L, cause.availableBytes)
+        assertTrue(
+            cause.cause.message.contains("the volume had 0"),
+            "how much was needed and how much was free has to reach the log; got ${cause.cause}"
+        )
     }
 
     @Test
@@ -85,9 +87,36 @@ class DiskFullDuringTransferTest {
         )
     }
 
+    @Test
+    fun `a shortage is still recognised when the failing write is the final flush`() = runTest {
+        val h = Harness(this)
+        // Every byte is accepted and only the flush refuses, which is what a buffered sink
+        // does when the volume fills: the byte counter has already reached the end.
+        h.storage.onSink = { Success(h.sinkFailingOnlyOnFlush()) }
+        h.storage.usableSpace = 0L
+
+        h.run()
+
+        val cause = (h.failures.single() as DownloadError.PermanentError).errorCause
+        assertTrue(
+            cause is PermanentDownloadErrorCause.InsufficientDiskSpace,
+            "a counter that has run to the end must not hide a volume that is full; got $cause"
+        )
+    }
+
     private class Harness(private val scope: TestScope) {
         val storage = InMemoryStorage()
         val failures = mutableListOf<DownloadError>()
+
+        /** A sink that takes every byte and only refuses to flush them. */
+        fun sinkFailingOnlyOnFlush(): Sink = object : RawSink {
+            override fun write(source: Buffer, byteCount: Long) {
+                source.skip(byteCount)
+            }
+
+            override fun flush(): Unit = throw IOException("No space left on device")
+            override fun close(): Unit = throw IOException("No space left on device")
+        }.buffered()
 
         /** A sink that accepts a little and then reports the volume as full. */
         fun failingSink(): Sink = object : RawSink {

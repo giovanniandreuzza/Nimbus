@@ -61,18 +61,19 @@ public sealed class PermanentDownloadErrorCause(
      * the same answer as one that was already full, not a generic failure that sends
      * whoever reads the log looking at permissions.
      *
-     * @param path The file being written.
-     * @param requiredBytes What was still left to write.
-     * @param availableBytes What the volume said was free.
+     * How much was needed and how much was free live in [cause] rather than in fields of
+     * their own, for the same reason [StorageError] carries its detail there: the persisted
+     * store has somewhere to put a nested error and nowhere to put three new columns. After
+     * a restart the numbers are history anyway — what a caller still needs is the reason.
+     *
+     * @param cause What was being written, how much was left, and what the volume said was free.
      */
     public data class InsufficientDiskSpace(
-        val path: String,
-        val requiredBytes: Long,
-        val availableBytes: Long
+        override val cause: KError
     ) : PermanentDownloadErrorCause(
         code = "insufficient_disk_space",
-        message = "Insufficient disk space for $path " +
-                "(required $requiredBytes bytes, available $availableBytes)."
+        message = "The volume ran out of space.",
+        cause = cause
     )
 
     /**
