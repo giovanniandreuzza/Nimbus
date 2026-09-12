@@ -51,7 +51,7 @@ class WiredUpTest {
                 .withContentDigest(DigestAlgorithm.SHA256)
                 .createAndInit()
 
-            val enqueued = nimbus.enqueueDownload(URL, DIRECTORY, FILE_NAME)
+            val enqueued = nimbus.enqueueDownload(URL, DESTINATION, FILE_NAME)
             advanceUntilIdle()
             assertTrue(enqueued is Success<*>, "enqueue failed: $enqueued")
 
@@ -95,7 +95,8 @@ class WiredUpTest {
 
     private companion object {
         const val URL = "https://example.com/payload.bin"
-        const val DIRECTORY = "/tmp/nimbus"
+        /** The full destination path, which is what filePath means — not the directory. */
+        const val DESTINATION = "/tmp/nimbus/payload.bin"
         const val FILE_NAME = "payload.bin"
         const val STORE_PATH = "/tmp/nimbus/store"
         val CONTENT = ByteArray(512) { (it * 3 % 251).toByte() }

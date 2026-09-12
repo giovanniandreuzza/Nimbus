@@ -91,6 +91,19 @@ class DownloadServiceLifecycleTest {
     }
 
     @Test
+    fun `a scheme outside ASCII is not a scheme`() = runTest {
+        val f = fixture()
+
+        val result = f.service.enqueueDownload("\u00e9://example.com/f.bin", PATH, NAME)
+
+        // RFC 3986 spells ALPHA and DIGIT in ASCII. Kotlin's Char.isLetter answers for the whole
+        // of Unicode, so a check written with it accepts a scheme no URI parser would, and the
+        // url is the task's identity — this has to be refused where it is created.
+        assertEquals(PermanentNimbusErrorCause.InvalidUrl, result.causeOrFail())
+        assertTrue(f.repository.getAllDownloadTask().isEmpty())
+    }
+
+    @Test
     fun `a blank url is rejected`() = runTest {
         val f = fixture()
 

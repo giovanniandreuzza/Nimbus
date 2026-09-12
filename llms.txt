@@ -69,6 +69,8 @@ suspend fun checksum(fileUrl: String): KResult<Checksum, NimbusError>
 
 // Lifecycle
 suspend fun enqueueDownload(fileUrl: String, filePath: String, fileName: String, expectedChecksum: Checksum? = null): KResult<DownloadTaskDTO, NimbusError>
+// filePath is the FULL destination path of the file ("/downloads/video.mp4"), not its directory.
+// fileName is metadata only — Nimbus never joins the two, and never creates the parent directory.
 suspend fun startDownload(fileUrl: String): KResult<Unit, NimbusError>
 suspend fun observeDownload(fileUrl: String): KResult<Flow<DownloadState>, NimbusError>
 suspend fun pauseDownload(fileUrl: String): KResult<Unit, NimbusError>
@@ -210,7 +212,7 @@ sealed class TemporaryNimbusErrorCause {
 sealed class PermanentNimbusErrorCause {
     // Input validation (before any network call)
     data object InvalidPath        // filePath contains ".." traversal component
-    data object InvalidUrl         // fileUrl carries no scheme (syntax only — any scheme is accepted)
+    data object InvalidUrl         // fileUrl carries no scheme (RFC 3986 ASCII syntax; any scheme is accepted)
     data object InvalidFileName    // fileName is blank, ".", "..", or contains / \ \0
     data class  InvalidFileSize(cause: KError? = null)  // remote reported size <= 0
     data object DownloadNotFound   // no task registered for this fileUrl

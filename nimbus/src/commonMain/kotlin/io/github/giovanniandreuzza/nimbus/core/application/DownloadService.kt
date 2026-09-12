@@ -870,9 +870,14 @@ private fun String.hasUriScheme(): Boolean {
     val colon = indexOf(':')
     if (colon <= 0) return false
     val scheme = substring(0, colon)
-    return scheme[0].isLetter() &&
-            scheme.all { it.isLetterOrDigit() || it == '+' || it == '-' || it == '.' }
+    // ASCII explicitly: Kotlin's Char.isLetter answers for the whole of Unicode, so writing
+    // this with it would accept 'é://host' — a scheme no URI parser recognises, stored as a
+    // task nobody can address.
+    return scheme[0].isAsciiAlpha() &&
+            scheme.all { it.isAsciiAlpha() || it in '0'..'9' || it == '+' || it == '-' || it == '.' }
 }
+
+private fun Char.isAsciiAlpha(): Boolean = this in 'a'..'z' || this in 'A'..'Z'
 
 private fun String.isValidFileName(): Boolean {
     if (isBlank() || this == "." || this == "..") return false

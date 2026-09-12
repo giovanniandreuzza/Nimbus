@@ -59,8 +59,8 @@ is already there:
 // Inside a coroutine.
 nimbus.ensureDownloaded(
     fileUrl = "https://example.com/video.mp4",
-    filePath = "/path/to/downloads",
-    fileName = "video.mp4"
+    filePath = "/path/to/downloads/video.mp4",   // where the bytes go — the file, not its folder
+    fileName = "video.mp4"                       // metadata: what to call it in your UI
 ).getOr { error ->
     return  // error is a NimbusError — see Handling errors
 }.collect { state ->
@@ -94,6 +94,10 @@ nimbus.observeDownload(url).getOr { return }.collect { state -> render(state) }
 
 Every method takes the **file URL** as its identity — there are no handles or ids to keep.
 
+Two parameters that are easy to mix up: `filePath` is the **full destination path of the file**,
+and `fileName` is metadata for your UI. Nimbus does not join them, and does not create the parent
+directory.
+
 ### Pause and resume
 
 ```kotlin
@@ -102,8 +106,10 @@ nimbus.pauseDownload(url)
 nimbus.resumeDownload(url)
 ```
 
-Progress is persisted, so a resume continues from the bytes already on disk rather than starting
-over — including after the process was killed.
+A resume continues from the bytes already on disk rather than starting over, including after the
+process was killed. It is the partial file that makes that work, not a saved progress number:
+progress ticks stay in memory and deliberately never touch the disk, so the offset is read back
+from the file's own length.
 
 ### Cancel or remove
 
