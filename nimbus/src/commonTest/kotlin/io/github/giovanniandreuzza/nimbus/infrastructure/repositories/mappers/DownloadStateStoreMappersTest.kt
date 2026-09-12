@@ -65,6 +65,7 @@ class DownloadStateStoreMappersTest {
             PermanentDownloadErrorCause.ClientError(404),
             PermanentDownloadErrorCause.InconsistentRangeResponse("no Content-Range"),
             PermanentDownloadErrorCause.LocalFileOversized,
+            PermanentDownloadErrorCause.BodyLongerThanDeclared(1_000L),
             PermanentDownloadErrorCause.InsufficientDiskSpace(
                 KError("insufficient_disk_space", "needed 10 more bytes, the volume had 0")
             ),
@@ -88,6 +89,25 @@ class DownloadStateStoreMappersTest {
                 "${cause.code} was rebuilt as ${permanent.errorCause.code}"
             )
         }
+    }
+
+    @Test
+    fun `an oversized body keeps the size it was measured against`() {
+        // Same trick as the status code: a cause that carries a number has to find it again in
+        // the message it was flattened into, or a log after a restart says "past 0 bytes".
+        val restored = DownloadState.Failed(
+            DownloadError.PermanentError(
+                PermanentDownloadErrorCause.BodyLongerThanDeclared(20_971_520L)
+            )
+        ).toStore().toState()
+
+        val cause = ((restored as DownloadState.Failed).error as DownloadError.PermanentError)
+            .errorCause
+        assertTrue(
+            cause is PermanentDownloadErrorCause.BodyLongerThanDeclared &&
+                    cause.declaredBytes == 20_971_520L,
+            "got $cause"
+        )
     }
 
     @Test

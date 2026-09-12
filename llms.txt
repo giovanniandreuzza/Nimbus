@@ -282,6 +282,7 @@ sealed class PermanentDownloadErrorCause {
     data class  ClientError(statusCode: Int)               // HTTP 4xx (excluding 404)
     data class  InconsistentRangeResponse(reason: String)  // server returned 200 when 206 expected on resume
     data object LocalFileOversized                         // local file > expected download size
+    data class  BodyLongerThanDeclared(declaredBytes: Long)// the body kept arriving past the declared size
     data class  InsufficientDiskSpace(cause: KError)       // the volume filled up mid-transfer
     data class  StorageError(cause: KError)                // I/O or permission failure
     data class  UnexpectedError(cause: KError? = null)
@@ -479,6 +480,14 @@ have to discover from a bug report.
   request it makes (`KtorDownloadAdapter(client, socketTimeoutMillis = …)`, `null` to opt out).
   A hand-written port must do the same, or a wedged read outlives both `pauseDownload` and the
   stall guard.
+- **Nothing past the declared size is ever written.** The size request drives the writing as
+  well as the progress and the checks: a body still arriving after the declared number of bytes
+  stops being read, and the download fails with
+  `PermanentDownloadErrorCause.BodyLongerThanDeclared(declaredBytes)`. Permanent, because the
+  next attempt asks the same question and gets the same answer, and each one would cost the
+  whole oversized body again. Before 2.5.0 the loop followed the body wherever it went and the
+  length was compared only afterwards, so an origin serving an error page in place of a 200 MB
+  asset could spend a whole volume.
 - **A body that arrived in full is finished even if the transport then hangs.** The attempt is
   abandoned at the deadline, and because nothing is left to fetch, no further request is made —
   asking to resume from the end of a complete file invites a 416, which truncates it.

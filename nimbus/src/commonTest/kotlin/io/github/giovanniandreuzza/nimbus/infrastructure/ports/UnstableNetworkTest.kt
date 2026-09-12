@@ -124,23 +124,32 @@ class UnstableNetworkTest {
     }
 
     @Test
-    fun `a server that ignores the resume offset is caught on length`() = runTest {
-        // The body arrives from byte 0 again and is appended to what is already there, so the
-        // file overshoots. The cheap check catches this one before the digest is consulted.
-        val net = HostileNetwork(CONTENT) { attempt, _ ->
-            if (attempt == 1) Behaviour.Deliver(bytes = 1_000) else Behaviour.IgnoreOffset
+    fun `a server that ignores the resume offset is caught while it is still arriving`() =
+        runTest {
+            // The body arrives from byte 0 again and is appended to what is already there, so
+            // it runs past the declared length. That used to be caught afterwards, by
+            // comparing the finished file's size — which meant taking the whole overshoot onto
+            // the disk first. The write now stops at the declared length, so the same server is
+            // caught mid-body and named for what it did.
+            val net = HostileNetwork(CONTENT) { attempt, _ ->
+                if (attempt == 1) Behaviour.Deliver(bytes = 1_000) else Behaviour.IgnoreOffset
+            }
+            val h = Harness(this, net, maxRetryAttempts = 1)
+
+            h.run()
+
+            val failure = h.failure ?: fail("a corrupted resume must not be reported as a success")
+            assertTrue(
+                failure is DownloadError.PermanentError &&
+                        failure.errorCause is PermanentDownloadErrorCause.BodyLongerThanDeclared,
+                "expected the server's own contradiction to be named, got $failure"
+            )
+            assertTrue(
+                (h.storage.read(PATH)?.size ?: 0) < CONTENT.size,
+                "the file must not be left at exactly the declared length: that is the shape " +
+                        "startDownload treats as already complete, and these bytes are not"
+            )
         }
-        val h = Harness(this, net, maxRetryAttempts = 1)
-
-        h.run()
-
-        val failure = h.failure ?: fail("a corrupted resume must not be reported as a success")
-        assertTrue(
-            failure is DownloadError.TemporaryError &&
-                    failure.errorCause is TemporaryDownloadErrorCause.FileIntegrityMismatch,
-            "expected the length check to catch it, got $failure"
-        )
-    }
 
     @Test
     fun `a resume that returns the right number of wrong bytes is caught only by the digest`() =

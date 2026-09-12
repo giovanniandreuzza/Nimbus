@@ -47,6 +47,22 @@ public sealed class PermanentDownloadErrorCause(
      * The local partial file on disk is larger than the expected total download size,
      * indicating corruption.
      */
+    /**
+     * The body kept arriving after the declared number of bytes had been written.
+     *
+     * Nothing past the declared size is written, so the file on disk is exactly as long as it
+     * was supposed to be — but a server sending more than it announced has told two different
+     * stories about the same resource, and which one is true is not something this library can
+     * decide. Permanent: the next attempt asks the same question and gets the same answer, and
+     * a retry that cannot converge is a device downloading forever.
+     *
+     * @param declaredBytes what the size request said the file was.
+     */
+    public data class BodyLongerThanDeclared(val declaredBytes: Long) : PermanentDownloadErrorCause(
+        code = "body_longer_than_declared",
+        message = "The body continued past the declared $declaredBytes bytes."
+    )
+
     public data object LocalFileOversized : PermanentDownloadErrorCause(
         code = "local_file_oversized",
         message = "Local file is larger than the expected download size."

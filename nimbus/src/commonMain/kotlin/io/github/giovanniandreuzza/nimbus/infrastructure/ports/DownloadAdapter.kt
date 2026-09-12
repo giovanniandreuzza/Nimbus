@@ -295,7 +295,7 @@ internal class DownloadAdapter(
         return true
     }
 
-    private suspend fun truncateLocalFileAfter416(filePath: String, id: String): Boolean {
+    private suspend fun truncateLocalFile(filePath: String, id: String): Boolean {
         // A delete that genuinely failed must not be mistaken for the race below: the
         // create that follows would report FileAlreadyExists, the download would retry as
         // if two writers had collided, and the real reason would never reach the logger.
@@ -444,7 +444,7 @@ internal class DownloadAdapter(
                 ) { source ->
                     try {
                         sink.use { output ->
-                            progressBytes = copySourceToSink(
+                            val copied = copySourceToSink(
                                 source = source,
                                 sink = output,
                                 id = id,
@@ -453,6 +453,14 @@ internal class DownloadAdapter(
                                 digest = digest,
                                 progressTicks = progressTicks
                             )
+                            progressBytes = copied.bytes
+                            if (copied.bodyLongerThanDeclared) {
+                                transferFailure = DownloadError.PermanentError(
+                                    PermanentDownloadErrorCause.BodyLongerThanDeclared(
+                                        totalFileSize
+                                    )
+                                )
+                            }
                         }
                     } catch (e: CancellationException) {
                         throw e
@@ -505,10 +513,22 @@ internal class DownloadAdapter(
                         // temporary failure, which is budgeted, backed off, and eventually
                         // reported.
                         rangeRefused && truncations < MAX_CONSECUTIVE_TRUNCATIONS -> {
-                            if (!truncateLocalFileAfter416(downloadTask.filePath, id)) return null
+                            if (!truncateLocalFile(downloadTask.filePath, id)) return null
                             truncations += 1
                             progressBytes = 0L
                             retryAttempt = 0
+                        }
+
+                        // The file is now exactly as long as it was supposed to be and holds
+                        // bytes a server told two stories about — the shape `startDownload`
+                        // short-circuits on, so leaving it there would have the next start
+                        // report a corrupt file as complete. Nothing written under a
+                        // contradiction is worth keeping.
+                        downloadError is DownloadError.PermanentError &&
+                                downloadError.errorCause is PermanentDownloadErrorCause.BodyLongerThanDeclared -> {
+                            if (!truncateLocalFile(downloadTask.filePath, id)) return null
+                            notifyFailureAndCleanup(id, downloadError)
+                            return null
                         }
 
                         else -> {
@@ -742,8 +762,12 @@ internal class DownloadAdapter(
                     )
                 )
             } finally {
+                // Cancelled, not closed: cancellation is not synchronous, so a watchdog already
+                // suspended in `receive()` would lose the race against a close and throw
+                // ClosedReceiveChannelException — a child failing, which cancels this scope and
+                // surfaces as an unexpected error on a transfer that had just succeeded. The
+                // channel is local to one attempt and needs no closing.
                 watchdog.cancel()
-                progressTicks.close()
             }
         }
     }
@@ -762,8 +786,9 @@ internal class DownloadAdapter(
         initialProgressBytes: Long,
         digest: ContentDigest?,
         progressTicks: Channel<Unit>? = null
-    ): Long {
+    ): CopyOutcome {
         var progressBytes = initialProgressBytes
+        var bodyLongerThanDeclared = false
         source.use { input ->
             var bytesSinceLastProgressUpdate = 0L
 
@@ -777,11 +802,24 @@ internal class DownloadAdapter(
             val chunk = digest?.let { ByteArray(bufferSize.toInt()) }
 
             while (readingBody { !input.exhausted() } && currentCoroutineContext().isActive) {
+                // Nothing past the declared size is written. `exhausted()` just said more bytes
+                // are waiting, so reaching this with none of them owed means the server is
+                // sending more than it announced — and a write loop that simply followed the
+                // body would fill the volume with it. A 200 MB asset whose origin serves an
+                // HTML error page in a loop, or a file replaced between the HEAD and the GET,
+                // is the whole of eight gigabytes on an appliance that has no more.
+                val outstanding = totalFileSize - progressBytes
+                if (outstanding <= 0L) {
+                    bodyLongerThanDeclared = true
+                    break
+                }
+
                 val bytesRead = if (chunk == null) {
                     val target = sink.buffer
-                    readingBody { input.readAtMostTo(target, bufferSize) }
+                    readingBody { input.readAtMostTo(target, minOf(bufferSize, outstanding)) }
                 } else {
-                    val read = readingBody { input.readAtMostTo(chunk, 0, chunk.size) }
+                    val room = minOf(chunk.size.toLong(), outstanding).toInt()
+                    val read = readingBody { input.readAtMostTo(chunk, 0, room) }
                     if (read > 0) {
                         digest.update(chunk, 0, read)
                         sink.write(chunk, 0, read)
@@ -814,8 +852,20 @@ internal class DownloadAdapter(
                 }
             }
         }
-        return progressBytes
+        return CopyOutcome(
+            bytes = progressBytes,
+            bodyLongerThanDeclared = bodyLongerThanDeclared
+        )
     }
+
+    /**
+     * What one pass over the body did.
+     *
+     * The byte count alone cannot say why the loop stopped, and the two reasons lead opposite
+     * ways: a body that ended is a transfer to verify, a body that kept going past the declared
+     * length is a server contradicting itself and a download to stop.
+     */
+    private class CopyOutcome(val bytes: Long, val bodyLongerThanDeclared: Boolean)
 
     private fun shouldRetry(
         error: DownloadError,
