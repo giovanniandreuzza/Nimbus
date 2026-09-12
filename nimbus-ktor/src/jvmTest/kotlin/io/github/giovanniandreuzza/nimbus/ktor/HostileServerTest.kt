@@ -124,6 +124,24 @@ class HostileServerTest {
         )
     }
 
+    @Test
+    fun `a body that stops arriving part-way is the transport every time`() = runBlockingTest {
+        server.behaviour = Behaviour.DieMidBody
+
+        // Repeated because the single-shot version above only observes this by luck. A
+        // dropped connection was reported as a completed transfer delivering zero bytes in
+        // roughly nineteen attempts out of twenty, so one run tells you almost nothing —
+        // which is how this reached a release pull request looking green.
+        val outcomes = (1..10).map { collect(offset = 0L) }
+
+        val delivered = outcomes.mapNotNull { (it as? Success)?.value?.size }
+        assertTrue(
+            delivered.isEmpty(),
+            "a connection that died must never read as a completed transfer; " +
+                    "${delivered.size} of ${outcomes.size} did, delivering $delivered bytes"
+        )
+    }
+
     // -- statuses --------------------------------------------------------------
 
     @Test
