@@ -165,6 +165,12 @@ sample_android/                      ← Android demo app (Koin DI, KtorDownload
 | Digest primed from disk at the start of every streaming attempt                     | The resume offset comes from the file's length, so a session-only digest would hash the tail alone after a restart and produce a plausible wrong value  |
 | `schemaVersion` defaults to a value no build writes                                 | ProtoBuf omits values equal to their default, so a stamp defaulting to "current" never reaches the disk and every old store claims to be current        |
 | `TemporaryDownloadErrorCause.ChecksumMismatch` is temporary, never permanent        | A mismatch describes the transfer, not the file at the origin; marking it permanent sends the caller back to delete-and-refetch                          |
+| A file already at the expected length is still hashed before being called finished  | `startDownload` short-circuits that case, and a length is not evidence about content. A player that keeps its assets meets this path on every start, so a digest that cannot answer here answers only where nobody asked |
+| An expected checksum is applied to an existing task before anything reports complete | `ensureDownloaded` forwarded it only where it created a task — the case a caller could have handled with `enqueueDownload` themselves — and `isDownloaded()` short-circuits ahead of the start path |
+| A short body is measured against the declared `Content-Length`, not inferred from an error | A channel closed with a cause reads as an ordinary end of stream once it is a `Source`, so a dropped link was reported as a completed transfer that delivered nothing |
+| `checksum()` with no algorithm returns `ContentDigestDisabled`, not `UnexpectedError` | A foreseeable configuration mistake the caller can fix should not arrive in the branch they wrote for failures they could not foresee |
+| A refused write asks the volume for free space rather than reading the exception text | The message is the platform's to phrase; and what is left to write comes from the file, since the byte counter advances before the buffered sink flushes |
+| The store prefers `<store>.tmp` over the store itself when both exist               | Saving writes the temp in full and only then commits it with a move, so a temp left behind is the newer complete state — reading the destination first loses it whenever a truncated protobuf happens to decode |
 
 ## DownloadTask recovery methods
 
@@ -202,6 +208,7 @@ These are used internally during boot (`loadDownloadTasks`) and retry flows:
 | `ClientError(statusCode)`          | HTTP 4xx (excluding 404) — non-recoverable client error           |
 | `InconsistentRangeResponse(reason)`| Server returned 200 with body when 206 was expected on resume     |
 | `LocalFileOversized`               | Local file is larger than the expected download size              |
+| `InsufficientDiskSpace(cause)`     | The volume ran out of room while writing; detail in the cause     |
 | `StorageError(cause)`              | I/O or permission failure on local storage                        |
 | `UnexpectedError(cause?)`          | Unhandled exception                                               |
 
