@@ -13,7 +13,9 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
+import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
+import io.github.giovanniandreuzza.nimbus.testing.MidJitter
 import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -108,8 +110,14 @@ class TransferFailureClassificationTest {
             nimbusDownloadPort = port,
             bufferSize = 64L,
             notifyEveryBytes = 128L,
-            maxRetryAttempts = maxRetryAttempts,
-            retryBaseDelayMs = 1L,
+            transportRetry = RetryPolicy(
+                maxAttempts = maxRetryAttempts,
+                baseDelayMs = 1L,
+                // Flat rather than exponential: these scenarios are about what is
+                // retried, not about how long the waiting takes.
+                maxDelayMs = 1L
+            ),
+            random = MidJitter,
             // The stall guard has its own test; these scenarios all deliver or fail promptly.
             stallTimeoutMs = null,
             digestAlgorithm = null,

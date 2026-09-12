@@ -10,7 +10,9 @@ import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
+import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
+import io.github.giovanniandreuzza.nimbus.testing.MidJitter
 import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.io.Source
 import kotlinx.coroutines.CoroutineScope
@@ -119,8 +121,14 @@ class CompleteFileOnDiskTest {
                 nimbusDownloadPort = neverCalled(),
                 bufferSize = 16L,
                 notifyEveryBytes = 32L,
-                maxRetryAttempts = 1,
-                retryBaseDelayMs = 1L,
+                transportRetry = RetryPolicy(
+                    maxAttempts = 1,
+                    baseDelayMs = 1L,
+                    // Flat rather than exponential: these scenarios are about what is
+                    // retried, not about how long the waiting takes.
+                    maxDelayMs = 1L
+                ),
+                random = MidJitter,
                 // The stall guard has its own test; these scenarios all deliver or fail promptly.
                 stallTimeoutMs = null,
                 digestAlgorithm = DigestAlgorithm.SHA256,

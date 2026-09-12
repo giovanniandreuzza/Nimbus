@@ -12,7 +12,9 @@ import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
+import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
+import io.github.giovanniandreuzza.nimbus.testing.MidJitter
 import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -207,8 +209,14 @@ class StalledTransferTest {
             nimbusDownloadPort = net,
             bufferSize = 256L,
             notifyEveryBytes = 512L,
-            maxRetryAttempts = maxRetryAttempts,
-            retryBaseDelayMs = RETRY_DELAY,
+            transportRetry = RetryPolicy(
+                maxAttempts = maxRetryAttempts,
+                baseDelayMs = RETRY_DELAY,
+                // Flat rather than exponential: these scenarios are about what is
+                // retried, not about how long the waiting takes.
+                maxDelayMs = RETRY_DELAY
+            ),
+            random = MidJitter,
             stallTimeoutMs = stallTimeoutMs,
             digestAlgorithm = null,
             contentDigestPort = digestPortFor(storage)

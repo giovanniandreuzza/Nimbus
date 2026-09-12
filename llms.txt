@@ -32,8 +32,10 @@ val api: NimbusAPI = Nimbus.Builder()
     .withConcurrencyLimit(2)                  // optional, default 1
     .withDownloadBufferSize(8 * 1024L)        // optional, default 8 KB
     .withDownloadNotifyEveryBytes(512 * 1024L)// optional, default ~512 KB
-    .withMaxRetryAttempts(3)                  // optional, default 3
-    .withRetryBaseDelayMs(500L)               // optional, default 500 ms
+    .withTransportRetry(RetryPolicy.Transport)// optional — retries inside one download
+    .withAutoRetry(RetryPolicy.AutoRetry)     // optional — retries a task that already failed
+    .withMaxRetryAttempts(5)                  // shorthand for the transport attempt count
+    .withRetryBaseDelayMs(500L)               // shorthand for the transport first wait
     .withStallTimeoutMs(60_000L)              // optional, default 60 s; null disables
     .withMinReservedDiskBytes(50 * 1024 * 1024L) // optional — disk headroom guard
     .withAutoStart(true)                      // optional, default false
@@ -440,9 +442,24 @@ have to discover from a bug report.
 - **A body that stops arriving part-way is a `TransportFailure`, and is retried.** It is measured
   against the declared `Content-Length` rather than inferred from an error, because a connection
   closed mid-body reads as an ordinary end of stream.
-- **`withMaxRetryAttempts` / `withRetryBaseDelayMs` apply to network failures.** Before 2.3.0 every
-  transport error was classified permanent and nothing was ever retried; timeouts, connection
-  resets and failed name resolution are now temporary.
+- **`withTransportRetry` applies to network failures.** Before 2.3.0 every transport error was
+  classified permanent and nothing was ever retried; timeouts, connection resets and failed name
+  resolution are now temporary. `withMaxRetryAttempts` / `withRetryBaseDelayMs` are shorthands
+  for parts of the same policy.
+- **There are two retry loops and they have separate policies.** `withTransportRetry` (default:
+  5 attempts, 0.5 s doubling to 60 s) covers one download's own attempts, with the task staying
+  `Downloading`. `withAutoRetry` (default: unbounded, 2 s doubling to 5 min) covers what happens
+  after those are spent and the task is `Failed`, and runs only with `withAutoStart`. Both wait
+  exponentially and both spread every wait by ±20 %, which is not configurable: a fleet that lost
+  the same backend must not come back in lockstep. Before 2.5.0 the second loop had no wait at
+  all — a 503 was retried two hundred times inside half a second.
+- **The auto-retry count is per url, in memory, and reset when a download for that url
+  finishes.** A device that has been up for months meets its next transient failure with the
+  first wait, not the longest one. A restart starts from zero.
+- **A 416 truncates and restarts once.** The retry that follows it asks from offset 0 and carries
+  no `Range` header, so a server that answers that with another 416 will keep doing so; the
+  second consecutive refusal is treated as an ordinary temporary failure, budgeted and backed
+  off, instead of looping through delete-and-recreate forever.
 - **A volume that fills up mid-transfer reports `PermanentDownloadErrorCause.InsufficientDiskSpace`,**
   not a generic storage error. Detail is in its `cause`. The pre-flight headroom guard
   (`withMinReservedDiskBytes`) reports `PermanentNimbusErrorCause.InsufficientDiskSpace` instead —
@@ -571,6 +588,8 @@ sealed class NimbusLogEvent {
     data class InsufficientDiskSpace(val fileUrl: String?, val path: String, val requiredBytes: Long, val availableBytes: Long)
     data class AutoStartFailed(val fileUrl: String, val error: NimbusError)
     data class AutoRetryFailed(val fileUrl: String, val error: NimbusError)
+    data class AutoRetryScheduled(val fileUrl: String, val delayMs: Long, val attempt: Int)
+    data class AutoRetryExhausted(val fileUrl: String, val attempts: Int)  // only with a capped policy
     data class PersistenceFailed(val fileUrl: String, val cause: KError)
     data class StoreFlushFailed(val cause: KError)   // a coalesced background commit failed
     data class StoreReset(val reason: String)        // the store was unreadable and was discarded

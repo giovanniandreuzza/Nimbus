@@ -19,13 +19,17 @@ import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
  * @param logger Optional structured logger.
  * @param onAutoRetry When non-null, called after a download transitions to Failed so the library
  *   can automatically retry. Only set when autoStart is enabled.
+ * @param onDownloadSucceeded When non-null, called after a download finishes, so whatever is
+ *   counting consecutive failures for that url can forget them. Without it a device that has
+ *   been up for months meets its next transient failure already at the longest back-off.
  * @author Giovanni Andreuzza
  */
 @IsApplicationService
 internal class DownloadProgressService(
     private val downloadTaskRepository: DownloadTaskRepository,
     private val logger: NimbusLogger?,
-    private val onAutoRetry: (suspend (fileUrl: String) -> Unit)?
+    private val onAutoRetry: (suspend (fileUrl: String) -> Unit)?,
+    private val onDownloadSucceeded: (suspend (fileUrl: String) -> Unit)? = null
 ) : DownloadProgressCallback {
 
     override suspend fun onDownloadProgress(id: String, progress: Double) {
@@ -64,6 +68,7 @@ internal class DownloadProgressService(
             logger?.log(NimbusLogEvent.PersistenceFailed(downloadTask.fileUrl.value, it))
         }
         logger?.log(NimbusLogEvent.DownloadFinished(fileUrl = downloadTask.fileUrl.value))
+        onDownloadSucceeded?.invoke(downloadTask.fileUrl.value)
     }
 
 }

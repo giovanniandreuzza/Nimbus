@@ -72,6 +72,34 @@ public sealed class NimbusLogEvent {
     ) : NimbusLogEvent()
 
     /**
+     * The library is going to retry a failed download, and when.
+     *
+     * The wait is what this event is really reporting. Until it existed the retry was
+     * immediate, so a backend in maintenance turned one failed task into a request flood and
+     * a log full of [AutoRetryFailed] with nothing to explain the rate.
+     *
+     * @param attempt which retry this is for this url, counting from 1. It resets when a
+     * download for the url finishes.
+     */
+    public data class AutoRetryScheduled(
+        public val fileUrl: String,
+        public val delayMs: Long,
+        public val attempt: Int
+    ) : NimbusLogEvent()
+
+    /**
+     * The auto-retry budget for this url is spent and nothing more will be attempted.
+     *
+     * Only reachable when a caller set [io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy.maxAttempts]
+     * on the auto-retry policy; the default keeps trying, because on an unattended device
+     * giving up permanently is what a technician's visit looks like.
+     */
+    public data class AutoRetryExhausted(
+        public val fileUrl: String,
+        public val attempts: Int
+    ) : NimbusLogEvent()
+
+    /**
      * A task state-change could not be persisted to disk. The in-memory state was updated
      * successfully; the disk store may be out of sync until the next successful write.
      */

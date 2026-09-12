@@ -13,6 +13,8 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storag
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
+import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
+import io.github.giovanniandreuzza.nimbus.testing.MidJitter
 import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -217,8 +219,14 @@ private class Harness(
         nimbusDownloadPort = port,
         bufferSize = 8 * 1024L,
         notifyEveryBytes = 64 * 1024L,
-        maxRetryAttempts = 3,
-        retryBaseDelayMs = 1L,
+        transportRetry = RetryPolicy(
+            maxAttempts = 3,
+            baseDelayMs = 1L,
+            // Flat rather than exponential: these scenarios are about what is
+            // retried, not about how long the waiting takes.
+            maxDelayMs = 1L
+        ),
+        random = MidJitter,
         // The stall guard has its own test; these scenarios all deliver or fail promptly.
         stallTimeoutMs = null,
         digestAlgorithm = algorithm,

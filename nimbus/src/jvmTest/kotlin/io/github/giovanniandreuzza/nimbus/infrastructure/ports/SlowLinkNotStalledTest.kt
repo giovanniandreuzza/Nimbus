@@ -9,7 +9,9 @@ import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
+import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
+import io.github.giovanniandreuzza.nimbus.testing.MidJitter
 import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -71,8 +73,14 @@ class SlowLinkNotStalledTest {
             nimbusDownloadPort = net,
             bufferSize = 64L,
             notifyEveryBytes = 128L,
-            maxRetryAttempts = 0,
-            retryBaseDelayMs = 1L,
+            transportRetry = RetryPolicy(
+                maxAttempts = 0,
+                baseDelayMs = 1L,
+                // Flat rather than exponential: these scenarios are about what is
+                // retried, not about how long the waiting takes.
+                maxDelayMs = 1L
+            ),
+            random = MidJitter,
             // Well above the 40 ms between chunks, well below the ~640 ms the whole transfer
             // takes: a deadline on elapsed time would fail this test, a deadline on progress
             // passes it.

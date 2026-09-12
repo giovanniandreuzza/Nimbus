@@ -23,6 +23,9 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
+import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
+import io.github.giovanniandreuzza.nimbus.shared.utils.allowsAttempt
+import io.github.giovanniandreuzza.nimbus.shared.utils.delayForAttempt
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.shared.utils.getDownloadProgress
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -47,6 +50,7 @@ import kotlinx.io.InternalIoApi
 import kotlinx.io.Sink
 import kotlinx.io.Source
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.random.Random
 
 /**
  * Download Adapter.
@@ -68,8 +72,8 @@ internal class DownloadAdapter(
     private val nimbusDownloadPort: NimbusDownloadPort,
     private val bufferSize: Long,
     private val notifyEveryBytes: Long,
-    private val maxRetryAttempts: Int,
-    private val retryBaseDelayMs: Long,
+    /** Retries within one download: see [RetryPolicy.Transport]. */
+    private val transportRetry: RetryPolicy,
     /**
      * How long a transfer may make no progress at all before it is abandoned and retried.
      * Null disables the guard entirely. See [runWithStallWatchdog].
@@ -78,7 +82,9 @@ internal class DownloadAdapter(
     /** When non-null, every transfer is digested with it. Null means no hashing at all. */
     private val digestAlgorithm: DigestAlgorithm? = null,
     /** Hashes a file that is already on disk, for the case where nothing is transferred. */
-    private val contentDigestPort: ContentDigestPort
+    private val contentDigestPort: ContentDigestPort,
+    /** Injectable so a test can assert the back-off arithmetic instead of a range. */
+    private val random: Random = Random.Default
 ) : DownloadPort {
 
     private val semaphore = Semaphore(concurrencyLimit)
@@ -364,6 +370,7 @@ internal class DownloadAdapter(
         var progressBytes = initialProgressBytes
         val totalFileSize = downloadTask.fileSize
         var retryAttempt = 0
+        var truncations = 0
         var digest: ContentDigest? = null
 
         downloadLoop@ while (currentCoroutineContext().isActive) {
@@ -394,6 +401,8 @@ internal class DownloadAdapter(
             // that survives the process dying mid-transfer, which is the case this all exists
             // for.
             progressBytes = resolvePartialBytesOnDisk(downloadTask, id) ?: return null
+
+            val bytesBeforeAttempt = progressBytes
 
             val algorithm = digestAlgorithm
             if (algorithm != null) {
@@ -476,26 +485,45 @@ internal class DownloadAdapter(
 
                 is Failure -> {
                     val downloadError = outcome.error
+
+                    // Bytes did arrive this time, so whatever happened next is a fresh
+                    // situation and the truncation budget starts over.
+                    if (progressBytes > bytesBeforeAttempt) truncations = 0
+
+                    val rangeRefused = downloadError is DownloadError.TemporaryError &&
+                            downloadError.errorCause is TemporaryDownloadErrorCause.RangeNotSatisfiable
+
                     when {
-                        downloadError is DownloadError.TemporaryError &&
-                                downloadError.errorCause is TemporaryDownloadErrorCause.RangeNotSatisfiable -> {
+                        // A 416 means the server rejected the range this adapter asked for, so
+                        // the local bytes are worthless and the file is fetched again from the
+                        // start — outside the retry budget, because nothing was wrong with the
+                        // link. Once, though. The truncation puts the request back at offset 0,
+                        // which carries no Range header at all, and a server that answers
+                        // *that* with a 416 will answer the next one the same way: a second
+                        // consecutive refusal was an endless loop at full speed, deleting and
+                        // recreating the file on every pass. From here it is an ordinary
+                        // temporary failure, which is budgeted, backed off, and eventually
+                        // reported.
+                        rangeRefused && truncations < MAX_CONSECUTIVE_TRUNCATIONS -> {
                             if (!truncateLocalFileAfter416(downloadTask.filePath, id)) return null
+                            truncations += 1
                             progressBytes = 0L
                             retryAttempt = 0
                         }
 
                         else -> {
+                            val nextAttempt = retryAttempt + 1
                             val shouldRetry = shouldRetry(
                                 error = downloadError,
-                                retryAttempt = retryAttempt,
+                                nextAttempt = nextAttempt,
                                 isStillActive = currentCoroutineContext().isActive
                             )
                             if (!shouldRetry) {
                                 notifyFailureAndCleanup(id, downloadError)
                                 return null
                             }
-                            retryAttempt += 1
-                            delay(retryBaseDelayMs * retryAttempt)
+                            retryAttempt = nextAttempt
+                            delay(transportRetry.delayForAttempt(retryAttempt, random))
                         }
                     }
                 }
@@ -791,11 +819,11 @@ internal class DownloadAdapter(
 
     private fun shouldRetry(
         error: DownloadError,
-        retryAttempt: Int,
+        nextAttempt: Int,
         isStillActive: Boolean
     ): Boolean {
         return error is DownloadError.TemporaryError &&
-                retryAttempt < maxRetryAttempts &&
+                transportRetry.allowsAttempt(nextAttempt) &&
                 isStillActive
     }
 
@@ -869,4 +897,12 @@ internal class DownloadAdapter(
     }
 
     private suspend fun removeJob(id: String): Job? = jobsMutex.withLock { downloadJobs.remove(id) }
+
+    private companion object {
+        /**
+         * One 416 is a server disagreeing about a range; two in a row is a server that will
+         * never agree, and each one costs a delete and a recreate of the file.
+         */
+        const val MAX_CONSECUTIVE_TRUNCATIONS = 1
+    }
 }

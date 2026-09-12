@@ -6,6 +6,7 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.N
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
+import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,8 +44,8 @@ public class Nimbus private constructor(
     downloadManagerPath: String,
     downloadBufferSize: Long,
     downloadNotifyEveryBytes: Long,
-    maxRetryAttempts: Int,
-    retryBaseDelayMs: Long,
+    transportRetry: RetryPolicy,
+    autoRetry: RetryPolicy,
     stallTimeoutMs: Long?,
     minReservedDiskBytes: Long?,
     autoStart: Boolean,
@@ -60,8 +61,8 @@ public class Nimbus private constructor(
         downloadManagerPath = downloadManagerPath,
         downloadBufferSize = downloadBufferSize,
         downloadNotifyEveryBytes = downloadNotifyEveryBytes,
-        maxRetryAttempts = maxRetryAttempts,
-        retryBaseDelayMs = retryBaseDelayMs,
+        transportRetry = transportRetry,
+        autoRetry = autoRetry,
         stallTimeoutMs = stallTimeoutMs,
         minReservedDiskBytes = minReservedDiskBytes,
         autoStart = autoStart,
@@ -78,8 +79,8 @@ public class Nimbus private constructor(
         private var downloadManagerPath: String? = null
         private var downloadBufferSize: Long = 8 * 1024L
         private var downloadNotifyEveryBytes: Long = 16 * 32 * 1024L
-        private var maxRetryAttempts: Int = 3
-        private var retryBaseDelayMs: Long = 500L
+        private var transportRetry: RetryPolicy = RetryPolicy.Transport
+        private var autoRetry: RetryPolicy = RetryPolicy.AutoRetry
         private var stallTimeoutMs: Long? = DEFAULT_STALL_TIMEOUT_MS
         private var minReservedDiskBytes: Long? = null
         private var autoStart: Boolean = false
@@ -110,11 +111,40 @@ public class Nimbus private constructor(
         public fun withDownloadNotifyEveryBytes(bytes: Long): Builder =
             apply { downloadNotifyEveryBytes = bytes }
 
-        public fun withMaxRetryAttempts(attempts: Int): Builder =
-            apply { maxRetryAttempts = attempts }
+        /**
+         * How a single download retries its own transport failures — a dropped connection, a
+         * 5xx, a link that went quiet. The task stays `Downloading` throughout.
+         *
+         * Defaults to [RetryPolicy.Transport].
+         */
+        public fun withTransportRetry(policy: RetryPolicy): Builder =
+            apply { transportRetry = policy }
 
+        /**
+         * How a download that has already **failed** is brought back, when `autoStart` is on.
+         * Measured in minutes rather than seconds, and unbounded by default.
+         *
+         * Defaults to [RetryPolicy.AutoRetry]. Has no effect without
+         * [withAutoStart]: without it, retrying a failed task is the caller's to schedule.
+         */
+        public fun withAutoRetry(policy: RetryPolicy): Builder =
+            apply { autoRetry = policy }
+
+        /** Shorthand for [withTransportRetry] with a different attempt count. */
+        public fun withMaxRetryAttempts(attempts: Int): Builder =
+            apply { transportRetry = transportRetry.copy(maxAttempts = attempts) }
+
+        /**
+         * Shorthand for [withTransportRetry] with a different first wait. The ceiling is
+         * raised with it when it would otherwise sit below the base delay.
+         */
         public fun withRetryBaseDelayMs(delayMs: Long): Builder =
-            apply { retryBaseDelayMs = delayMs }
+            apply {
+                transportRetry = transportRetry.copy(
+                    baseDelayMs = delayMs,
+                    maxDelayMs = maxOf(delayMs, transportRetry.maxDelayMs)
+                )
+            }
 
         /**
          * How long a transfer may deliver no bytes at all before it is abandoned and retried.
@@ -201,8 +231,6 @@ public class Nimbus private constructor(
         public fun build(): Nimbus {
             requireNotNull(downloadManagerPath) { "downloadManagerPath must be provided" }
             requireNotNull(nimbusDownloadPort) { "nimbusDownloadPort must be provided" }
-            require(maxRetryAttempts >= 0) { "maxRetryAttempts must be >= 0" }
-            require(retryBaseDelayMs > 0L) { "retryBaseDelayMs must be > 0" }
             // When using the default file system storage, the path must be absolute so that
             // kotlinx.io can open/create it. Relative paths resolve to the process working
             // directory, which is read-only on Android and iOS.
@@ -225,8 +253,8 @@ public class Nimbus private constructor(
                 downloadManagerPath = downloadManagerPath!!,
                 downloadBufferSize = downloadBufferSize,
                 downloadNotifyEveryBytes = downloadNotifyEveryBytes,
-                maxRetryAttempts = maxRetryAttempts,
-                retryBaseDelayMs = retryBaseDelayMs,
+                transportRetry = transportRetry,
+                autoRetry = autoRetry,
                 stallTimeoutMs = stallTimeoutMs,
                 minReservedDiskBytes = minReservedDiskBytes,
                 autoStart = autoStart,

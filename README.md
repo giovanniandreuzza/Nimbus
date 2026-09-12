@@ -129,7 +129,7 @@ nimbus.startDownload(url)
 ```
 
 Transient failures — a timeout, a reset connection, an HTTP 5xx — are retried inside the library
-already, according to `withMaxRetryAttempts` and `withRetryBaseDelayMs`. This call is for a task
+already, according to `withTransportRetry`. This call is for a task
 that has given up.
 
 ### Show a list of downloads
@@ -200,8 +200,10 @@ Everything except the download port and the store location has a working default
 | `withConcurrencyLimit(n)` | `1` | Simultaneous transfers |
 | `withAutoStart(enabled)` | `false` | Start automatically on enqueue |
 | `withContentDigest(algorithm)` | `null` | Hash content; `null` means no hashing at all |
-| `withMaxRetryAttempts(n)` | `3` | Retries for transient failures |
-| `withRetryBaseDelayMs(ms)` | `500` | Backoff base |
+| `withTransportRetry(policy)` | 5 tries, 0.5 s → 60 s | Retries inside one download; the task stays `Downloading` |
+| `withAutoRetry(policy)` | forever, 2 s → 5 min | Retries a task that already **failed** (needs `withAutoStart`) |
+| `withMaxRetryAttempts(n)` | `5` | Shorthand for the transport policy's attempt count |
+| `withRetryBaseDelayMs(ms)` | `500` | Shorthand for the transport policy's first wait |
 | `withStallTimeoutMs(ms)` | `60_000` | Abandon a transfer that delivers nothing for this long; `null` disables |
 | `withMinReservedDiskBytes(bytes)` | `null` | Refuse to start without this much headroom |
 | `withDownloadBufferSize(bytes)` | `8 KB` | Transfer buffer |
@@ -209,6 +211,33 @@ Everything except the download port and the store location has a working default
 | `withNimbusLogger(logger)` | `null` | Structured events, see `NimbusLogEvent` |
 | `withNimbusStoragePort(port)` | filesystem | Replace file I/O entirely |
 | `withDownloadScope(scope)` / `withIODispatcher(d)` | internal | Bring your own coroutine plumbing |
+
+## Retries
+
+Two loops, because the two questions are different.
+
+**Inside one download** — a dropped connection, a 5xx, a link that went quiet — Nimbus retries on
+its own and the task never leaves `Downloading`. Waits double from 0.5 s and stop at a minute,
+five attempts by default (`withTransportRetry`). The budget is sized against real links: an LTE
+reattach takes ten to thirty seconds, so a budget that expires in three is spent before the
+network has finished coming back.
+
+**After a download has failed** — the budget above is gone and the task is `Failed` — the
+`withAutoStart` loop brings it back: re-fetch the size, reset the task, start again. Waits double
+from 2 s and stop at 5 minutes, and by default it never gives up, because on an unattended device
+giving up permanently is what a technician's visit looks like (`withAutoRetry`).
+
+Every wait is spread by ±20 %. That is not configurable, and it is the difference between a fleet
+that recovers and a fleet that comes back in lockstep and takes turns knocking the server over.
+
+```kotlin
+Nimbus.Builder()
+    .withTransportRetry(RetryPolicy(maxAttempts = 8, baseDelayMs = 500, maxDelayMs = 30_000))
+    .withAutoRetry(RetryPolicy(maxAttempts = null, baseDelayMs = 5_000, maxDelayMs = 600_000))
+```
+
+`NimbusLogEvent.AutoRetryScheduled` reports each wait as it is decided, and
+`AutoRetryExhausted` fires only if you set a cap.
 
 ## Handling errors
 

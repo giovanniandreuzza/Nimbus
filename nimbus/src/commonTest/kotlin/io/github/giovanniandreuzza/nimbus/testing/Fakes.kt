@@ -16,6 +16,7 @@ import io.github.giovanniandreuzza.nimbus.core.ports.ContentDigestPort
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.ContentDigestAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import kotlinx.coroutines.Dispatchers
+import kotlin.random.Random
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
@@ -172,3 +173,15 @@ internal class RecordingLogger : NimbusLogger {
  */
 internal fun digestPortFor(storage: NimbusStoragePort): ContentDigestPort =
     ContentDigestAdapter(storage, Dispatchers.Unconfined)
+
+/**
+ * A [Random] whose every draw lands exactly in the middle.
+ *
+ * Back-off is spread by ±20 % so a fleet does not retry in lockstep, which leaves a test
+ * asserting a range instead of a number. With this the spread is exactly 1.0 and the delay is
+ * its undisturbed exponential value, so a test can say what it expects in milliseconds.
+ */
+internal object MidJitter : Random() {
+    override fun nextBits(bitCount: Int): Int = 0
+    override fun nextDouble(): Double = 0.5
+}
