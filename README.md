@@ -67,6 +67,14 @@ val nimbus = Nimbus.Builder()
 
 **KMP-native Storage**: File I/O via `kotlinx.io.files.SystemFileSystem` — no `java.io.File`, works on Android, JVM, and iOS.
 
+> [!IMPORTANT]
+> **One process only.** Nimbus keeps its task store in memory and commits it to a single file;
+> there is no locking between processes. Two instances over the same
+> `withDownloadManagerPath` — a UI and a separate downloader service on Android, say — will
+> overwrite each other's state. Run one instance and reach it from elsewhere through your own
+> boundary. See `docs/specs/2026-09-11-multi-process-topology.md` for what supporting a second
+> topology would require.
+
 ## Releases
 
 * The [changelog](CHANGELOG.md) provides a summary of changes in each release.

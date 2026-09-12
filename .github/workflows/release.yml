@@ -54,10 +54,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Publish to Maven Central
         # Uploads and releases in one step: no manual button in the Central Portal.
+        # No signingInMemoryKeyId: the exported keyring holds one secret key, so Gradle
+        # signs with it. Passing an id is optional and was how the first release failed —
+        # Gradle wants the short 8-character form and rejects the long one, which is a
+        # class of error worth removing rather than an instance worth correcting.
         run: ./gradlew publishAndReleaseToMavenCentral --stacktrace
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_IN_MEMORY_KEY_ID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
