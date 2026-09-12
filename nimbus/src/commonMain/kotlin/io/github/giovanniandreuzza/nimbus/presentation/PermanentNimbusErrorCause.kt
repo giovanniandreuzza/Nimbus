@@ -25,7 +25,13 @@ public sealed class PermanentNimbusErrorCause(
         message = "File path must not contain path-traversal components."
     )
 
-    /** The supplied URL is not a supported network URL (`http`/`https`). */
+    /**
+     * The supplied file URL carries no scheme.
+     *
+     * A syntax check only, per RFC 3986 — it says nothing about which transports exist. Which
+     * schemes actually work is decided by the download port in use; this cause means the string
+     * is not a URL at all, which matters because the URL is also the task's identity.
+     */
     public data object InvalidUrl : PermanentNimbusErrorCause(
         code = "invalid_url",
         message = "File URL must carry a scheme, e.g. https://host/path."

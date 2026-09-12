@@ -51,7 +51,10 @@ public interface NimbusAPI {
      * Enqueues a new download.
      *
      * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InvalidState] if a task for [fileUrl] already exists.
-     * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InvalidUrl] when URL is not HTTP/HTTPS.
+     * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InvalidUrl] when the URL
+     * carries no scheme. Which schemes are supported is decided by the
+     * [io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort]
+     * you supply, not here.
      * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InvalidPath] or [PermanentNimbusErrorCause.InvalidFileName] when
      * filesystem input is unsafe.
      */

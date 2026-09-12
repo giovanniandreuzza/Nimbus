@@ -79,7 +79,7 @@ class EnsureDownloadedChecksumTest {
         val finished = DownloadTask.create(
             id = URL,
             fileUrl = URL,
-            filePath = "$PATH/$NAME",
+            filePath = PATH,
             fileName = NAME,
             fileSize = SIZE,
             expectedChecksum = EXPECTED
@@ -87,7 +87,7 @@ class EnsureDownloadedChecksumTest {
         finished.start()
         finished.finish(EXPECTED)
         f.repository.saveDownloadTask(finished)
-        f.storage.write("$PATH/$NAME", ByteArray(SIZE.toInt()))
+        f.storage.write(PATH, ByteArray(SIZE.toInt()))
 
         val result = f.service.ensureDownloaded(URL, PATH, NAME, expectedChecksum = OTHER)
         advanceUntilIdle()
@@ -128,7 +128,7 @@ class EnsureDownloadedChecksumTest {
 
     private companion object {
         const val URL = "https://example.com/payload.bin"
-        const val PATH = "/tmp"
+        const val PATH = "/tmp/payload.bin"
         const val NAME = "payload.bin"
         const val SIZE = 64L
         val EXPECTED = Checksum(DigestAlgorithm.SHA256, "a".repeat(64))
