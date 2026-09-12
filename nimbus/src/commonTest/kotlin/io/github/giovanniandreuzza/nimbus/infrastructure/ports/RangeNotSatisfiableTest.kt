@@ -15,6 +15,7 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.DeleteFileError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
+import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
 import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.coroutines.CoroutineScope
@@ -140,15 +141,41 @@ class RangeNotSatisfiableTest {
 
     // -- harness -----------------------------------------------------------
 
-    private fun TestScope.harness(maxRetryAttempts: Int = 3) = Harness(this, maxRetryAttempts)
+    @Test
+    fun `the digest after a 416 describes the file that was actually kept`() = runTest {
+        val h = harness(digestAlgorithm = DigestAlgorithm.SHA256)
+        // A prefix that the server will reject, so the local bytes are thrown away and the
+        // transfer restarts from zero.
+        h.storage.write(PATH, CONTENT.copyOf(40))
+
+        h.run(RangeRejectingPort(CONTENT, rejectFirstRequest = true))
+
+        assertTrue(h.finished, "expected the download to finish, failures: ${h.failures}")
+        assertEquals(
+            CONTENT_SHA256,
+            h.finishedChecksum?.value,
+            "after a 416 the file on disk was truncated and fetched again from zero, so the " +
+                    "digest has to describe exactly those bytes. A digest still carrying the " +
+                    "discarded prefix would be well-formed, plausible and wrong — and a caller " +
+                    "comparing it later would delete and refetch a perfectly good file forever"
+        )
+    }
+
+    private fun TestScope.harness(
+        maxRetryAttempts: Int = 3,
+        digestAlgorithm: DigestAlgorithm? = null
+    ) = Harness(this, maxRetryAttempts, digestAlgorithm)
 
     private class Harness(
         private val scope: TestScope,
-        private val maxRetryAttempts: Int
+        private val maxRetryAttempts: Int,
+        private val digestAlgorithm: DigestAlgorithm? = null
     ) {
         val storage = InMemoryStorage()
         val failures = mutableListOf<DownloadError>()
         var finished = false
+            private set
+        var finishedChecksum: Checksum? = null
             private set
 
         private val callback = object : DownloadProgressCallback {
@@ -160,6 +187,7 @@ class RangeNotSatisfiableTest {
 
             override suspend fun onDownloadFinished(id: String, checksum: Checksum?) {
                 finished = true
+                finishedChecksum = checksum
             }
         }
 
@@ -176,7 +204,7 @@ class RangeNotSatisfiableTest {
                 notifyEveryBytes = 32L,
                 maxRetryAttempts = maxRetryAttempts,
                 retryBaseDelayMs = 1L,
-                digestAlgorithm = null,
+                digestAlgorithm = digestAlgorithm,
                 contentDigestPort = digestPortFor(storage)
             )
             adapter.startDownload(task())
@@ -197,6 +225,10 @@ class RangeNotSatisfiableTest {
         const val ID = "task"
         const val PATH = "/tmp/nimbus/payload.bin"
         val CONTENT = ByteArray(200) { (it * 7 % 251).toByte() }
+
+        /** SHA-256 of CONTENT, computed outside this codebase so it is an independent oracle. */
+        const val CONTENT_SHA256 =
+            "fcfa8eb2ae47de09df3e42e48371d9ea7446fb378097f8ef9bf743d9856f50b6"
     }
 }
 
