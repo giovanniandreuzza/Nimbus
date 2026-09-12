@@ -408,7 +408,11 @@ internal class DownloadAdapter(
                     )
                 } catch (e: Throwable) {
                     transferFailure = DownloadError.PermanentError(
-                        PermanentDownloadErrorCause.StorageError(unexpectedKError(e))
+                        storageFailureCause(
+                            filePath = downloadTask.filePath,
+                            remainingBytes = totalFileSize - progressBytes,
+                            cause = e
+                        )
                     )
                 }
             }
@@ -545,6 +549,36 @@ internal class DownloadAdapter(
         } catch (e: Throwable) {
             throw BodyReadFailure(e)
         }
+
+    /**
+     * Classifies a write that the volume refused.
+     *
+     * The volume is asked how much room is left rather than the exception being read for
+     * words like "space": the message is the platform's to phrase and a caller should not
+     * have to grep it. A shortage is reported as one, so it can be told apart from storage
+     * that is genuinely broken — the distinction the caller can act on, and the same answer
+     * the headroom check gives when it catches the shortage before the transfer starts.
+     *
+     * Anything else, including a volume that cannot say, stays a storage error.
+     */
+    private fun storageFailureCause(
+        filePath: String,
+        remainingBytes: Long,
+        cause: Throwable
+    ): PermanentDownloadErrorCause {
+        val available = when (val space = nimbusStoragePort.usableSpaceBytes(filePath)) {
+            is Success -> space.value
+            is Failure -> return PermanentDownloadErrorCause.StorageError(unexpectedKError(cause))
+        }
+        if (available < remainingBytes) {
+            return PermanentDownloadErrorCause.InsufficientDiskSpace(
+                path = filePath,
+                requiredBytes = remainingBytes,
+                availableBytes = available
+            )
+        }
+        return PermanentDownloadErrorCause.StorageError(unexpectedKError(cause))
+    }
 
     private fun unexpectedKError(cause: Throwable?): KError = KError(
         code = "transfer_failed",
