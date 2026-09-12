@@ -22,7 +22,7 @@ import timber.log.Timber
 fun buildNimbusApi(
     context: android.content.Context,
     httpClient: HttpClient
-): NimbusAPI = Nimbus.Companion.Builder()
+): NimbusAPI = Nimbus.Builder()
     .withAndroidContext(context)
     .withNimbusDownloadPort(KtorDownloadAdapter(httpClient))
     .withConcurrencyLimit(3)

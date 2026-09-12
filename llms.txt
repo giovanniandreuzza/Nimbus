@@ -206,7 +206,7 @@ sealed class TemporaryNimbusErrorCause {
 sealed class PermanentNimbusErrorCause {
     // Input validation (before any network call)
     data object InvalidPath        // filePath contains ".." traversal component
-    data object InvalidUrl         // fileUrl is not http/https
+    data object InvalidUrl         // fileUrl carries no scheme (syntax only — any scheme is accepted)
     data object InvalidFileName    // fileName is blank, ".", "..", or contains / \ \0
     data class  InvalidFileSize(cause: KError? = null)  // remote reported size <= 0
     data object DownloadNotFound   // no task registered for this fileUrl
@@ -435,7 +435,11 @@ have to discover from a bug report.
   instance and reach it from elsewhere through your own boundary.
 - Does not validate that `filePath`'s parent directory exists — create it before calling `enqueueDownload`.
 - Does not enforce a process-wide singleton — use your DI container's `single {}` for that.
-- Does not support non-HTTP(S) URLs.
+- Does not itself speak any transport. Core accepts any URL that carries a scheme; which
+  schemes work is decided entirely by the `NimbusDownloadPort` you supply. `nimbus-ktor` covers
+  HTTP(S); anything else — ftp, a local share, your own protocol — is an adapter you write.
+  What the port must be able to do: report the size before the transfer, and start from a byte
+  offset when asked to resume.
 - Does not resume downloads that were `Enqueued` but never started across sessions —
   call `startDownload` again after `init()` if you want auto-resume on restart.
 

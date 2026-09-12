@@ -40,7 +40,7 @@ class WiredUpTest {
     fun `a library built the documented way downloads a file and reports its digest`() =
         runTest {
             val storage = InMemoryStorage()
-            val nimbus = Nimbus.Companion.Builder()
+            val nimbus = Nimbus.Builder()
                 .withDownloadScope(
                     CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
                 )

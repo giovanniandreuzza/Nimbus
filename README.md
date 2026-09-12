@@ -35,7 +35,7 @@ dependencies {
 Build once, keep the result — it is the whole API.
 
 ```kotlin
-val nimbus: NimbusAPI = Nimbus.Companion.Builder()
+val nimbus: NimbusAPI = Nimbus.Builder()
     .withNimbusDownloadPort(KtorDownloadAdapter(httpClient))
     .withDownloadManagerPath("/path/to/metadata/store")
     .build()
@@ -241,6 +241,17 @@ Stream the body to the `Source` you are handed — do not buffer the whole respo
 **200** with a body (it would corrupt the file), and map **416** to
 `TemporaryDownloadErrorCause.RangeNotSatisfiable`. `llms.txt` has the full contract.
 
+### Other transports
+
+Nothing in the port is HTTP-specific — it is a URL, a byte offset and a stream — and core accepts
+any URL that carries a scheme, so `ftp://`, `file://` or a scheme of your own reaches your adapter
+rather than being refused before it. Two things your transport has to be able to do: report the
+size before the transfer starts, and begin at a byte offset when asked to resume.
+
+The error vocabulary is deliberately HTTP-shaped (`ServerError(statusCode)`, `ResourceNotFound`,
+`RangeNotSatisfiable`). It is precise and widely understood, so an adapter for another transport
+maps its own failures onto it — the same way it maps its own wire format onto a `Source`.
+
 ## What Nimbus does not do
 
 - **It does not work across processes.** The task store is held in memory and committed to one
@@ -249,7 +260,8 @@ Stream the body to the `Source` you are handed — do not buffer the whole respo
   each other's state. Run one instance and reach it from elsewhere through your own boundary.
 - It does not create the parent directory of `filePath` for you.
 - It does not enforce a process-wide singleton — your DI container's `single {}` does that.
-- It does not support non-HTTP(S) URLs.
+- It does not speak any transport itself. Any URL with a scheme is accepted; what actually
+  works is decided by the `NimbusDownloadPort` you supply.
 - It does not auto-start tasks that were `Enqueued` but never started in a previous session; call
   `startDownload` after `init()` if you want that.
 
