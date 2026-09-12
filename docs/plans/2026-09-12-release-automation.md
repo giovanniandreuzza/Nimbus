@@ -570,7 +570,12 @@ git commit -m "ci: build and check conventions on every pull request"
 
 **Interfaces:**
 - Consumes: `version.txt` from Task 2 — release-please's `simple` strategy writes it; `README.md` markers from Task 3.
-- Produces: secret names the maintainer must create in Task 8: `RELEASE_PLEASE_APP_ID`, `RELEASE_PLEASE_APP_PRIVATE_KEY`, `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_IN_MEMORY_KEY`, `SIGNING_IN_MEMORY_KEY_ID`, `SIGNING_IN_MEMORY_KEY_PASSWORD`.
+- Produces: secret names the maintainer must create in Task 8: `RELEASE_PLEASE_APP_ID`, `RELEASE_PLEASE_APP_PRIVATE_KEY`, `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_IN_MEMORY_KEY`, `SIGNING_IN_MEMORY_KEY_PASSWORD`.
+
+  Historical note: this plan originally added `SIGNING_IN_MEMORY_KEY_ID` as a sixth secret. It is
+  not one. Gradle wants the short eight-character key id and rejects the long form, which is what
+  failed the first 2.3.0 publish; and since the exported keyring holds a single secret key, the id
+  is optional anyway. The input was removed from the workflow rather than corrected.
 
 - [ ] **Step 1: Write the release-please config**
 
@@ -677,7 +682,6 @@ jobs:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_IN_MEMORY_KEY_ID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
 EOF
 ```
@@ -804,7 +808,6 @@ The local setup signs with `signing.secretKeyRingFile`, a keyring on disk, which
 ```bash
 gpg --list-secret-keys --keyid-format=long          # find the key id
 gpg --armor --export-secret-keys <KEY_ID> | gh secret set SIGNING_IN_MEMORY_KEY --repo giovanniandreuzza/Nimbus
-gh secret set SIGNING_IN_MEMORY_KEY_ID --repo giovanniandreuzza/Nimbus        # last 8 characters of the key id
 gh secret set SIGNING_IN_MEMORY_KEY_PASSWORD --repo giovanniandreuzza/Nimbus  # the key's passphrase
 ```
 
@@ -814,7 +817,7 @@ gh secret set SIGNING_IN_MEMORY_KEY_PASSWORD --repo giovanniandreuzza/Nimbus  # 
 gh secret list --repo giovanniandreuzza/Nimbus
 ```
 
-Expected: `RELEASE_PLEASE_APP_ID`, `RELEASE_PLEASE_APP_PRIVATE_KEY`, `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_IN_MEMORY_KEY`, `SIGNING_IN_MEMORY_KEY_ID`, `SIGNING_IN_MEMORY_KEY_PASSWORD`.
+Expected: `RELEASE_PLEASE_APP_ID`, `RELEASE_PLEASE_APP_PRIVATE_KEY`, `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_IN_MEMORY_KEY`, `SIGNING_IN_MEMORY_KEY_PASSWORD` — six, not seven. See the note above about the key id.
 
 - [ ] **Step 7: Re-run the failed release workflow**
 

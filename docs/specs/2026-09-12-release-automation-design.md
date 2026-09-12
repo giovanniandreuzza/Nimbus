@@ -250,7 +250,10 @@ while the signing and Maven Central secrets are in scope.
   `tag_name`, then `./gradlew publishAndReleaseToMavenCentral` — the task that uploads *and*
   releases, so no manual click in the Central Portal. Credentials arrive as environment
   variables: `ORG_GRADLE_PROJECT_mavenCentralUsername`, `…Password`, `…signingInMemoryKey`,
-  `…signingInMemoryKeyId`, `…signingInMemoryKeyPassword`.
+  `…signingInMemoryKeyPassword`. No `…signingInMemoryKeyId`: Gradle wants the short
+  eight-character form and rejects the long one — which failed the first publish — and the
+  exported keyring holds a single secret key, so the id is optional. The input was removed rather
+  than corrected.
 
 Publishing is gated on the `release_created` output inside the same workflow rather than
 triggered by `on: release`, so it does not depend on which token generated the release event.
