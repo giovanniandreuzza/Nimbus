@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.5.0](https://github.com/giovanniandreuzza/Nimbus/compare/v2.4.0...v2.5.0) (unreleased)
+## [2.5.0](https://github.com/giovanniandreuzza/Nimbus/compare/v2.4.0...v2.5.0) (2026-09-13)
 
 A field audit of the library against what it claims to be built for — a kiosk or a signage
 player running unattended for months — found twenty-two things. This release is all of them.
