@@ -50,6 +50,11 @@ public interface NimbusAPI {
     /**
      * Enqueues a new download.
      *
+     * [filePath] is the file, in full: Nimbus writes exactly there and creates the parent
+     * directories on the way. [fileName] is a label — it is validated, stored and reported in
+     * [DownloadTaskDTO], and no I/O uses it — so it defaults to the last segment of the path
+     * and is worth passing only when you want the task to carry a different name.
+     *
      * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InvalidState] if a task for [fileUrl] already exists.
      * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InvalidUrl] when the URL
      * carries no scheme. Which schemes are supported is decided by the
@@ -66,7 +71,7 @@ public interface NimbusAPI {
     public suspend fun enqueueDownload(
         fileUrl: String,
         filePath: String,
-        fileName: String,
+        fileName: String = filePath.fileNameFromPath(),
         expectedChecksum: Checksum? = null
     ): KResult<DownloadTaskDTO, NimbusError>
 
@@ -144,7 +149,7 @@ public interface NimbusAPI {
     public suspend fun ensureDownloaded(
         fileUrl: String,
         filePath: String,
-        fileName: String,
+        fileName: String = filePath.fileNameFromPath(),
         expectedChecksum: Checksum? = null
     ): KResult<Flow<DownloadState>, NimbusError>
 
@@ -221,3 +226,12 @@ public interface NimbusAPI {
      */
     public suspend fun checksum(fileUrl: String): KResult<Checksum, NimbusError>
 }
+
+/**
+ * The last segment of a path, whichever separator the platform writes.
+ *
+ * What [NimbusAPI.enqueueDownload] and [NimbusAPI.ensureDownloaded] use when no file name is
+ * given, which is nearly always the name the caller would have typed.
+ */
+internal fun String.fileNameFromPath(): String =
+    substringAfterLast('/').substringAfterLast('\\')

@@ -72,7 +72,7 @@ suspend fun checksum(fileUrl: String): KResult<Checksum, NimbusError>
 // every call reads the whole file.
 
 // Lifecycle
-suspend fun enqueueDownload(fileUrl: String, filePath: String, fileName: String, expectedChecksum: Checksum? = null): KResult<DownloadTaskDTO, NimbusError>
+suspend fun enqueueDownload(fileUrl: String, filePath: String, fileName: String = filePath.substringAfterLast('/'), expectedChecksum: Checksum? = null): KResult<DownloadTaskDTO, NimbusError>
 // filePath is the FULL destination path of the file ("/downloads/video.mp4"), not its directory.
 // fileName is metadata only — Nimbus never joins the two, and never creates the parent directory.
 suspend fun startDownload(fileUrl: String): KResult<Unit, NimbusError>
@@ -96,7 +96,7 @@ suspend fun retryFailedDownload(fileUrl: String): KResult<Unit, NimbusError>
 // Refetches remote size, deletes partial file, resets state to Enqueued. Call startDownload after.
 
 // High-level convenience
-suspend fun ensureDownloaded(fileUrl: String, filePath: String, fileName: String, expectedChecksum: Checksum? = null): KResult<Flow<DownloadState>, NimbusError>
+suspend fun ensureDownloaded(fileUrl: String, filePath: String, fileName: String = filePath.substringAfterLast('/'), expectedChecksum: Checksum? = null): KResult<Flow<DownloadState>, NimbusError>
 // Handles the full lifecycle automatically:
 //   already finished  → returns flowOf(DownloadState.Finished)
 //   stale finished    → clears metadata, re-downloads
@@ -519,6 +519,16 @@ have to discover from a bug report.
   starts from zero. `retryFailedDownload` applies the same rule — a validator that no longer
   matches discards the partial even when the size is identical, which is exactly the case
   (a re-encode, a regenerated manifest) that every previous check passed.
+- **`NimbusError.causeCode` and `.isRetryable` are the short way in.** The typed causes nest
+  three deep (`PermanentError` → `DownloadFailed` → the download's own cause), which is right
+  for a caller who wants precision and more than most want: `causeCode` unwraps the two causes
+  that exist only to carry another and returns the specific code
+  (`insufficient_disk_space`, `resource_not_found`…), and `isRetryable` is the temporary /
+  permanent split as a boolean. `NimbusError.code` still reports the variant
+  (`temporary_error` / `permanent_error`), not the reason.
+- **`fileName` is a label, and optional.** `filePath` is the file in full — Nimbus writes there
+  and creates the parent directories. `fileName` is validated, stored and reported in the DTO,
+  and used by no file operation; it defaults to the last segment of the path.
 - **`filePath` is only as safe as you make it.** The built-in check refuses `..` components and
   control characters, and that is all it can do on its own. When destinations come from a
   manifest — which on a kiosk they do — set `withDownloadRoot(dir)`: anything outside it is then

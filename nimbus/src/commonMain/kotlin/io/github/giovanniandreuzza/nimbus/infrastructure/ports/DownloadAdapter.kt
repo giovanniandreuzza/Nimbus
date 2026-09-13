@@ -132,21 +132,28 @@ internal class DownloadAdapter(
     override suspend fun startDownload(downloadTask: DownloadTaskDTO): KResult<Unit, DownloadError> {
         val id = downloadTask.id
 
-        val quickSize: Long? = when (val r = nimbusStoragePort.size(downloadTask.filePath)) {
-            is Success -> r.value
-            is Failure -> null
-        }
-        if (quickSize != null && quickSize == downloadTask.fileSize) {
-            return finishCompleteFileOnDisk(downloadTask, id)
-        }
-
         val job = downloadScope.launch(
             context = createExceptionHandler(id),
             start = CoroutineStart.LAZY
         ) {
             try {
                 semaphore.withPermit {
-                    runDownloadJob(downloadTask, id)
+                    // The already-complete case runs here rather than on the caller's
+                    // coroutine, because with a digest configured it is not a check — it reads
+                    // and hashes the whole file. Two gigabytes off eMMC is twenty seconds of a
+                    // caller suspended inside what looks like a start, and on a reconciliation
+                    // loop that walks a manifest it is twenty seconds per asset with nothing
+                    // else moving. Under the permit it also counts against the concurrency
+                    // limit, which is what the limit is for.
+                    val onDisk = when (val r = nimbusStoragePort.size(downloadTask.filePath)) {
+                        is Success -> r.value
+                        is Failure -> null
+                    }
+                    if (onDisk == downloadTask.fileSize) {
+                        finishCompleteFileOnDisk(downloadTask, id)
+                    } else {
+                        runDownloadJob(downloadTask, id)
+                    }
                 }
             } finally {
                 removeJob(id)
@@ -941,11 +948,11 @@ internal class DownloadAdapter(
     private suspend fun finishCompleteFileOnDisk(
         downloadTask: DownloadTaskDTO,
         id: String
-    ): KResult<Unit, DownloadError> {
+    ) {
         val algorithm = digestAlgorithm
         if (algorithm == null) {
             downloadProgressCallback.onDownloadFinished(id)
-            return Success(Unit)
+            return
         }
 
         val checksum = when (val r = contentDigestPort.digestOf(downloadTask.filePath, algorithm)) {
@@ -958,14 +965,13 @@ internal class DownloadAdapter(
                     id,
                     DownloadError.TemporaryError(TemporaryDownloadErrorCause.FileNotAccessible)
                 )
-                return Success(Unit)
+                return
             }
         }
 
-        if (!verifyFileIntegrity(downloadTask, id, checksum)) return Success(Unit)
+        if (!verifyFileIntegrity(downloadTask, id, checksum)) return
 
         downloadProgressCallback.onDownloadFinished(id, checksum)
-        return Success(Unit)
     }
 
     private suspend fun notifyFailureAndCleanup(id: String, error: DownloadError) {

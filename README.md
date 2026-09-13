@@ -174,8 +174,8 @@ Every method is `suspend` and returns `KResult<T, NimbusError>` unless noted.
 
 | Method | Does |
 |---|---|
-| `ensureDownloaded(url, path, name, expectedChecksum?)` | Whole lifecycle; returns `Flow<DownloadState>` |
-| `enqueueDownload(url, path, name, expectedChecksum?)` | Registers a task and fetches its size |
+| `ensureDownloaded(url, path, name?, expectedChecksum?)` | Whole lifecycle; returns `Flow<DownloadState>` |
+| `enqueueDownload(url, path, name?, expectedChecksum?)` | Registers a task and fetches its size |
 | `startDownload(url)` | Begins the transfer |
 | `pauseDownload(url)` / `resumeDownload(url)` | Pause and continue |
 | `cancelDownload(url)` | Stop and delete the partial file |
@@ -321,6 +321,18 @@ nimbus.startDownload(url).onFailure { error ->
 
 A failed download carries the same detail in its state: `DownloadState.Failed(error)`, where
 `error` is a `DownloadError` with its own temporary and permanent causes.
+
+When that precision is more than you need, two accessors answer the usual questions without the
+nesting:
+
+```kotlin
+if (error.isRetryable) scheduleRetry() else report(error.causeCode)
+// causeCode: "insufficient_disk_space", "resource_not_found", "path_outside_download_root"…
+```
+
+`filePath` is the file, in full — Nimbus writes exactly there and creates the parent directories.
+`fileName` is a label: validated, stored, reported in `DownloadTaskDTO`, used by no file
+operation, and defaulted to the last segment of the path.
 
 The full hierarchy — every variant and when it occurs — is in [`llms.txt`](llms.txt).
 
