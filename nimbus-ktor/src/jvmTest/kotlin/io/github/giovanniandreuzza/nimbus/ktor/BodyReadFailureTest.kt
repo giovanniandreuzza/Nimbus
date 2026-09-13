@@ -59,7 +59,7 @@ class BodyReadFailureTest {
 
         var bytesSeen = 0
         val result = KtorDownloadAdapter(HttpClient(engine))
-            .downloadFile(url, offset = 0L) { source ->
+            .downloadFile(url, offset = 0L, resumeValidator = null) { source ->
                 bytesSeen = source.readByteArray().size
             }
 

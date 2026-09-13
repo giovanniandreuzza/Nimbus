@@ -8,14 +8,18 @@ import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
 import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
+import io.github.giovanniandreuzza.nimbus.core.application.errors.TransitionFailure
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
+import io.github.giovanniandreuzza.nimbus.core.ports.ClockPort
+import io.github.giovanniandreuzza.nimbus.core.ports.RemoteFileInfo
 import io.github.giovanniandreuzza.nimbus.core.ports.ContentDigestPort
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.ContentDigestAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import kotlinx.coroutines.Dispatchers
+import kotlin.random.Random
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
@@ -52,16 +56,17 @@ internal class FakeDownloadTaskRepository(
     override suspend fun loadDownloadTasks(): KResult<Unit, FailedToLoadDownloadTasks> =
         loadFailure?.let { Failure(it) } ?: Success(Unit)
 
-    override suspend fun getDownloadTask(id: DownloadId): KResult<DownloadTask, DownloadTaskNotFound> =
-        tasks[id]?.let { Success(it) } ?: Failure(DownloadTaskNotFound)
+    override suspend fun getAllDownloadTasks(): List<DownloadTaskDTO> =
+        tasks.values.map { DownloadTaskDTO.fromDomain(it) }
 
-    override suspend fun getAllDownloadTask(): Map<DownloadId, DownloadTask> = tasks.toMap()
+    override suspend fun isFilePathInUse(filePath: String): Boolean =
+        tasks.values.any { it.filePath.value == filePath }
 
     override suspend fun observeDownloadTask(id: DownloadId): KResult<Flow<DownloadState>, DownloadTaskNotFound> =
         flows[id]?.asStateFlow()?.let { Success(it) } ?: Failure(DownloadTaskNotFound)
 
-    override fun observeAllDownloadTasks(): Flow<List<DownloadTask>> =
-        revision.map { tasks.values.toList() }
+    override fun observeAllDownloadTasks(): Flow<List<DownloadTaskDTO>> =
+        revision.map { tasks.values.map { task -> DownloadTaskDTO.fromDomain(task) } }
 
     override suspend fun saveDownloadTask(downloadTask: DownloadTask): KResult<Unit, KError> {
         saveFailure?.let { return Failure(it) }
@@ -73,11 +78,39 @@ internal class FakeDownloadTaskRepository(
         return Success(Unit)
     }
 
-    override suspend fun updateDownloadProgress(downloadTask: DownloadTask): KResult<Unit, KError> {
-        tasks[downloadTask.entityId.id] = downloadTask
-        flows[downloadTask.entityId.id]?.value = downloadTask.state
+    override suspend fun <T : Any> readDownloadTask(
+        id: DownloadId,
+        read: (DownloadTask) -> T?
+    ): KResult<T, TransitionFailure> {
+        val task = tasks[id] ?: return Failure(TransitionFailure.NotFound)
+        val value = read(task) ?: return Failure(TransitionFailure.Refused(task.state))
+        return Success(value)
+    }
+
+    override suspend fun <T : Any> transitionDownloadTask(
+        id: DownloadId,
+        persist: Boolean,
+        transition: (DownloadTask) -> T?
+    ): KResult<T, TransitionFailure> {
+        val task = tasks[id] ?: return Failure(TransitionFailure.NotFound)
+        val value = transition(task) ?: return Failure(TransitionFailure.Refused(task.state))
+
+        flows.getOrPut(id) { MutableStateFlow(task.state) }.value = task.state
         revision.value++
-        return Success(Unit)
+
+        if (!persist) return Success(value)
+
+        saveFailure?.let { return Failure(TransitionFailure.NotPersisted(it)) }
+        saveCount++
+        return Success(value)
+    }
+
+    var flushCount: Int = 0
+        private set
+
+    override suspend fun flushPendingState(): KResult<Unit, KError> {
+        flushCount++
+        return saveFailure?.let { Failure(it) } ?: Success(Unit)
     }
 
     override suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, KError> {
@@ -110,12 +143,27 @@ internal class ScriptedDownloadPort(
     var sizeFailure: GetFileSizeError? = null
     var startFailure: DownloadError? = null
 
+    /**
+     * Called while [stopDownload] runs, so a test can see what the world looked like at that
+     * moment — in particular whether the task had already been moved out of `Downloading`.
+     */
+    var onStop: (suspend (downloadId: String) -> Unit)? = null
+
     fun remoteSizeBecomes(size: Long) {
         remoteSize = size
     }
 
-    override suspend fun getFileSizeToDownload(fileUrl: String): KResult<Long, GetFileSizeError> =
-        sizeFailure?.let { Failure(it) } ?: Success(remoteSize)
+    /** What the origin claims identifies the file. Change it to make a resume look stale. */
+    var remoteValidator: String? = null
+
+    /** Runs before the size is answered, so a test can hold a call open. */
+    var onGetRemoteFile: (suspend () -> Unit)? = null
+
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFileInfo, GetFileSizeError> {
+        onGetRemoteFile?.invoke()
+        return sizeFailure?.let { Failure(it) }
+            ?: Success(RemoteFileInfo(remoteSize, remoteValidator))
+    }
 
     override suspend fun startDownload(downloadTask: DownloadTaskDTO): KResult<Unit, DownloadError> {
         started.add(downloadTask)
@@ -124,6 +172,14 @@ internal class ScriptedDownloadPort(
 
     override suspend fun stopDownload(downloadId: String) {
         stopped.add(downloadId)
+        onStop?.invoke(downloadId)
+    }
+
+    var stoppedAll: Int = 0
+        private set
+
+    override suspend fun stopAllDownloads() {
+        stoppedAll++
     }
 
     companion object {
@@ -172,3 +228,29 @@ internal class RecordingLogger : NimbusLogger {
  */
 internal fun digestPortFor(storage: NimbusStoragePort): ContentDigestPort =
     ContentDigestAdapter(storage, Dispatchers.Unconfined)
+
+/**
+ * A [Random] whose every draw lands exactly in the middle.
+ *
+ * Back-off is spread by ±20 % so a fleet does not retry in lockstep, which leaves a test
+ * asserting a range instead of a number. With this the spread is exactly 1.0 and the delay is
+ * its undisturbed exponential value, so a test can say what it expects in milliseconds.
+ */
+internal object MidJitter : Random() {
+    override fun nextBits(bitCount: Int): Int = 0
+    override fun nextDouble(): Double = 0.5
+}
+
+/**
+ * A clock a test can move.
+ *
+ * The timestamps this library writes are read back weeks later by `pruneFinished`, so a test
+ * that could not move time could only test pruning by waiting through it.
+ */
+internal class FakeClock(private var nowMs: Long = 1_700_000_000_000L) : ClockPort {
+    override fun nowEpochMs(): Long = nowMs
+
+    fun advanceBy(millis: Long) {
+        nowMs += millis
+    }
+}

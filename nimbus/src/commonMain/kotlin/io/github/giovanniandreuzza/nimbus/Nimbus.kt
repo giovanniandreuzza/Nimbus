@@ -6,6 +6,8 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.N
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
+import io.github.giovanniandreuzza.nimbus.presentation.PermanentNimbusErrorCause
+import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,12 +43,15 @@ public class Nimbus private constructor(
     nimbusDownloadPort: NimbusDownloadPort,
     nimbusStoragePort: NimbusStoragePort?,
     downloadManagerPath: String,
+    downloadRoot: String?,
     downloadBufferSize: Long,
     downloadNotifyEveryBytes: Long,
-    maxRetryAttempts: Int,
-    retryBaseDelayMs: Long,
+    transportRetry: RetryPolicy,
+    autoRetry: RetryPolicy,
+    stallTimeoutMs: Long?,
     minReservedDiskBytes: Long?,
     autoStart: Boolean,
+    ownsDownloadScope: Boolean,
     digestAlgorithm: DigestAlgorithm?,
     logger: NimbusLogger?
 ) {
@@ -57,40 +62,57 @@ public class Nimbus private constructor(
         nimbusDownloadPort = nimbusDownloadPort,
         nimbusStoragePort = nimbusStoragePort,
         downloadManagerPath = downloadManagerPath,
+        downloadRoot = downloadRoot,
         downloadBufferSize = downloadBufferSize,
         downloadNotifyEveryBytes = downloadNotifyEveryBytes,
-        maxRetryAttempts = maxRetryAttempts,
-        retryBaseDelayMs = retryBaseDelayMs,
+        transportRetry = transportRetry,
+        autoRetry = autoRetry,
+        stallTimeoutMs = stallTimeoutMs,
         minReservedDiskBytes = minReservedDiskBytes,
         autoStart = autoStart,
+        ownsDownloadScope = ownsDownloadScope,
         digestAlgorithm = digestAlgorithm,
         logger = logger
     )
 
     public class Builder {
         private var downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        /**
+         * Whether the scope above is still the one this builder made. A scope the caller
+         * supplied is theirs to end, so [NimbusAPI.close] leaves it running.
+         */
+        private var ownsDownloadScope = true
         private var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
         private var concurrencyLimit = 1
         private var nimbusDownloadPort: NimbusDownloadPort? = null
         private var nimbusStoragePort: NimbusStoragePort? = null
         private var downloadManagerPath: String? = null
+        private var downloadRoot: String? = null
         private var downloadBufferSize: Long = 8 * 1024L
         private var downloadNotifyEveryBytes: Long = 16 * 32 * 1024L
-        private var maxRetryAttempts: Int = 3
-        private var retryBaseDelayMs: Long = 500L
+        private var transportRetry: RetryPolicy = RetryPolicy.Transport
+        private var autoRetry: RetryPolicy = RetryPolicy.AutoRetry
+        private var stallTimeoutMs: Long? = DEFAULT_STALL_TIMEOUT_MS
         private var minReservedDiskBytes: Long? = null
         private var autoStart: Boolean = false
         private var digestAlgorithm: DigestAlgorithm? = null
         private var logger: NimbusLogger? = null
 
         public fun withDownloadScope(scope: CoroutineScope): Builder =
-            apply { downloadScope = scope }
+            apply {
+                downloadScope = scope
+                ownsDownloadScope = false
+            }
 
         public fun withIODispatcher(dispatcher: CoroutineDispatcher): Builder =
             apply { ioDispatcher = dispatcher }
 
         public fun withConcurrencyLimit(limit: Int): Builder =
-            apply { concurrencyLimit = limit }
+            apply {
+                require(limit >= 1) { "concurrencyLimit must be >= 1" }
+                concurrencyLimit = limit
+            }
 
         public fun withNimbusDownloadPort(port: NimbusDownloadPort): Builder =
             apply { nimbusDownloadPort = port }
@@ -101,17 +123,104 @@ public class Nimbus private constructor(
         public fun withDownloadManagerPath(path: String): Builder =
             apply { downloadManagerPath = path }
 
+        /**
+         * How much of the body is read at a time. Bounded on both sides: a buffer of zero
+         * makes a transfer that never advances, and one past [MAX_BUFFER_SIZE_BYTES] is an
+         * allocation an appliance with two gigabytes of RAM cannot make. Both used to be
+         * accepted here and fail at the first transfer instead — a crash, or a download that
+         * looked stuck, hours after the build that got it wrong.
+         */
+        /**
+         * Confines every destination to [directoryPath]: a `filePath` that is not under it is
+         * refused with [PermanentNimbusErrorCause.PathOutsideDownloadRoot].
+         *
+         * Worth setting whenever the destination comes from somewhere else. On a kiosk it
+         * usually comes from a manifest the backend serves, which makes it input — and without
+         * a root the only check is that it contains no `..`, so an absolute path naming the
+         * app's own database is accepted and written to. A compromised backend, or a manifest
+         * over plain HTTP with someone in the middle, is all it takes.
+         *
+         * The check is lexical: paths are normalised (`.`, `..`, duplicate separators) and
+         * compared as strings. A symlink under the root pointing elsewhere still leads
+         * elsewhere, and nothing can see that before the file exists.
+         */
+        public fun withDownloadRoot(directoryPath: String): Builder =
+            apply {
+                require(directoryPath.isNotBlank()) { "downloadRoot must not be blank" }
+                downloadRoot = directoryPath
+            }
+
         public fun withDownloadBufferSize(size: Long): Builder =
-            apply { downloadBufferSize = size }
+            apply {
+                require(size in 1L..MAX_BUFFER_SIZE_BYTES) {
+                    "downloadBufferSize must be between 1 and $MAX_BUFFER_SIZE_BYTES bytes"
+                }
+                downloadBufferSize = size
+            }
 
         public fun withDownloadNotifyEveryBytes(bytes: Long): Builder =
-            apply { downloadNotifyEveryBytes = bytes }
+            apply {
+                require(bytes >= 1L) { "downloadNotifyEveryBytes must be >= 1" }
+                downloadNotifyEveryBytes = bytes
+            }
 
+        /**
+         * How a single download retries its own transport failures — a dropped connection, a
+         * 5xx, a link that went quiet. The task stays `Downloading` throughout.
+         *
+         * Defaults to [RetryPolicy.Transport].
+         */
+        public fun withTransportRetry(policy: RetryPolicy): Builder =
+            apply { transportRetry = policy }
+
+        /**
+         * How a download that has already **failed** is brought back, when `autoStart` is on.
+         * Measured in minutes rather than seconds, and unbounded by default.
+         *
+         * Defaults to [RetryPolicy.AutoRetry]. Has no effect without
+         * [withAutoStart]: without it, retrying a failed task is the caller's to schedule.
+         */
+        public fun withAutoRetry(policy: RetryPolicy): Builder =
+            apply { autoRetry = policy }
+
+        /** Shorthand for [withTransportRetry] with a different attempt count. */
         public fun withMaxRetryAttempts(attempts: Int): Builder =
-            apply { maxRetryAttempts = attempts }
+            apply { transportRetry = transportRetry.copy(maxAttempts = attempts) }
 
+        /**
+         * Shorthand for [withTransportRetry] with a different first wait. The ceiling is
+         * raised with it when it would otherwise sit below the base delay.
+         */
         public fun withRetryBaseDelayMs(delayMs: Long): Builder =
-            apply { retryBaseDelayMs = delayMs }
+            apply {
+                transportRetry = transportRetry.copy(
+                    baseDelayMs = delayMs,
+                    maxDelayMs = maxOf(delayMs, transportRetry.maxDelayMs)
+                )
+            }
+
+        /**
+         * How long a transfer may deliver no bytes at all before it is abandoned and retried.
+         * Defaults to [DEFAULT_STALL_TIMEOUT_MS]; `null` disables the guard.
+         *
+         * A download that fails says so. A download that stalls says nothing: the task stays
+         * `Downloading`, its permit stays taken — with the default concurrency of one, that is
+         * the whole queue — and a device nobody is watching stops updating without a single
+         * event to explain why. The guard measures progress rather than elapsed time, so a
+         * transfer that legitimately takes hours is untouched.
+         *
+         * Note what a guard inside this library can and cannot do: it can cancel a transport
+         * that suspends while it waits, and it cannot interrupt one that blocks a thread.
+         * `KtorDownloadAdapter` therefore imposes a socket timeout of its own on every
+         * request; a hand-written [NimbusDownloadPort] should do the same.
+         */
+        public fun withStallTimeoutMs(timeoutMs: Long?): Builder =
+            apply {
+                require(timeoutMs == null || timeoutMs > 0L) {
+                    "stallTimeoutMs must be null or > 0"
+                }
+                stallTimeoutMs = timeoutMs
+            }
 
         /**
          * When non-null, requires at least this many bytes to remain free on the destination
@@ -160,11 +269,30 @@ public class Nimbus private constructor(
 
         public fun createAndInit(): NimbusAPI = build().init()
 
+        public companion object {
+            /**
+             * A minute of a transfer delivering nothing at all.
+             *
+             * Long enough that no congested link is mistaken for a dead one — a transfer
+             * moving even a single buffer a minute keeps itself alive — and short enough that
+             * an appliance recovers from a wedged connection while the day's content is still
+             * relevant.
+             */
+            public const val DEFAULT_STALL_TIMEOUT_MS: Long = 60_000L
+
+            /**
+             * The largest transfer buffer this library will allocate: 16 MiB.
+             *
+             * Not a tuning limit — a sanity one. The buffer is allocated per transfer and
+             * lives in a `ByteArray`, so a value past this is a number that was meant to be
+             * something else.
+             */
+            public const val MAX_BUFFER_SIZE_BYTES: Long = 16L * 1024 * 1024
+        }
+
         public fun build(): Nimbus {
             requireNotNull(downloadManagerPath) { "downloadManagerPath must be provided" }
             requireNotNull(nimbusDownloadPort) { "nimbusDownloadPort must be provided" }
-            require(maxRetryAttempts >= 0) { "maxRetryAttempts must be >= 0" }
-            require(retryBaseDelayMs > 0L) { "retryBaseDelayMs must be > 0" }
             // When using the default file system storage, the path must be absolute so that
             // kotlinx.io can open/create it. Relative paths resolve to the process working
             // directory, which is read-only on Android and iOS.
@@ -185,12 +313,15 @@ public class Nimbus private constructor(
                 nimbusDownloadPort = nimbusDownloadPort!!,
                 nimbusStoragePort = nimbusStoragePort,
                 downloadManagerPath = downloadManagerPath!!,
+                downloadRoot = downloadRoot,
                 downloadBufferSize = downloadBufferSize,
                 downloadNotifyEveryBytes = downloadNotifyEveryBytes,
-                maxRetryAttempts = maxRetryAttempts,
-                retryBaseDelayMs = retryBaseDelayMs,
+                transportRetry = transportRetry,
+                autoRetry = autoRetry,
+                stallTimeoutMs = stallTimeoutMs,
                 minReservedDiskBytes = minReservedDiskBytes,
                 autoStart = autoStart,
+                ownsDownloadScope = ownsDownloadScope,
                 digestAlgorithm = digestAlgorithm,
                 logger = logger
             )

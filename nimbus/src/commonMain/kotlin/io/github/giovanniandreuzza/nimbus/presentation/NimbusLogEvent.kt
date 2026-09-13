@@ -72,6 +72,54 @@ public sealed class NimbusLogEvent {
     ) : NimbusLogEvent()
 
     /**
+     * The library is going to retry a failed download, and when.
+     *
+     * The wait is what this event is really reporting. Until it existed the retry was
+     * immediate, so a backend in maintenance turned one failed task into a request flood and
+     * a log full of [AutoRetryFailed] with nothing to explain the rate.
+     *
+     * @param attempt which retry this is for this url, counting from 1. It resets when a
+     * download for the url finishes.
+     */
+    public data class AutoRetryScheduled(
+        public val fileUrl: String,
+        public val delayMs: Long,
+        public val attempt: Int
+    ) : NimbusLogEvent()
+
+    /**
+     * The auto-retry budget for this url is spent and nothing more will be attempted.
+     *
+     * Only reachable when a caller set [io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy.maxAttempts]
+     * on the auto-retry policy; the default keeps trying, because on an unattended device
+     * giving up permanently is what a technician's visit looks like.
+     */
+    public data class AutoRetryExhausted(
+        public val fileUrl: String,
+        public val attempts: Int
+    ) : NimbusLogEvent()
+
+    /**
+     * Something threw that this library did not anticipate, with the throwable itself.
+     *
+     * Every other event carries a `KError`, which is a code and a message — enough to act on,
+     * and not enough to diagnose: an `UnexpectedError` reaches a monitoring backend as "null"
+     * or "Index 3 out of bounds" with nothing saying where. On a device that cannot be
+     * attached to a debugger, that is the difference between a bug report and a shrug.
+     *
+     * The throwable is handed over rather than formatted here, so a logger can take the stack,
+     * the type, or nothing at all. It is the one event that carries a platform type, which is
+     * why it exists alongside [DownloadFailed] rather than replacing anything in it.
+     *
+     * @param fileUrl the download it happened under.
+     * @param throwable what was thrown.
+     */
+    public data class Unexpected(
+        public val fileUrl: String,
+        public val throwable: Throwable
+    ) : NimbusLogEvent()
+
+    /**
      * A task state-change could not be persisted to disk. The in-memory state was updated
      * successfully; the disk store may be out of sync until the next successful write.
      */

@@ -11,9 +11,12 @@ import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.GetFileSinkError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
+import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
+import io.github.giovanniandreuzza.nimbus.testing.MidJitter
 import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -108,8 +111,16 @@ class TransferFailureClassificationTest {
             nimbusDownloadPort = port,
             bufferSize = 64L,
             notifyEveryBytes = 128L,
-            maxRetryAttempts = maxRetryAttempts,
-            retryBaseDelayMs = 1L,
+            transportRetry = RetryPolicy(
+                maxAttempts = maxRetryAttempts,
+                baseDelayMs = 1L,
+                // Flat rather than exponential: these scenarios are about what is
+                // retried, not about how long the waiting takes.
+                maxDelayMs = 1L
+            ),
+            random = MidJitter,
+            // The stall guard has its own test; these scenarios all deliver or fail promptly.
+            stallTimeoutMs = null,
             digestAlgorithm = null,
                 contentDigestPort = digestPortFor(storage)
         )
@@ -134,12 +145,13 @@ class TransferFailureClassificationTest {
 /** Serves a prefix and then fails, the way a connection dropped mid-transfer does. */
 private class BodyDiesPort(private val prefix: Int) : NimbusDownloadPort {
 
-    override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> =
-        Success(256L)
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
+        Success(RemoteFile(256L))
 
     override suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
+        resumeValidator: String?,
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError> {
         onSourceOpened(DyingSource(prefix).buffered())
@@ -166,12 +178,13 @@ private class CountingPort(private val content: ByteArray) : NimbusDownloadPort 
     var attempts: Int = 0
         private set
 
-    override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> =
-        Success(content.size.toLong())
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
+        Success(RemoteFile(content.size.toLong()))
 
     override suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
+        resumeValidator: String?,
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError> {
         attempts++

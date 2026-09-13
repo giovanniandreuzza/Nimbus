@@ -18,7 +18,16 @@ import kotlinx.coroutines.flow.Flow
 public interface NimbusAPI {
 
     /**
-     * Returns `true` if the download for [fileUrl] has already finished.
+     * Whether the file for [fileUrl] is finished **and** on disk at the expected size.
+     *
+     * `false` also means "cannot say": there is no task, the persisted store could not be
+     * loaded, or this instance has been closed. A `Boolean` has nowhere to put the difference,
+     * and the alternative — a task that exists and is complete reported as missing — is the
+     * safer way round: the caller downloads something they already had rather than plays
+     * something they do not.
+     *
+     * When the difference matters, [getDownloadTask] returns it: a failure names the reason,
+     * and a task carries its state.
      */
     public suspend fun isDownloaded(fileUrl: String): Boolean
 
@@ -50,6 +59,11 @@ public interface NimbusAPI {
     /**
      * Enqueues a new download.
      *
+     * [filePath] is the file, in full: Nimbus writes exactly there and creates the parent
+     * directories on the way. [fileName] is a label — it is validated, stored and reported in
+     * [DownloadTaskDTO], and no I/O uses it — so it defaults to the last segment of the path
+     * and is worth passing only when you want the task to carry a different name.
+     *
      * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InvalidState] if a task for [fileUrl] already exists.
      * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InvalidUrl] when the URL
      * carries no scheme. Which schemes are supported is decided by the
@@ -66,7 +80,7 @@ public interface NimbusAPI {
     public suspend fun enqueueDownload(
         fileUrl: String,
         filePath: String,
-        fileName: String,
+        fileName: String = filePath.fileNameFromPath(),
         expectedChecksum: Checksum? = null
     ): KResult<DownloadTaskDTO, NimbusError>
 
@@ -144,9 +158,68 @@ public interface NimbusAPI {
     public suspend fun ensureDownloaded(
         fileUrl: String,
         filePath: String,
-        fileName: String,
+        fileName: String = filePath.fileNameFromPath(),
         expectedChecksum: Checksum? = null
     ): KResult<Flow<DownloadState>, NimbusError>
+
+    /**
+     * Forgets finished downloads that have been finished for longer than [olderThanMs], and
+     * returns the urls it removed.
+     *
+     * A catalogue that only grows is the shape this library was heading for: a signage player
+     * cycles content for years, every asset it has ever fetched stays a `Finished` task, and
+     * each one costs a `stat` at every boot and a slot in every commit — a commit rewrites the
+     * whole store. Nothing removed them, because nothing recorded *when* they finished and so
+     * no caller could tell which ones were old.
+     *
+     * A task carries no finish time until this build has seen it — tasks from an older store
+     * are stamped with the time of the upgrade, so their age is measured from there rather
+     * than from 1970, which would have the first call delete everything.
+     *
+     * **Ages are wall-clock, so a clock that was wrong makes them wrong.** On a board with no
+     * battery-backed clock — most of them — the device comes up at the epoch and learns the
+     * time when the network appears, and anything finished in that window would look ancient.
+     * Those stamps are repaired at the next load once the clock is believable, and a finish
+     * time in the future, which is what a clock moving backwards leaves behind, is never read
+     * as an age. What is left is the ordinary case: a clock nudged by a few seconds moves an
+     * age by a few seconds.
+     *
+     * @param deleteFiles whether the files go too. False keeps them on disk and forgets only
+     * the metadata, which is the safer default when something else on the device reads them.
+     */
+    public suspend fun pruneFinished(
+        olderThanMs: Long,
+        deleteFiles: Boolean = false
+    ): KResult<List<String>, NimbusError>
+
+    /**
+     * Commits anything still waiting for a coalesced write, and returns when it is on disk.
+     *
+     * State that a caller was told was durable already is: a finished, failed or cancelled
+     * task reaches the disk before its call returns. What waits for the next commit is the
+     * rest — an enqueue, a pause, a progress position — because a commit rewrites every task
+     * and paying that on each transition makes one download's cost grow with the catalogue.
+     *
+     * Call this when the process may not live long enough for that commit: an Android service
+     * being torn down, a provisioning run about to reboot the device, a `SIGTERM` from the
+     * supervisor. Without it those states are re-derived at boot, which costs a re-enqueue at
+     * worst — but on a device that is about to restart on purpose, "at worst" is avoidable.
+     */
+    public suspend fun flush(): KResult<Unit, NimbusError>
+
+    /**
+     * Stops every transfer, commits the store, and releases the library's resources.
+     *
+     * In that order, so that what is committed is what the next boot will read. The coroutine
+     * scope is cancelled only if Nimbus created it — a scope handed in with
+     * [Nimbus.Builder.withDownloadScope][io.github.giovanniandreuzza.nimbus.Nimbus.Builder.withDownloadScope]
+     * belongs to the caller and is left alone.
+     *
+     * The instance is unusable afterwards: every call returns
+     * [PermanentNimbusErrorCause.Closed] rather than quietly doing nothing. Calling this twice
+     * is harmless.
+     */
+    public suspend fun close()
 
     /**
      * Recomputes the content digest of an already-downloaded file, reading it from disk.
@@ -170,3 +243,12 @@ public interface NimbusAPI {
      */
     public suspend fun checksum(fileUrl: String): KResult<Checksum, NimbusError>
 }
+
+/**
+ * The last segment of a path, whichever separator the platform writes.
+ *
+ * What [NimbusAPI.enqueueDownload] and [NimbusAPI.ensureDownloaded] use when no file name is
+ * given, which is nearly always the name the caller would have typed.
+ */
+internal fun String.fileNameFromPath(): String =
+    substringAfterLast('/').substringAfterLast('\\')

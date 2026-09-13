@@ -6,14 +6,17 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isSuccess
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
 import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
+import io.github.giovanniandreuzza.nimbus.core.application.errors.TransitionFailure
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
+import io.github.giovanniandreuzza.nimbus.core.ports.RemoteFileInfo
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.CreateOutcome
@@ -70,10 +73,14 @@ class DownloadServiceInitRetryTest {
         repository = repository,
         storagePort = NoopStoragePort,
         contentDigestPort = NoopContentDigestPort,
+        clock = FakeClock(),
+        downloadRoot = null,
         digestAlgorithm = null,
         minReservedDiskBytes = null,
         logger = null,
         autoStart = false,
+        // The test scope is the test's to end.
+        ownsDownloadScope = false,
         downloadScope = CoroutineScope(Dispatchers.Default)
     )
 }
@@ -92,23 +99,32 @@ private class FlakyRepository(private val failuresBeforeSuccess: Int) : Download
         }
     }
 
-    override suspend fun getDownloadTask(id: DownloadId): KResult<DownloadTask, DownloadTaskNotFound> =
-        Failure(DownloadTaskNotFound)
+    override suspend fun getAllDownloadTasks(): List<DownloadTaskDTO> = emptyList()
 
-    override suspend fun getAllDownloadTask(): Map<DownloadId, DownloadTask> = emptyMap()
+    override suspend fun isFilePathInUse(filePath: String): Boolean = false
+
+    override suspend fun <T : Any> readDownloadTask(
+        id: DownloadId,
+        read: (DownloadTask) -> T?
+    ): KResult<T, TransitionFailure> = Failure(TransitionFailure.NotFound)
+
+    override suspend fun <T : Any> transitionDownloadTask(
+        id: DownloadId,
+        persist: Boolean,
+        transition: (DownloadTask) -> T?
+    ): KResult<T, TransitionFailure> = Failure(TransitionFailure.NotFound)
 
     override suspend fun observeDownloadTask(id: DownloadId): KResult<Flow<DownloadState>, DownloadTaskNotFound> =
         Failure(DownloadTaskNotFound)
 
-    override fun observeAllDownloadTasks(): Flow<List<DownloadTask>> = flowOf(emptyList())
+    override fun observeAllDownloadTasks(): Flow<List<DownloadTaskDTO>> = flowOf(emptyList())
 
     override suspend fun saveDownloadTask(downloadTask: DownloadTask): KResult<Unit, KError> =
         Success(Unit)
 
-    override suspend fun updateDownloadProgress(downloadTask: DownloadTask): KResult<Unit, KError> =
-        Success(Unit)
-
     override suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, KError> = Success(Unit)
+
+    override suspend fun flushPendingState(): KResult<Unit, KError> = Success(Unit)
 }
 
 /**
@@ -140,11 +156,13 @@ private object EchoIdProvider : IdProviderPort {
 }
 
 private object NoopDownloadPort : DownloadPort {
-    override suspend fun getFileSizeToDownload(fileUrl: String): KResult<Long, GetFileSizeError> =
-        Success(0L)
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFileInfo, GetFileSizeError> =
+        Success(RemoteFileInfo(0L, null))
 
     override suspend fun startDownload(downloadTask: DownloadTaskDTO): KResult<Unit, DownloadError> =
         Success(Unit)
 
     override suspend fun stopDownload(downloadId: String): Unit = Unit
+
+    override suspend fun stopAllDownloads(): Unit = Unit
 }

@@ -7,6 +7,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
@@ -79,12 +80,13 @@ class WiredUpTest {
         }
 
     private class DeliveringPort(private val content: ByteArray) : NimbusDownloadPort {
-        override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> =
-            Success(content.size.toLong())
+        override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
+            Success(RemoteFile(content.size.toLong()))
 
         override suspend fun downloadFile(
             fileUrl: String,
             offset: Long,
+            resumeValidator: String?,
             onSourceOpened: suspend (Source) -> Unit
         ): KResult<Unit, DownloadError> {
             val buffer = Buffer().apply { write(content, offset.toInt(), content.size) }

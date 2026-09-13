@@ -3,6 +3,7 @@ package io.github.giovanniandreuzza.nimbus.infrastructure.repositories
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadStateStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadTaskStore
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -42,7 +43,7 @@ class InterruptedStoreWriteTest {
         val repository = repositoryOn(storage)
         repository.loadDownloadTasks()
 
-        val ids = repository.getAllDownloadTask().values.map { it.entityId.id.value }
+        val ids = repository.allTasksForTest().values.map { it.entityId.id.value }
         assertTrue(
             ids.contains("new-task"),
             "the completed temp holds the newer state and must win; loaded $ids"
@@ -60,7 +61,7 @@ class InterruptedStoreWriteTest {
 
         assertEquals(
             listOf("only-task"),
-            repository.getAllDownloadTask().values.map { it.entityId.id.value }
+            repository.allTasksForTest().values.map { it.entityId.id.value }
         )
     }
 
@@ -70,6 +71,7 @@ class InterruptedStoreWriteTest {
             storePath = STORE_PATH,
             dispatcher = dispatcher,
             nimbusStoragePort = storage,
+            clock = FakeClock(),
             logger = null,
             storeScope = CoroutineScope(SupervisorJob() + dispatcher)
         )

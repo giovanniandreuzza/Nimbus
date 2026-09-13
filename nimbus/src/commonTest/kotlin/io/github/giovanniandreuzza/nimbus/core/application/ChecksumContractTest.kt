@@ -7,6 +7,7 @@ import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.StorageAdapter
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.testing.FakeContentDigestPort
 import io.github.giovanniandreuzza.nimbus.testing.FakeDownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
@@ -98,7 +99,7 @@ class ChecksumContractTest {
             "the same cause `checksum` answers for the same configuration"
         )
         assertTrue(
-            f.repository.getAllDownloadTask().isEmpty(),
+            f.repository.getAllDownloadTasks().isEmpty(),
             "a task that cannot be verified must not have been created"
         )
     }
@@ -120,7 +121,7 @@ class ChecksumContractTest {
             "content_digest_disabled",
             (error as NimbusError.PermanentError).errorCause.code
         )
-        assertTrue(f.repository.getAllDownloadTask().isEmpty())
+        assertTrue(f.repository.getAllDownloadTasks().isEmpty())
     }
 
     @Test
@@ -268,10 +269,14 @@ class ChecksumContractTest {
             contentDigestPort = FakeContentDigestPort(
                 Success(Checksum(DigestAlgorithm.SHA256, "0".repeat(64)))
             ),
+            clock = FakeClock(),
+            downloadRoot = null,
             digestAlgorithm = digestAlgorithm,
             minReservedDiskBytes = null,
             logger = RecordingLogger(),
             autoStart = false,
+            // The test scope is the test's to end.
+            ownsDownloadScope = false,
             downloadScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         )
         return Fixture(service, repository, downloadPort)

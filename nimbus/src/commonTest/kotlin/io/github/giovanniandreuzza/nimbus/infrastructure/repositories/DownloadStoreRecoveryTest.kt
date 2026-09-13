@@ -3,6 +3,8 @@ package io.github.giovanniandreuzza.nimbus.infrastructure.repositories
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isSuccess
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
+import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -65,7 +67,7 @@ class DownloadStoreRecoveryTest {
                 "expected the unreadable store to be discarded, got $result"
             )
             assertTrue(
-                repository.getAllDownloadTask().isEmpty(),
+                repository.allTasksForTest().isEmpty(),
                 "expected no tasks to survive the reset"
             )
         }
@@ -87,6 +89,108 @@ class DownloadStoreRecoveryTest {
         write(STORE_PATH, ProtoBuf.encodeToByteArray(legacyStore()))
     }
 
+    @Test
+    fun `the destinations index is rebuilt from the store on load`() = runTest {
+        // `enqueueDownload` asks this rather than walking every task, so an index that is only
+        // filled by saves would report a path as free the moment a device restarted — and the
+        // second task would happily write over the first one's file.
+        val storage = InMemoryStorage()
+        val repository = repositoryOn(storage)
+        // The store is created by the load, and nothing persists before it.
+        repository.loadDownloadTasks()
+        repository.saveDownloadTask(
+            DownloadTask.create(
+                id = "task-1",
+                fileUrl = "https://example.com/clip.mp4",
+                filePath = TAKEN_PATH,
+                fileName = "clip.mp4",
+                fileSize = 1_024L
+            )
+        )
+        // Enqueued is a coalesced state, so without this the store on disk is still empty and
+        // the test would be asserting about a repository that loaded nothing.
+        repository.flushPendingState()
+
+        val afterRestart = repositoryOn(storage)
+        afterRestart.loadDownloadTasks()
+
+        assertTrue(
+            afterRestart.isFilePathInUse(TAKEN_PATH),
+            "the path belongs to a task that survived the restart"
+        )
+        assertTrue(!afterRestart.isFilePathInUse("/tmp/nimbus/other.mp4"))
+    }
+
+    @Test
+    fun `a destination is free again once its task is gone`() = runTest {
+        val storage = InMemoryStorage()
+        val repository = repositoryOn(storage)
+        val task = DownloadTask.create(
+            id = "task-1",
+            fileUrl = "https://example.com/clip.mp4",
+            filePath = TAKEN_PATH,
+            fileName = "clip.mp4",
+            fileSize = 1_024L
+        )
+        repository.saveDownloadTask(task)
+
+        repository.deleteDownloadTask(task.entityId.id)
+
+        assertTrue(
+            !repository.isFilePathInUse(TAKEN_PATH),
+            "an index that only ever grows refuses a path nothing is using"
+        )
+    }
+
+    @Test
+    fun `two tasks on one path keep it claimed until both are gone`() = runTest {
+        // `enqueueDownload` refuses a path that is taken, so this cannot arise from the API —
+        // but a store can be older than that rule, or edited, or corrupt. With the index as a
+        // plain set, deleting the first would free a path the second is still writing to, and
+        // the next enqueue would be handed a destination that already belongs to something.
+        val repository = repositoryOn(InMemoryStorage())
+        repository.loadDownloadTasks()
+        val first = taskOn(TAKEN_PATH, id = "task-1")
+        val second = taskOn(TAKEN_PATH, id = "task-2")
+        repository.saveDownloadTask(first)
+        repository.saveDownloadTask(second)
+
+        repository.deleteDownloadTask(first.entityId.id)
+
+        assertTrue(
+            repository.isFilePathInUse(TAKEN_PATH),
+            "the second task still writes there"
+        )
+
+        repository.deleteDownloadTask(second.entityId.id)
+
+        assertTrue(!repository.isFilePathInUse(TAKEN_PATH), "and now nobody does")
+    }
+
+    @Test
+    fun `saving the same task again does not claim its path twice`() = runTest {
+        // Every state change goes through a save. Counting each one would leave a path
+        // claimed for ever by a task that has been deleted.
+        val repository = repositoryOn(InMemoryStorage())
+        repository.loadDownloadTasks()
+        val task = taskOn(TAKEN_PATH)
+        repository.saveDownloadTask(task)
+        repository.saveDownloadTask(task)
+        repository.saveDownloadTask(task)
+
+        repository.deleteDownloadTask(task.entityId.id)
+
+        assertTrue(!repository.isFilePathInUse(TAKEN_PATH), "one task, one claim")
+    }
+
+    private fun taskOn(path: String, id: String = "task-1") = DownloadTask.create(
+        id = id,
+        fileUrl = "https://example.com/$id",
+        filePath = path,
+        fileName = "clip.mp4",
+        fileSize = 1_024L
+    )
+
     private fun TestScope.repositoryOn(
         storage: InMemoryStorage,
         logger: NimbusLogger? = null
@@ -96,6 +200,7 @@ class DownloadStoreRecoveryTest {
             storePath = STORE_PATH,
             dispatcher = dispatcher,
             nimbusStoragePort = storage,
+            clock = FakeClock(),
             logger = logger,
             storeScope = CoroutineScope(SupervisorJob() + dispatcher)
         )
@@ -116,6 +221,7 @@ class DownloadStoreRecoveryTest {
     )
 
     private companion object {
+        const val TAKEN_PATH = "/tmp/nimbus/clip.mp4"
         const val STORE_PATH = "/tmp/nimbus/download_manager"
     }
 }

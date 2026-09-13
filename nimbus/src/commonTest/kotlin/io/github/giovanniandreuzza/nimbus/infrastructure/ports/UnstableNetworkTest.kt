@@ -11,9 +11,12 @@ import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.digest.ContentDigest
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
+import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
+import io.github.giovanniandreuzza.nimbus.testing.MidJitter
 import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -122,23 +125,83 @@ class UnstableNetworkTest {
     }
 
     @Test
-    fun `a server that ignores the resume offset is caught on length`() = runTest {
-        // The body arrives from byte 0 again and is appended to what is already there, so the
-        // file overshoots. The cheap check catches this one before the digest is consulted.
+    fun `a resume does not read back what the digest already stands for`() = runTest {
+        // The digest has to cover the bytes on disk, and the way it used to establish that was
+        // to read the partial again at the top of every attempt. Correct, and O(partial ×
+        // attempts): a 20 MB asset dropping three times near the end cost 60 MB of reads and
+        // hashing per cycle, on eMMC, for bytes this process had just hashed itself.
         val net = HostileNetwork(CONTENT) { attempt, _ ->
-            if (attempt == 1) Behaviour.Deliver(bytes = 1_000) else Behaviour.IgnoreOffset
+            if (attempt <= 5) Behaviour.Deliver(bytes = 700) else Behaviour.Complete
         }
-        val h = Harness(this, net, maxRetryAttempts = 1)
+        val h = Harness(this, net, maxRetryAttempts = 10)
 
         h.run()
 
-        val failure = h.failure ?: fail("a corrupted resume must not be reported as a success")
-        assertTrue(
-            failure is DownloadError.TemporaryError &&
-                    failure.errorCause is TemporaryDownloadErrorCause.FileIntegrityMismatch,
-            "expected the length check to catch it, got $failure"
+        assertTrue(h.finished, "expected a finish: ${h.failure}")
+        assertEquals(
+            0L,
+            h.storage.bytesReadBack,
+            "six attempts and not one byte re-read: the digest already stood for what was on " +
+                    "disk. The single open is the empty file at the start, which reads nothing"
         )
     }
+
+    @Test
+    fun `a digest that no longer matches the file is rebuilt from it`() = runTest {
+        // The partial is there before the transfer starts — from an earlier process — so the
+        // digest at the top of the first attempt stands for nothing while the file holds
+        // 1 000 bytes. That is the case the comparison exists for, and the check that the
+        // shortcut cannot swallow it.
+        val h = Harness(
+            this,
+            HostileNetwork(CONTENT) { _, _ -> Behaviour.Complete },
+            maxRetryAttempts = 1
+        )
+        h.storage.write(PATH, CONTENT.copyOf(1_000))
+
+        h.run()
+
+        assertTrue(h.finished, "expected a finish: ${h.failure}")
+        assertEquals(
+            1_000L,
+            h.storage.bytesReadBack,
+            "the prefix is read once, to establish what the digest stands for, and not again"
+        )
+        assertContentEquals(CONTENT, h.storage.read(PATH))
+        assertEquals(
+            digestOf(CONTENT),
+            h.checksum,
+            "the digest has to describe the whole file, prefix included"
+        )
+    }
+
+    @Test
+    fun `a server that ignores the resume offset is caught while it is still arriving`() =
+        runTest {
+            // The body arrives from byte 0 again and is appended to what is already there, so
+            // it runs past the declared length. That used to be caught afterwards, by
+            // comparing the finished file's size — which meant taking the whole overshoot onto
+            // the disk first. The write now stops at the declared length, so the same server is
+            // caught mid-body and named for what it did.
+            val net = HostileNetwork(CONTENT) { attempt, _ ->
+                if (attempt == 1) Behaviour.Deliver(bytes = 1_000) else Behaviour.IgnoreOffset
+            }
+            val h = Harness(this, net, maxRetryAttempts = 1)
+
+            h.run()
+
+            val failure = h.failure ?: fail("a corrupted resume must not be reported as a success")
+            assertTrue(
+                failure is DownloadError.PermanentError &&
+                        failure.errorCause is PermanentDownloadErrorCause.BodyLongerThanDeclared,
+                "expected the server's own contradiction to be named, got $failure"
+            )
+            assertTrue(
+                (h.storage.read(PATH)?.size ?: 0) < CONTENT.size,
+                "the file must not be left at exactly the declared length: that is the shape " +
+                        "startDownload treats as already complete, and these bytes are not"
+            )
+        }
 
     @Test
     fun `a resume that returns the right number of wrong bytes is caught only by the digest`() =
@@ -283,8 +346,16 @@ class UnstableNetworkTest {
             nimbusDownloadPort = net,
             bufferSize = 256L,
             notifyEveryBytes = 512L,
-            maxRetryAttempts = maxRetryAttempts,
-            retryBaseDelayMs = 1L,
+            transportRetry = RetryPolicy(
+                maxAttempts = maxRetryAttempts,
+                baseDelayMs = 1L,
+                // Flat rather than exponential: these scenarios are about what is
+                // retried, not about how long the waiting takes.
+                maxDelayMs = 1L
+            ),
+            random = MidJitter,
+            // The stall guard has its own test; these scenarios all deliver or fail promptly.
+            stallTimeoutMs = null,
             digestAlgorithm = DigestAlgorithm.SHA256,
                 contentDigestPort = digestPortFor(storage)
         )
@@ -357,12 +428,13 @@ private class HostileNetwork(
         private set
     val offsets = mutableListOf<Long>()
 
-    override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> =
-        Success(content.size.toLong())
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
+        Success(RemoteFile(content.size.toLong()))
 
     override suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
+        resumeValidator: String?,
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError> {
         attempts++

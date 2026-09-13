@@ -11,7 +11,10 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.PermanentGetFi
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryGetFileSizeErrorCause
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.timeout
+import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.head
 import io.ktor.client.request.headers
 import io.ktor.client.request.prepareGet
@@ -35,9 +38,12 @@ import kotlin.coroutines.cancellation.CancellationException
  * **Behaviour:**
  * - Uses `HEAD` for size; if `Content-Length` is missing or zero, probes with
  *   `GET` + `Range: bytes=0-0` and reads total length from `Content-Range`.
- * - When [offset] > 0, accepts **206** with a matching `Content-Range` start,
- *   or **200** only if the body is empty (some servers signal empty range that way).
- * - Rejects **200** with a non-empty body when [offset] > 0 (mapped to [DownloadError.PermanentError]).
+ * - When resuming ([offset] > 0), accepts **206** with a `Content-Range` whose start matches
+ *   the offset, and nothing else. A **200** is the whole file: with an `If-Range` sent it means
+ *   the file changed ([TemporaryDownloadErrorCause.RemoteFileChanged], discard and refetch),
+ *   and without one it is a server ignoring the range
+ *   ([PermanentDownloadErrorCause.InconsistentRangeResponse]) — appending either to the partial
+ *   would corrupt it, so neither body is read.
  * - Maps **416** to [DownloadError.TemporaryError] (cause code `range_not_satisfiable`); the
  *   adapter layer will truncate the local file and restart from byte 0.
  *
@@ -49,18 +55,49 @@ import kotlin.coroutines.cancellation.CancellationException
  * not close it.
  *
  * @param httpClient the Ktor [HttpClient] used for HTTP requests.
+ * @param socketTimeoutMillis the longest this adapter will wait between two packets before
+ * giving up on a request. Applied per request, so it holds whatever the client was configured
+ * with; `null` leaves the client's own configuration alone.
+ *
+ * It is not a nicety. Reading the body goes through `ByteReadChannel.asSource()`, which waits
+ * for bytes inside `runBlocking` — the read is not a suspension point, so a server that
+ * accepts the connection, returns its headers and then sends nothing cannot be interrupted by
+ * cancelling the download. `pauseDownload` and `cancelDownload` would suspend, the
+ * concurrency permit would stay taken, and Nimbus's own stall guard could name the condition
+ * but not end it. Only the socket's own deadline ends it, which is why this adapter sets one
+ * on every request it makes rather than trusting that the client has one.
+ *
+ * No request timeout is set: a download of a large file over a slow link takes as long as it
+ * takes, and an overall deadline would kill exactly the transfers this library exists to
+ * finish. Inactivity is the thing being bounded, not duration.
+ *
  * @author Giovanni Andreuzza
  */
 public class KtorDownloadAdapter(
-    private val httpClient: HttpClient
+    private val httpClient: HttpClient,
+    private val socketTimeoutMillis: Long? = DEFAULT_SOCKET_TIMEOUT_MS
 ) : NimbusDownloadPort {
 
-    override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> {
+    /**
+     * Applies this adapter's inactivity deadline to a request.
+     *
+     * `timeout {}` writes the engine capability directly on the request, so it takes effect
+     * whether or not the caller installed the `HttpTimeout` plugin. An engine that does not
+     * support the capability ignores it, and there the transport has no deadline this adapter
+     * can give it.
+     */
+    private fun HttpRequestBuilder.applySocketTimeout() {
+        val deadline = socketTimeoutMillis ?: return
+        timeout { socketTimeoutMillis = deadline }
+    }
+
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> {
         return try {
-            val headResponse = httpClient.head(fileUrl)
+            val headResponse = httpClient.head(fileUrl) { applySocketTimeout() }
+            val validator = headResponse.resumeValidator()
             when (val head = mapFileSizeResponse(headResponse)) {
                 is Success -> {
-                    if (head.value > 0L) Success(head.value)
+                    if (head.value > 0L) Success(RemoteFile(head.value, validator))
                     else probeTotalSizeWithRangeGet(fileUrl)
                 }
 
@@ -87,22 +124,24 @@ public class KtorDownloadAdapter(
         }
     }
 
-    private suspend fun probeTotalSizeWithRangeGet(fileUrl: String): KResult<Long, GetFileSizeError> {
+    private suspend fun probeTotalSizeWithRangeGet(fileUrl: String): KResult<RemoteFile, GetFileSizeError> {
         return try {
             httpClient.prepareGet(fileUrl) {
+                applySocketTimeout()
                 headers { append("Range", "bytes=0-0") }
             }.execute { response ->
+                val validator = response.resumeValidator()
                 when (response.status.value) {
                     206 -> {
                         val total = parseContentRangeTotal(response.headers["Content-Range"])
                             ?: response.headers["Content-Length"]?.toLongOrNull()
-                        if (total != null && total > 0L) Success(total)
+                        if (total != null && total > 0L) Success(RemoteFile(total, validator))
                         else Failure(GetFileSizeError.PermanentError(PermanentGetFileSizeErrorCause.FileSizeUnavailable))
                     }
 
                     in 200..299 -> {
                         val cl = response.headers["Content-Length"]?.toLongOrNull() ?: 0L
-                        if (cl > 0L) Success(cl)
+                        if (cl > 0L) Success(RemoteFile(cl, validator))
                         else Failure(GetFileSizeError.PermanentError(PermanentGetFileSizeErrorCause.FileSizeUnavailable))
                     }
 
@@ -174,15 +213,23 @@ public class KtorDownloadAdapter(
     override suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
+        resumeValidator: String?,
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError> {
+        // `If-Range` only alongside a `Range`: on its own the header means nothing, and RFC
+        // 9110 says a server must ignore it there.
+        val conditional = offset > 0 && resumeValidator != null
         return try {
             httpClient.prepareGet(fileUrl) {
+                applySocketTimeout()
                 if (offset > 0) {
-                    headers { append("Range", "bytes=$offset-") }
+                    headers {
+                        append("Range", "bytes=$offset-")
+                        if (resumeValidator != null) append("If-Range", resumeValidator)
+                    }
                 }
             }.execute { response ->
-                mapDownloadResponse(response, offset, onSourceOpened)
+                mapDownloadResponse(response, offset, conditional, onSourceOpened)
             }
         } catch (e: CancellationException) {
             throw e
@@ -208,6 +255,7 @@ public class KtorDownloadAdapter(
     private suspend fun mapDownloadResponse(
         response: HttpResponse,
         offset: Long,
+        conditional: Boolean,
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError> {
         return when (response.status.value) {
@@ -267,8 +315,25 @@ public class KtorDownloadAdapter(
 
             in 200..299 -> {
                 if (offset > 0L) {
-                    // RFC 9110: partial content should be 206. Appending a full 200 body would corrupt the file.
                     response.bodyAsChannel().cancel(null)
+
+                    // With `If-Range` sent, a 200 is not a broken server: it is the origin
+                    // saying the file no longer matches what the partial came from, and
+                    // answering with the whole of the new one. Appending that to the old
+                    // prefix produces a file of the right length that was never a file, so
+                    // the partial goes and the transfer starts again — temporary, because
+                    // starting again works.
+                    if (conditional) {
+                        return Failure(
+                            DownloadError.TemporaryError(
+                                TemporaryDownloadErrorCause.RemoteFileChanged
+                            )
+                        )
+                    }
+
+                    // Without one, the same 200 says nothing about why. RFC 9110 asks for a
+                    // 206 here, and a server that answers otherwise cannot be resumed from
+                    // safely.
                     return Failure(
                         DownloadError.PermanentError(
                             PermanentDownloadErrorCause.InconsistentRangeResponse(
@@ -365,10 +430,35 @@ public class KtorDownloadAdapter(
         override fun close() = delegate.close()
     }
 
+    /**
+     * What identifies this version of the file: the `ETag` if the origin has one, otherwise
+     * `Last-Modified`.
+     *
+     * Both are opaque to Nimbus — they go back out unchanged as `If-Range`, which is exactly
+     * what RFC 9110 says that header takes. `Last-Modified` is the weaker of the two (one
+     * second of resolution, so a file rewritten within the same second looks unchanged), and
+     * it is still far better than the alternative of assuming nothing ever changes.
+     */
+    private fun HttpResponse.resumeValidator(): String? =
+        headers["ETag"] ?: headers["Last-Modified"]
+
     private fun isTransportFailure(error: Throwable): Boolean = error is IOException
 
     private fun unexpectedError(e: Exception): KError =
         KError(code = "unexpected_error", message = e.message ?: "An unexpected error occurred")
+
+    public companion object {
+        /**
+         * Thirty seconds without a single packet.
+         *
+         * Deliberately below Nimbus's own stall deadline
+         * (`Nimbus.Builder.DEFAULT_STALL_TIMEOUT_MS`, a minute): the socket has to be the one
+         * to let go first, because it is the only one that can. By the time the library's
+         * guard looks, the read has already failed with a `SocketTimeoutException` — an
+         * `IOException`, so a temporary error, so retried from the bytes already on disk.
+         */
+        public const val DEFAULT_SOCKET_TIMEOUT_MS: Long = 30_000L
+    }
 }
 
 /** Parses total length from Content-Range (value after slash; ignores unknown total `*` ). */

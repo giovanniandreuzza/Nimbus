@@ -26,6 +26,26 @@ public sealed class PermanentNimbusErrorCause(
     )
 
     /**
+     * The destination is outside the directory Nimbus was told it may write to.
+     *
+     * Only reachable when a root was set with
+     * [Nimbus.Builder.withDownloadRoot][io.github.giovanniandreuzza.nimbus.Nimbus.Builder.withDownloadRoot].
+     * On a device that takes its file list from a backend, the destination is a string from
+     * that backend — and without a root, a compromised manifest or one served over plain HTTP
+     * can name the app's own database, and Nimbus will write there.
+     *
+     * @param filePath what was asked for, normalised.
+     * @param downloadRoot what it has to be under.
+     */
+    public data class PathOutsideDownloadRoot(
+        val filePath: String,
+        val downloadRoot: String
+    ) : PermanentNimbusErrorCause(
+        code = "path_outside_download_root",
+        message = "File path '$filePath' is outside the download root '$downloadRoot'."
+    )
+
+    /**
      * The supplied file URL carries no scheme.
      *
      * A syntax check only, per RFC 3986 — it says nothing about which transports exist. Which
@@ -89,6 +109,18 @@ public sealed class PermanentNimbusErrorCause(
         code = "checksum_algorithm_mismatch",
         message = "Expected checksum is ${expected.name}, but Nimbus is configured for " +
                 "${configured.name}."
+    )
+
+    /**
+     * The instance has been closed.
+     *
+     * Its coroutine scope is gone, so a download started from here would be registered and
+     * never run — a call that appears to succeed and does nothing, which on an unattended
+     * device is discovered weeks later as a file that never arrived. Build a new instance.
+     */
+    public data object Closed : PermanentNimbusErrorCause(
+        code = "closed",
+        message = "This Nimbus instance has been closed."
     )
 
     /** The requested download task was not found. */

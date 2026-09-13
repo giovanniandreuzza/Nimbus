@@ -42,8 +42,14 @@ internal data class DownloadStore(
          * - 2: adds the optional `expectedChecksum` and `checksum` fields to each task.
          *   Both are absent in a version 1 blob and decode as null, so a version 1 blob
          *   is already a valid version 2 blob.
+         * - 3: adds `createdAtEpochMs`, `finishedAtEpochMs` and `resumeValidator`. The first
+         *   two are what `pruneFinished` measures an age against, and a task from an older
+         *   blob has neither — a zero there would read as 1970 and have the first prune
+         *   delete every file the device already had, so the migration stamps them with the
+         *   time it ran instead. The ages start at the upgrade, which is the honest answer:
+         *   that is when this build first knew the tasks existed.
          */
-        const val SCHEMA_VERSION: Int = 2
+        const val SCHEMA_VERSION: Int = 3
 
         /**
          * What a store written before the stamp reached the disk decodes as.

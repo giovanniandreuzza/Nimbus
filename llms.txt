@@ -32,8 +32,12 @@ val api: NimbusAPI = Nimbus.Builder()
     .withConcurrencyLimit(2)                  // optional, default 1
     .withDownloadBufferSize(8 * 1024L)        // optional, default 8 KB
     .withDownloadNotifyEveryBytes(512 * 1024L)// optional, default ~512 KB
-    .withMaxRetryAttempts(3)                  // optional, default 3
-    .withRetryBaseDelayMs(500L)               // optional, default 500 ms
+    .withTransportRetry(RetryPolicy.Transport)// optional — retries inside one download
+    .withAutoRetry(RetryPolicy.AutoRetry)     // optional — retries a task that already failed
+    .withMaxRetryAttempts(5)                  // shorthand for the transport attempt count
+    .withRetryBaseDelayMs(500L)               // shorthand for the transport first wait
+    .withStallTimeoutMs(60_000L)              // optional, default 60 s; null disables
+    .withDownloadRoot("/data/user/0/app/files/nimbus") // optional — confine every destination
     .withMinReservedDiskBytes(50 * 1024 * 1024L) // optional — disk headroom guard
     .withAutoStart(true)                      // optional, default false
     .withContentDigest(DigestAlgorithm.SHA256)// optional, default null (no hashing at all)
@@ -68,7 +72,7 @@ suspend fun checksum(fileUrl: String): KResult<Checksum, NimbusError>
 // every call reads the whole file.
 
 // Lifecycle
-suspend fun enqueueDownload(fileUrl: String, filePath: String, fileName: String, expectedChecksum: Checksum? = null): KResult<DownloadTaskDTO, NimbusError>
+suspend fun enqueueDownload(fileUrl: String, filePath: String, fileName: String = filePath.substringAfterLast('/'), expectedChecksum: Checksum? = null): KResult<DownloadTaskDTO, NimbusError>
 // filePath is the FULL destination path of the file ("/downloads/video.mp4"), not its directory.
 // fileName is metadata only — Nimbus never joins the two, and never creates the parent directory.
 suspend fun startDownload(fileUrl: String): KResult<Unit, NimbusError>
@@ -92,13 +96,33 @@ suspend fun retryFailedDownload(fileUrl: String): KResult<Unit, NimbusError>
 // Refetches remote size, deletes partial file, resets state to Enqueued. Call startDownload after.
 
 // High-level convenience
-suspend fun ensureDownloaded(fileUrl: String, filePath: String, fileName: String, expectedChecksum: Checksum? = null): KResult<Flow<DownloadState>, NimbusError>
+suspend fun ensureDownloaded(fileUrl: String, filePath: String, fileName: String = filePath.substringAfterLast('/'), expectedChecksum: Checksum? = null): KResult<Flow<DownloadState>, NimbusError>
 // Handles the full lifecycle automatically:
 //   already finished  → returns flowOf(DownloadState.Finished)
 //   stale finished    → clears metadata, re-downloads
 //   failed            → calls retryFailedDownload, then starts
 //   paused/enqueued   → resumes or starts, returns observeDownload flow
 //   not found         → enqueues, starts, returns observeDownload flow
+```
+
+```kotlin
+// Housekeeping
+suspend fun pruneFinished(olderThanMs: Long, deleteFiles: Boolean = false): KResult<List<String>, NimbusError>
+// Forgets finished tasks that finished longer ago than olderThanMs; returns the urls removed.
+// Age is measured from DownloadTaskDTO.finishedAtEpochMs, which is null until this build has
+// seen the task finish — tasks from a pre-2.5.0 store are stamped at the upgrade, so the first
+// call after an update does not empty the device. A task that has not finished is never pruned.
+
+// Lifecycle
+suspend fun flush(): KResult<Unit, NimbusError>
+// Commits state that was waiting for a coalesced write. Terminal states are already durable.
+
+suspend fun close()
+// Stops every transfer, commits, then releases the scope — in that order. Returns Unit: there is
+// nothing a caller can do about a failure while the process is going away, and what can be
+// reported goes to the logger. A scope supplied with withDownloadScope is left running; one
+// Nimbus created is cancelled. Idempotent. Afterwards every call fails with
+// PermanentNimbusErrorCause.Closed rather than quietly doing nothing.
 ```
 
 ## DownloadState sealed class
@@ -114,8 +138,10 @@ sealed class DownloadState {
 }
 ```
 
-`observeDownload` returns a `Flow<DownloadState>` that **auto-completes** when the state
-reaches `Finished` or `Failed`. No manual cancellation needed.
+`observeDownload` returns a `Flow<DownloadState>` that **auto-completes** when nothing further
+will happen: `Finished`, `Cancelled`, or `Failed`. With `withAutoStart(true)` a *temporary*
+failure does not end it — the library is about to retry and the flow is how you watch that — but
+a permanent one does. No manual cancellation needed.
 
 ## DownloadTaskDTO fields
 
@@ -128,7 +154,10 @@ data class DownloadTaskDTO(
     val fileSize: Long,    // bytes
     val state: DownloadState,
     val expectedChecksum: Checksum? = null,  // what the caller asked for, if anything
-    val checksum: Checksum? = null           // what the bytes hashed to, once Finished
+    val checksum: Checksum? = null,          // what the bytes hashed to, once Finished
+    val createdAtEpochMs: Long = 0L,         // 0 until this build has seen the task created
+    val finishedAtEpochMs: Long? = null,     // what pruneFinished measures an age against
+    val resumeValidator: String? = null      // ETag / Last-Modified, sent back as If-Range
 )
 ```
 
@@ -192,14 +221,17 @@ back by one without.
 
 **Resume correctness.** The resume offset comes from the length of the partial file on disk, so a
 digest accumulated only across one streaming session would hash the tail alone after a process
-restart and produce a value that is well-formed, plausible and wrong. The digest is therefore
-primed from the bytes already on disk at the start of *every* streaming attempt, with no
-conditional: a fresh download reads nothing, a resume re-reads its prefix, and retries and 416
-truncations are covered by the same rule. A download that ran straight through and one that was
-interrupted and resumed produce the same digest.
+restart and produce a value that is well-formed, plausible and wrong. What the digest has consumed
+must therefore be exactly the bytes on disk, and that is checked rather than assumed: the digest
+tracks how much it has taken and is rebuilt from the partial whenever the two lengths disagree —
+on the first attempt, after a process restart, after a 416 truncation, and after any attempt that
+died with bytes buffered but unwritten. When they agree, which is the common case for a link that
+merely dropped, the partial is not read again. A download that ran straight through and one that
+was interrupted and resumed produce the same digest.
 
 **Cost.** Every byte already passes through the write path exactly once, so hashing adds the hash
-and no extra pass. `checksum(fileUrl)` is the exception: it reads the whole file back.
+and no extra pass. A resume adds a re-read of the partial only when the digest does not already
+stand for it. `checksum(fileUrl)` is the exception: it always reads the whole file back.
 
 ## NimbusError sealed class — exhaustive list
 
@@ -230,6 +262,8 @@ sealed class PermanentNimbusErrorCause {
     data object DownloadNotFound   // no task registered for this fileUrl
     data class  FilePathInUse(filePath: String)
     data class  InsufficientDiskSpace(path: String, requiredBytes: Long, availableBytes: Long)
+    data object Closed                 // the instance was closed; build a new one
+    data class  PathOutsideDownloadRoot(filePath: String, downloadRoot: String)
     data object ContentDigestDisabled  // a digest was asked for with no withContentDigest(...):
                                        // checksum(), or an expectedChecksum passed to
                                        // enqueueDownload/ensureDownloaded that nothing would check
@@ -266,6 +300,7 @@ sealed class DownloadError {
 
 sealed class TemporaryDownloadErrorCause {
     data class  ServerError(statusCode: Int)   // HTTP 5xx
+    data object RemoteFileChanged      // the origin answered a conditional resume with the whole file
     data object RangeNotSatisfiable            // HTTP 416; adapter truncates and retries from byte 0
     data object FileIntegrityMismatch          // downloaded size ≠ expected size; will retry
     data object FileNotAccessible              // local file could not be opened for writing; will retry
@@ -279,6 +314,7 @@ sealed class PermanentDownloadErrorCause {
     data class  ClientError(statusCode: Int)               // HTTP 4xx (excluding 404)
     data class  InconsistentRangeResponse(reason: String)  // server returned 200 when 206 expected on resume
     data object LocalFileOversized                         // local file > expected download size
+    data class  BodyLongerThanDeclared(declaredBytes: Long)// the body kept arriving past the declared size
     data class  InsufficientDiskSpace(cause: KError)       // the volume filled up mid-transfer
     data class  StorageError(cause: KError)                // I/O or permission failure
     data class  UnexpectedError(cause: KError? = null)
@@ -439,16 +475,107 @@ have to discover from a bug report.
 - **A body that stops arriving part-way is a `TransportFailure`, and is retried.** It is measured
   against the declared `Content-Length` rather than inferred from an error, because a connection
   closed mid-body reads as an ordinary end of stream.
-- **`withMaxRetryAttempts` / `withRetryBaseDelayMs` apply to network failures.** Before 2.3.0 every
-  transport error was classified permanent and nothing was ever retried; timeouts, connection
-  resets and failed name resolution are now temporary.
+- **`observeDownload` / `ensureDownloaded` flows end on a *permanent* failure even with
+  `autoStart`.** With auto-retry on, a temporary failure keeps the flow open — the retry is
+  coming and the flow is how a caller sees it happen — but a permanent one is never retried,
+  and a flow left open there suspends the caller for the life of the process. Before 2.5.0 a
+  404 did exactly that: a reconciliation loop awaiting each asset in a manifest stopped on the
+  first file the backend had removed. One case stays open by design: a *capped* auto-retry
+  policy that runs out leaves the task `Failed` with a temporary cause, so watch
+  `NimbusLogEvent.AutoRetryExhausted` if you set a cap.
+- **`withTransportRetry` applies to network failures.** Before 2.3.0 every transport error was
+  classified permanent and nothing was ever retried; timeouts, connection resets and failed name
+  resolution are now temporary. `withMaxRetryAttempts` / `withRetryBaseDelayMs` are shorthands
+  for parts of the same policy.
+- **There are two retry loops and they have separate policies.** `withTransportRetry` (default:
+  5 attempts, 0.5 s doubling to 60 s) covers one download's own attempts, with the task staying
+  `Downloading`. `withAutoRetry` (default: unbounded, 2 s doubling to 5 min) covers what happens
+  after those are spent and the task is `Failed`, and runs only with `withAutoStart`. Both wait
+  exponentially and both spread every wait by ±20 %, which is not configurable: a fleet that lost
+  the same backend must not come back in lockstep. Before 2.5.0 the second loop had no wait at
+  all — a 503 was retried two hundred times inside half a second.
+- **The auto-retry count is per url, in memory, and reset when a download for that url
+  finishes.** A device that has been up for months meets its next transient failure with the
+  first wait, not the longest one. A restart starts from zero.
+- **A 416 truncates and restarts once.** The retry that follows it asks from offset 0 and carries
+  no `Range` header, so a server that answers that with another 416 will keep doing so; the
+  second consecutive refusal is treated as an ordinary temporary failure, budgeted and backed
+  off, instead of looping through delete-and-recreate forever.
 - **A volume that fills up mid-transfer reports `PermanentDownloadErrorCause.InsufficientDiskSpace`,**
   not a generic storage error. Detail is in its `cause`. The pre-flight headroom guard
   (`withMinReservedDiskBytes`) reports `PermanentNimbusErrorCause.InsufficientDiskSpace` instead —
   same condition, two channels, because one is a returned error and the other is a task state.
-- **A digest survives a resume.** It is primed from the bytes already on disk at the start of every
-  attempt, so an interrupted-and-resumed download hashes to the same value as one that ran straight
-  through.
+- **A digest survives a resume.** What it has consumed is kept equal to what is on disk — rebuilt
+  from the partial when the two disagree, carried when they do not — so an interrupted-and-resumed
+  download hashes to the same value as one that ran straight through, without re-reading its own
+  partial on every attempt.
+- **A transfer that delivers nothing for `withStallTimeoutMs` (60 s by default) is abandoned and
+  retried,** reported as `TemporaryDownloadErrorCause.TransportFailure` with cause code
+  `transfer_stalled`; a size request that never answers fails with `size_request_stalled`. The
+  guard measures *progress*, not elapsed time, so a transfer that legitimately takes hours is
+  untouched. It exists because a stall is the one failure this library cannot otherwise see: the
+  task stays `Downloading`, its concurrency permit stays taken, and nothing is logged.
+- **Every active download holds a dispatcher thread with `KtorDownloadAdapter`.** The body is
+  read through `ByteReadChannel.asSource()`, which waits inside `runBlocking`. Irrelevant at the
+  default concurrency of 1; at 32 it is half of `Dispatchers.IO`'s 64 threads on JVM and Android.
+  Give Nimbus its own dispatcher with `withIODispatcher` if you raise the limit.
+- **`isDownloaded` answers `false` when it cannot say** — no task, a store that would not load,
+  or a closed instance — as well as when the file is genuinely not there. Use `getDownloadTask`
+  when the difference matters.
+- **A transport that blocks a thread cannot be interrupted by that guard.** Cancelling a transfer
+  unwinds an adapter that suspends while waiting for bytes; Ktor's `ByteReadChannel.asSource()`
+  waits inside `runBlocking`, so `KtorDownloadAdapter` imposes a 30 s socket timeout on every
+  request it makes (`KtorDownloadAdapter(client, socketTimeoutMillis = …)`, `null` to opt out).
+  A hand-written port must do the same, or a wedged read outlives both `pauseDownload` and the
+  stall guard.
+- **A resume asks the origin whether the file is still the same one.** `getRemoteFile` reports a
+  validator (HTTP: `ETag`, else `Last-Modified`) alongside the size; it is stored with the task
+  and sent back as `If-Range`. An origin that answers with the whole file means the file changed:
+  `TemporaryDownloadErrorCause.RemoteFileChanged`, the partial is discarded and the transfer
+  starts from zero. `retryFailedDownload` applies the same rule — a validator that no longer
+  matches discards the partial even when the size is identical, which is exactly the case
+  (a re-encode, a regenerated manifest) that every previous check passed.
+- **`NimbusError.causeCode` and `.isRetryable` are the short way in.** The typed causes nest
+  three deep (`PermanentError` → `DownloadFailed` → the download's own cause), which is right
+  for a caller who wants precision and more than most want: `causeCode` unwraps the two causes
+  that exist only to carry another and returns the specific code
+  (`insufficient_disk_space`, `resource_not_found`…), and `isRetryable` is the temporary /
+  permanent split as a boolean. `NimbusError.code` still reports the variant
+  (`temporary_error` / `permanent_error`), not the reason.
+- **`fileName` is a label, and optional.** `filePath` is the file in full — Nimbus writes there
+  and creates the parent directories. `fileName` is validated, stored and reported in the DTO,
+  and used by no file operation; it defaults to the last segment of the path.
+- **`pruneFinished` measures wall-clock ages, and a device's clock can be wrong.** Boards
+  without a battery-backed clock come up at the epoch and learn the time from the network;
+  anything finished in that window carries a 1970 stamp. Those are repaired at the next load
+  once the clock is believable — a stamp from before the field existed is treated as the
+  absence of one, not as an ancient date — and a finish time in the future, which is what a
+  clock moving backwards leaves, is never read as an age. Nothing is deleted on either.
+- **`filePath` is only as safe as you make it.** The built-in check refuses `..` components and
+  control characters, and that is all it can do on its own. When destinations come from a
+  manifest — which on a kiosk they do — set `withDownloadRoot(dir)`: anything outside it is then
+  refused with `PermanentNimbusErrorCause.PathOutsideDownloadRoot`. Lexical check; a symlink
+  under the root pointing elsewhere is not caught.
+- **`Checksum` is built through `Checksum.of(algorithm, hex)`.** The constructor is internal as
+  of 2.5.0: it accepted any string, and a malformed digest mismatches on every transfer for
+  ever, since a mismatch is temporary and gets retried.
+- **Every `NimbusLogEvent` carries the full URL.** With signed URLs (S3 presigned, SAS,
+  CloudFront) the signature is in the query string and is a live credential — redact it in your
+  `NimbusLogger` before forwarding events anywhere.
+- **`DownloadTaskDTO` carries `createdAtEpochMs`, `finishedAtEpochMs` and `resumeValidator`**
+  as of schema 3. Zero and null mean "this build has not seen it yet"; the migration stamps
+  tasks from an older store with the time of the upgrade.
+- **Nothing past the declared size is ever written.** The size request drives the writing as
+  well as the progress and the checks: a body still arriving after the declared number of bytes
+  stops being read, and the download fails with
+  `PermanentDownloadErrorCause.BodyLongerThanDeclared(declaredBytes)`. Permanent, because the
+  next attempt asks the same question and gets the same answer, and each one would cost the
+  whole oversized body again. Before 2.5.0 the loop followed the body wherever it went and the
+  length was compared only afterwards, so an origin serving an error page in place of a 200 MB
+  asset could spend a whole volume.
+- **A body that arrived in full is finished even if the transport then hangs.** The attempt is
+  abandoned at the deadline, and because nothing is left to fetch, no further request is made —
+  asking to resume from the end of a complete file invites a 416, which truncates it.
 
 ## What Nimbus does NOT do
 
@@ -475,11 +602,17 @@ reaches your adapter rather than being refused first.
 
 **Two requirements your transport must satisfy** — these are the real limits of the model:
 
-1. `getFileSize` must answer before the transfer. The size drives progress, the disk-headroom
+1. `getRemoteFile` must answer before the transfer. The size drives progress, the disk-headroom
    check and the final integrity check. A transport that cannot announce a length does not fit.
+   The validator alongside it is optional: return null and resumes behave as they always did.
 2. `downloadFile` must honour `offset`. On resume the bytes you supply are appended to what is
    already on disk, so a transport that silently restarts from zero corrupts the file. If you
    cannot seek, return a failure instead — Nimbus handles that.
+3. `onSourceOpened` is called **exactly once**, with one `Source` for the whole body. Nimbus
+   opens the destination around that call and closes it when the call returns.
+4. Give the transport its own deadline for inactivity. Nimbus abandons a transfer that delivers
+   nothing for `withStallTimeoutMs`, and abandoning it means cancelling your call — which only
+   unwinds an implementation that *suspends* while it waits.
 
 FTP satisfies both (`SIZE`, `REST`), as do local and network filesystems.
 
@@ -489,13 +622,16 @@ onto a `Source`.
 
 ```kotlin
 interface NimbusDownloadPort {
-    suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError>
+    suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError>
     suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
+        resumeValidator: String?,   // what getRemoteFile reported; send it as If-Range
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError>
 }
+
+data class RemoteFile(val sizeBytes: Long, val validator: String? = null)
 ```
 
 The `onSourceOpened` lambda receives a `kotlinx.io.Source`. Stream it to the sink Nimbus
@@ -515,6 +651,10 @@ provides internally — do not buffer the entire response in memory.
 import io.github.giovanniandreuzza.nimbus.ktor.KtorDownloadAdapter
 
 val adapter = KtorDownloadAdapter(httpClient)   // caller owns HttpClient lifecycle
+// A 30 s socket timeout is imposed on every request it makes, on the request itself, so it
+// holds whether or not the client installed the HttpTimeout plugin. Pass
+// KtorDownloadAdapter(httpClient, socketTimeoutMillis = null) to leave the client's own
+// configuration alone — but then a wedged read cannot be interrupted by anything.
 
 val api = Nimbus.Builder()
     .withNimbusDownloadPort(adapter)
@@ -526,8 +666,10 @@ val api = Nimbus.Builder()
 
 `KtorDownloadAdapter` handles:
 - `HEAD` for size; falls back to `GET Range: bytes=0-0` + `Content-Range` when `Content-Length` is absent.
-- 206 / 200 / 416 mapping to the typed `DownloadError` hierarchy.
-- `InconsistentRangeResponse` guard for servers that return a full 200 body on a resume request.
+- `ETag` (else `Last-Modified`) as the resume validator, sent back as `If-Range` on a resume.
+- 206 / 200 / 416 mapping to the typed `DownloadError` hierarchy. A 200 answering a resume is
+  `RemoteFileChanged` when an `If-Range` was sent and `InconsistentRangeResponse` when not.
+- A socket timeout on every request, because its own body reads block a thread.
 
 ## Android — withAndroidContext extension
 
@@ -555,6 +697,9 @@ sealed class NimbusLogEvent {
     data class InsufficientDiskSpace(val fileUrl: String?, val path: String, val requiredBytes: Long, val availableBytes: Long)
     data class AutoStartFailed(val fileUrl: String, val error: NimbusError)
     data class AutoRetryFailed(val fileUrl: String, val error: NimbusError)
+    data class AutoRetryScheduled(val fileUrl: String, val delayMs: Long, val attempt: Int)
+    data class AutoRetryExhausted(val fileUrl: String, val attempts: Int)  // only with a capped policy
+    data class Unexpected(val fileUrl: String, val throwable: Throwable)   // the throwable itself, stack included
     data class PersistenceFailed(val fileUrl: String, val cause: KError)
     data class StoreFlushFailed(val cause: KError)   // a coalesced background commit failed
     data class StoreReset(val reason: String)        // the store was unreadable and was discarded

@@ -15,6 +15,7 @@ import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.presentation.PermanentNimbusErrorCause
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.testing.FakeContentDigestPort
 import io.github.giovanniandreuzza.nimbus.testing.FakeDownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
@@ -75,7 +76,7 @@ class DownloadServiceLifecycleTest {
         // download port un-implementable for ftp, a local share, or anything else, however
         // capable the adapter was.
         assertTrue(result is Success, "core rejected a scheme it has no business judging: $result")
-        assertEquals(1, f.repository.getAllDownloadTask().size)
+        assertEquals(1, f.repository.getAllDownloadTasks().size)
     }
 
     @Test
@@ -87,7 +88,7 @@ class DownloadServiceLifecycleTest {
         // Not a transport judgement: a string with no scheme is not a URL, and the url is
         // also the task's identity, so garbage here becomes a task nobody can address.
         assertEquals(PermanentNimbusErrorCause.InvalidUrl, result.causeOrFail())
-        assertTrue(f.repository.getAllDownloadTask().isEmpty())
+        assertTrue(f.repository.getAllDownloadTasks().isEmpty())
     }
 
     @Test
@@ -100,7 +101,7 @@ class DownloadServiceLifecycleTest {
         // of Unicode, so a check written with it accepts a scheme no URI parser would, and the
         // url is the task's identity — this has to be refused where it is created.
         assertEquals(PermanentNimbusErrorCause.InvalidUrl, result.causeOrFail())
-        assertTrue(f.repository.getAllDownloadTask().isEmpty())
+        assertTrue(f.repository.getAllDownloadTasks().isEmpty())
     }
 
     @Test
@@ -110,7 +111,7 @@ class DownloadServiceLifecycleTest {
         val result = f.service.enqueueDownload("   ", PATH, NAME)
 
         assertEquals(PermanentNimbusErrorCause.InvalidUrl, result.causeOrFail())
-        assertTrue(f.repository.getAllDownloadTask().isEmpty())
+        assertTrue(f.repository.getAllDownloadTasks().isEmpty())
     }
 
     @Test
@@ -533,7 +534,52 @@ class DownloadServiceLifecycleTest {
             outcomes.count { it is Success },
             "exactly one enqueue may win, got $outcomes"
         )
-        assertEquals(1, f.repository.getAllDownloadTask().size)
+        assertEquals(1, f.repository.getAllDownloadTasks().size)
+    }
+
+    @Test
+    fun `the transfer is stopped before the task leaves Downloading`() = runTest {
+        // Order, not decoration. The progress callbacks run on the download's own coroutine,
+        // so while that coroutine is alive it can still report — and a tick that lands after
+        // `pause()` writes `Downloading` straight back over the `Paused` that was just set,
+        // leaving a task persisted as downloading with no job behind it. Stopping first ends
+        // the only thing that could do that: `stopDownload` joins the job.
+        val f = fixture()
+        f.service.enqueueDownload(URL, PATH, NAME)
+        f.service.startDownload(URL)
+
+        var stateWhenStopped: DownloadState? = null
+        f.downloadPort.onStop = { stateWhenStopped = f.repository.current(URL)?.state }
+
+        f.service.pauseDownload(URL).valueOrFail()
+
+        assertTrue(
+            stateWhenStopped is DownloadState.Downloading,
+            "the state must still be Downloading while the job is being stopped, was " +
+                    "$stateWhenStopped"
+        )
+        assertTrue(
+            f.repository.current(URL)?.state is DownloadState.Paused,
+            "and Paused once it has been"
+        )
+    }
+
+    @Test
+    fun `a refused transition changes nothing and is not persisted`() = runTest {
+        val f = fixture()
+        f.service.enqueueDownload(URL, PATH, NAME)
+        val savesBefore = f.repository.saveCount
+
+        // Enqueued cannot be paused.
+        val result = f.service.pauseDownload(URL)
+
+        assertTrue(result.causeOrFail() is PermanentNimbusErrorCause.InvalidState)
+        assertTrue(f.repository.current(URL)?.state is DownloadState.Enqueued)
+        assertEquals(
+            savesBefore,
+            f.repository.saveCount,
+            "a refusal must not reach the disk: the store rewrites every task on each commit"
+        )
     }
 
     // -- helpers -----------------------------------------------------------
@@ -555,10 +601,14 @@ class DownloadServiceLifecycleTest {
             contentDigestPort = FakeContentDigestPort(
                 Success(Checksum(DigestAlgorithm.SHA256, "0".repeat(64)))
             ),
+            clock = FakeClock(),
+            downloadRoot = null,
             digestAlgorithm = digestAlgorithm,
             minReservedDiskBytes = minReservedDiskBytes,
             logger = logger,
             autoStart = autoStart,
+            // The test scope is the test's to end.
+            ownsDownloadScope = false,
             // Not `backgroundScope`: work launched there runs only while the test body is
             // suspended, so `advanceUntilIdle` would never run the autoStart, and a test
             // asserting the start happened would fail for a reason that is about the test

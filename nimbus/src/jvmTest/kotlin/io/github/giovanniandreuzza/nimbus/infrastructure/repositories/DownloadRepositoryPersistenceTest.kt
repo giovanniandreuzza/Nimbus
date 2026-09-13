@@ -1,5 +1,6 @@
 package io.github.giovanniandreuzza.nimbus.infrastructure.repositories
 
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage.FileSystemNimbusStorageAdapter
@@ -40,7 +41,7 @@ class DownloadRepositoryPersistenceTest {
 
         assertEquals(
             count,
-            repository.getAllDownloadTask().size,
+            repository.allTasksForTest().size,
             "expected every task to be held in memory"
         )
 
@@ -50,7 +51,7 @@ class DownloadRepositoryPersistenceTest {
 
         assertEquals(
             count,
-            reloaded.getAllDownloadTask().size,
+            reloaded.allTasksForTest().size,
             "expected every saved task to survive a reload from disk"
         )
     }
@@ -72,7 +73,7 @@ class DownloadRepositoryPersistenceTest {
         val reloaded = repositoryOn(storeFile)
         reloaded.loadDownloadTasks()
 
-        val onDisk = reloaded.getAllDownloadTask()[DownloadId.create("a")]
+        val onDisk = reloaded.allTasksForTest()[DownloadId.create("a")]
         assertEquals(
             task.state,
             onDisk?.state,
@@ -88,7 +89,8 @@ class DownloadRepositoryPersistenceTest {
     private fun repositoryOn(storeFile: File) = DownloadRepository(
         storePath = storeFile.absolutePath,
         dispatcher = Dispatchers.IO,
-        nimbusStoragePort = FileSystemNimbusStorageAdapter()
+        nimbusStoragePort = FileSystemNimbusStorageAdapter(),
+        clock = FakeClock()
     )
 
     private fun taskNamed(name: String) = DownloadTask.create(

@@ -98,8 +98,17 @@ internal class InMemoryStorage : NimbusStoragePort {
         return Success(AppendingSink(path, this).buffered())
     }
 
+    /** How many times a file was opened for reading, and how many bytes that cost. */
+    var sourceOpens: Int = 0
+        private set
+
+    var bytesReadBack: Long = 0L
+        private set
+
     override fun source(path: String): KResult<Source, GetFileSourceError> {
         val bytes = files[path] ?: return Failure(GetFileSourceError.FileNotFound)
+        sourceOpens++
+        bytesReadBack += bytes.size.toLong()
         return Success(Buffer().apply { write(bytes) })
     }
 

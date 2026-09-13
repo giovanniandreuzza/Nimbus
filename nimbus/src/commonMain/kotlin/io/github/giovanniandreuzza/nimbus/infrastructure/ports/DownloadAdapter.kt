@@ -11,7 +11,9 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.PermanentDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
+import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryGetFileSizeErrorCause
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
+import io.github.giovanniandreuzza.nimbus.core.ports.RemoteFileInfo
 import io.github.giovanniandreuzza.nimbus.core.ports.ContentDigestPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.digest.ContentDigest
@@ -22,13 +24,21 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
+import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
+import io.github.giovanniandreuzza.nimbus.shared.utils.allowsAttempt
+import io.github.giovanniandreuzza.nimbus.shared.utils.delayForAttempt
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.shared.utils.getDownloadProgress
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -37,11 +47,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import kotlinx.io.InternalIoApi
 import kotlinx.io.Sink
 import kotlinx.io.Source
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.random.Random
 
 /**
  * Download Adapter.
@@ -63,41 +75,89 @@ internal class DownloadAdapter(
     private val nimbusDownloadPort: NimbusDownloadPort,
     private val bufferSize: Long,
     private val notifyEveryBytes: Long,
-    private val maxRetryAttempts: Int,
-    private val retryBaseDelayMs: Long,
+    /** Retries within one download: see [RetryPolicy.Transport]. */
+    private val transportRetry: RetryPolicy,
+    /**
+     * How long a transfer may make no progress at all before it is abandoned and retried.
+     * Null disables the guard entirely. See [runWithStallWatchdog].
+     */
+    private val stallTimeoutMs: Long?,
     /** When non-null, every transfer is digested with it. Null means no hashing at all. */
     private val digestAlgorithm: DigestAlgorithm? = null,
     /** Hashes a file that is already on disk, for the case where nothing is transferred. */
-    private val contentDigestPort: ContentDigestPort
+    private val contentDigestPort: ContentDigestPort,
+    /** Told about throwables this adapter did not expect, stack and all. */
+    private val logger: NimbusLogger? = null,
+    /** Injectable so a test can assert the back-off arithmetic instead of a range. */
+    private val random: Random = Random.Default
 ) : DownloadPort {
 
     private val semaphore = Semaphore(concurrencyLimit)
     private val jobsMutex = Mutex()
     private val downloadJobs = mutableMapOf<String, Job>()
 
-    override suspend fun getFileSizeToDownload(fileUrl: String): KResult<Long, GetFileSizeError> {
-        return nimbusDownloadPort.getFileSize(fileUrl)
+    /**
+     * The size request gets the same deadline as a transfer, for the same reason.
+     *
+     * It is the first thing every enqueue and every retry does, and it runs on the caller's
+     * coroutine — so a server that accepts the connection and then answers nothing does not
+     * fail a download, it suspends whoever asked for one. On a device reconciling a manifest
+     * that is the loop that keeps the whole catalogue up to date.
+     */
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFileInfo, GetFileSizeError> {
+        val timeout = stallTimeoutMs ?: return askOrigin(fileUrl)
+
+        return withTimeoutOrNull(timeout) { askOrigin(fileUrl) }
+            ?: Failure(
+                GetFileSizeError.TemporaryError(
+                    TemporaryGetFileSizeErrorCause.TransportFailure(
+                        KError(
+                            code = "size_request_stalled",
+                            message = "The size request made no progress for $timeout ms."
+                        )
+                    )
+                )
+            )
     }
+
+    private suspend fun askOrigin(fileUrl: String): KResult<RemoteFileInfo, GetFileSizeError> =
+        when (val remote = nimbusDownloadPort.getRemoteFile(fileUrl)) {
+            is Success -> Success(
+                RemoteFileInfo(
+                    sizeBytes = remote.value.sizeBytes,
+                    validator = remote.value.validator
+                )
+            )
+
+            is Failure -> remote
+        }
 
     @OptIn(InternalIoApi::class)
     override suspend fun startDownload(downloadTask: DownloadTaskDTO): KResult<Unit, DownloadError> {
         val id = downloadTask.id
 
-        val quickSize: Long? = when (val r = nimbusStoragePort.size(downloadTask.filePath)) {
-            is Success -> r.value
-            is Failure -> null
-        }
-        if (quickSize != null && quickSize == downloadTask.fileSize) {
-            return finishCompleteFileOnDisk(downloadTask, id)
-        }
-
         val job = downloadScope.launch(
-            context = createExceptionHandler(id),
+            context = createExceptionHandler(id, downloadTask.fileUrl),
             start = CoroutineStart.LAZY
         ) {
             try {
                 semaphore.withPermit {
-                    runDownloadJob(downloadTask, id)
+                    // The already-complete case runs here rather than on the caller's
+                    // coroutine, because with a digest configured it is not a check — it reads
+                    // and hashes the whole file. Two gigabytes off eMMC is twenty seconds of a
+                    // caller suspended inside what looks like a start, and on a reconciliation
+                    // loop that walks a manifest it is twenty seconds per asset with nothing
+                    // else moving. Under the permit it also counts against the concurrency
+                    // limit, which is what the limit is for.
+                    val onDisk = when (val r = nimbusStoragePort.size(downloadTask.filePath)) {
+                        is Success -> r.value
+                        is Failure -> null
+                    }
+                    if (onDisk == downloadTask.fileSize) {
+                        finishCompleteFileOnDisk(downloadTask, id)
+                    } else {
+                        runDownloadJob(downloadTask, id)
+                    }
                 }
             } finally {
                 removeJob(id)
@@ -120,6 +180,17 @@ internal class DownloadAdapter(
         job?.cancelAndJoin()
     }
 
+    override suspend fun stopAllDownloads() {
+        // Emptied under the lock, then joined outside it: a job's own `finally` deregisters
+        // itself, so holding the lock while waiting for one would deadlock against it.
+        val running = jobsMutex.withLock {
+            val all = downloadJobs.values.toList()
+            downloadJobs.clear()
+            all
+        }
+        running.forEach { it.cancelAndJoin() }
+    }
+
     private suspend fun runDownloadJob(
         downloadTask: DownloadTaskDTO,
         id: String
@@ -135,6 +206,7 @@ internal class DownloadAdapter(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            logger?.log(NimbusLogEvent.Unexpected(downloadTask.fileUrl, e))
             val error = unexpectedDownloadError(e)
             notifyFailureAndCleanup(
                 id,
@@ -259,7 +331,7 @@ internal class DownloadAdapter(
         return true
     }
 
-    private suspend fun truncateLocalFileAfter416(filePath: String, id: String): Boolean {
+    private suspend fun truncateLocalFile(filePath: String, id: String): Boolean {
         // A delete that genuinely failed must not be mistaken for the race below: the
         // create that follows would report FileAlreadyExists, the download would retry as
         // if two writers had collided, and the real reason would never reach the logger.
@@ -334,27 +406,22 @@ internal class DownloadAdapter(
         var progressBytes = initialProgressBytes
         val totalFileSize = downloadTask.fileSize
         var retryAttempt = 0
+        var truncations = 0
         var digest: ContentDigest? = null
 
         downloadLoop@ while (currentCoroutineContext().isActive) {
-            // Prime from disk at the start of every attempt, then feed the digest the bytes
-            // streamed after that.
+            // The digest covers the bytes on disk, always, and the offset comes from the file.
             //
-            // The resume offset comes from the length of the file on disk and nothing about
-            // it is held in memory, so a resume survives a process restart. A digest
-            // accumulated only across a streaming session would therefore cover only what
-            // that session transferred: after a restart-and-resume it would hash the tail
-            // alone and produce a value that is well-formed, plausible and wrong. The
-            // consumer would compare it later, conclude the file is corrupt, and delete and
-            // re-download it on every pass, forever.
+            // The resume offset is the length of the partial and nothing about it is held in
+            // memory, so a resume survives a process restart. A digest accumulated only
+            // across a streaming session would therefore cover only what that session
+            // transferred: after a restart-and-resume it would hash the tail alone and
+            // produce a value that is well-formed, plausible and wrong. The consumer would
+            // compare it later, conclude the file is corrupt, and delete and re-download it
+            // on every pass, forever.
             //
-            // One code path, no condition. On a fresh download the prime reads nothing. On
-            // a resume it re-reads the prefix already fetched — a cost paid only when a
-            // transfer was already interrupted, which is to say when far more has already
-            // been wasted. Re-priming at the top of each attempt is also what makes the
-            // rule hold across a 416 truncation and every transport retry.
-            // The offset comes from the file, for the same reason the digest does, and at the
-            // same moment.
+            // Which is why the digest is checked against the file below rather than assumed
+            // to match it.
             //
             // Holding it in memory instead looks equivalent and is not: the assignment that
             // records it only runs when the transfer returns, so an attempt whose body stopped
@@ -365,12 +432,42 @@ internal class DownloadAdapter(
             // for.
             progressBytes = resolvePartialBytesOnDisk(downloadTask, id) ?: return null
 
+            val bytesBeforeAttempt = progressBytes
+
             val algorithm = digestAlgorithm
             if (algorithm != null) {
-                val primed = ContentDigest(algorithm)
-                if (!primeFromDisk(downloadTask.filePath, id, primed)) return null
-                digest = primed
+                // Read the partial back only when the digest does not already stand for it.
+                //
+                // The rule that matters is unchanged: what the digest has consumed must be
+                // exactly the bytes on disk, because the resume offset comes from the file's
+                // length and a digest covering anything else produces a value that is
+                // well-formed, plausible and wrong. What changes is how often that has to be
+                // established by re-reading. Within one job, an attempt that ends after
+                // writing 15 MB leaves a digest that has consumed those same 15 MB, and
+                // re-reading them to learn what is already known cost O(partial × attempts) —
+                // 60 MB of eMMC reads and hashing for a 20 MB asset that drops three times.
+                //
+                // The comparison is what makes it safe, and it is the file that is asked.
+                // The byte counter advances before the buffered sink flushes, so an attempt
+                // that died mid-write can leave the digest ahead of the disk; the lengths then
+                // disagree and the prime happens. So it does after a 416 truncation, after a
+                // restart, and on the first attempt — every case where the two could differ.
+                val carried = digest
+                if (carried == null || carried.consumedBytes != progressBytes) {
+                    val primed = ContentDigest(algorithm)
+                    if (!primeFromDisk(downloadTask.filePath, id, primed)) return null
+                    digest = primed
+                }
             }
+
+            // The file is already whole, so there is nothing left to ask for. Reached when an
+            // attempt delivered every byte and then failed on its way out — a port that hangs
+            // after the last chunk, a connection closed without a clean end — and without this
+            // the next attempt would ask to resume from the end of a complete file, which a
+            // server answers with a 416 and this adapter answers by truncating everything it
+            // just spent the bandwidth on. The digest was primed from the same file a moment
+            // ago, so what it reports describes the whole of it.
+            if (progressBytes == totalFileSize) break@downloadLoop
 
             val sink = openSink(downloadTask.filePath, id) ?: return null
 
@@ -385,35 +482,51 @@ internal class DownloadAdapter(
             // from the body is the transport, anything else is this adapter's own storage.
             var transferFailure: DownloadError? = null
 
-            val result = nimbusDownloadPort.downloadFile(
-                fileUrl = downloadTask.fileUrl,
-                offset = progressBytes
-            ) { source ->
-                try {
-                    sink.use { output ->
-                        progressBytes = copySourceToSink(
-                            source = source,
-                            sink = output,
-                            id = id,
-                            totalFileSize = totalFileSize,
-                            initialProgressBytes = progressBytes,
-                            digest = digest
+            // One per attempt: the watchdog below reads it, the copy loop writes to it, and
+            // neither of them outlives the attempt.
+            val progressTicks = Channel<Unit>(Channel.CONFLATED)
+
+            val result = runWithStallWatchdog(progressTicks) {
+                nimbusDownloadPort.downloadFile(
+                    fileUrl = downloadTask.fileUrl,
+                    offset = progressBytes,
+                    resumeValidator = downloadTask.resumeValidator
+                ) { source ->
+                    try {
+                        sink.use { output ->
+                            val copied = copySourceToSink(
+                                source = source,
+                                sink = output,
+                                id = id,
+                                totalFileSize = totalFileSize,
+                                initialProgressBytes = progressBytes,
+                                digest = digest,
+                                progressTicks = progressTicks
+                            )
+                            progressBytes = copied.bytes
+                            if (copied.bodyLongerThanDeclared) {
+                                transferFailure = DownloadError.PermanentError(
+                                    PermanentDownloadErrorCause.BodyLongerThanDeclared(
+                                        totalFileSize
+                                    )
+                                )
+                            }
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: BodyReadFailure) {
+                        transferFailure = DownloadError.TemporaryError(
+                            TemporaryDownloadErrorCause.TransportFailure(unexpectedKError(e.cause))
+                        )
+                    } catch (e: Throwable) {
+                        transferFailure = DownloadError.PermanentError(
+                            storageFailureCause(
+                                filePath = downloadTask.filePath,
+                                totalFileSize = totalFileSize,
+                                cause = e
+                            )
                         )
                     }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: BodyReadFailure) {
-                    transferFailure = DownloadError.TemporaryError(
-                        TemporaryDownloadErrorCause.TransportFailure(unexpectedKError(e.cause))
-                    )
-                } catch (e: Throwable) {
-                    transferFailure = DownloadError.PermanentError(
-                        storageFailureCause(
-                            filePath = downloadTask.filePath,
-                            totalFileSize = totalFileSize,
-                            cause = e
-                        )
-                    )
                 }
             }
 
@@ -430,26 +543,61 @@ internal class DownloadAdapter(
 
                 is Failure -> {
                     val downloadError = outcome.error
+
+                    // Bytes did arrive this time, so whatever happened next is a fresh
+                    // situation and the truncation budget starts over.
+                    if (progressBytes > bytesBeforeAttempt) truncations = 0
+
+                    // Two ways to be told the local bytes are worthless: the origin refused
+                    // the range, or it no longer recognises the file they came from. The
+                    // recovery is the same and so is the budget for it.
+                    val cause = (downloadError as? DownloadError.TemporaryError)?.errorCause
+                    val startOver = cause is TemporaryDownloadErrorCause.RangeNotSatisfiable ||
+                            cause is TemporaryDownloadErrorCause.RemoteFileChanged
+
                     when {
-                        downloadError is DownloadError.TemporaryError &&
-                                downloadError.errorCause is TemporaryDownloadErrorCause.RangeNotSatisfiable -> {
-                            if (!truncateLocalFileAfter416(downloadTask.filePath, id)) return null
+                        // A 416 means the server rejected the range this adapter asked for, so
+                        // the local bytes are worthless and the file is fetched again from the
+                        // start — outside the retry budget, because nothing was wrong with the
+                        // link. Once, though. The truncation puts the request back at offset 0,
+                        // which carries no Range header at all, and a server that answers
+                        // *that* with a 416 will answer the next one the same way: a second
+                        // consecutive refusal was an endless loop at full speed, deleting and
+                        // recreating the file on every pass. From here it is an ordinary
+                        // temporary failure, which is budgeted, backed off, and eventually
+                        // reported.
+                        startOver && truncations < MAX_CONSECUTIVE_TRUNCATIONS -> {
+                            if (!truncateLocalFile(downloadTask.filePath, id)) return null
+                            truncations += 1
                             progressBytes = 0L
                             retryAttempt = 0
                         }
 
+                        // The file is now exactly as long as it was supposed to be and holds
+                        // bytes a server told two stories about — the shape `startDownload`
+                        // short-circuits on, so leaving it there would have the next start
+                        // report a corrupt file as complete. Nothing written under a
+                        // contradiction is worth keeping.
+                        downloadError is DownloadError.PermanentError &&
+                                downloadError.errorCause is PermanentDownloadErrorCause.BodyLongerThanDeclared -> {
+                            if (!truncateLocalFile(downloadTask.filePath, id)) return null
+                            notifyFailureAndCleanup(id, downloadError)
+                            return null
+                        }
+
                         else -> {
+                            val nextAttempt = retryAttempt + 1
                             val shouldRetry = shouldRetry(
                                 error = downloadError,
-                                retryAttempt = retryAttempt,
+                                nextAttempt = nextAttempt,
                                 isStillActive = currentCoroutineContext().isActive
                             )
                             if (!shouldRetry) {
                                 notifyFailureAndCleanup(id, downloadError)
                                 return null
                             }
-                            retryAttempt += 1
-                            delay(retryBaseDelayMs * retryAttempt)
+                            retryAttempt = nextAttempt
+                            delay(transportRetry.delayForAttempt(retryAttempt, random))
                         }
                     }
                 }
@@ -601,7 +749,87 @@ internal class DownloadAdapter(
     )
 
     /**
+     * Runs [block] and abandons it when it stops making progress.
+     *
+     * A transfer that fails announces itself. A transfer that *stalls* does not: a server that
+     * accepts the connection, returns its headers and then sends nothing is, to every layer
+     * below this one, a download still in progress. It holds its permit — with the default
+     * concurrency of one, that is the whole queue — and no state changes, so nothing is
+     * emitted, nothing is logged, and a device nobody is watching simply stops updating. It is
+     * the one failure mode in this library that is silent by construction, which on an
+     * unattended appliance is worse than a loud one.
+     *
+     * Progress is measured, not elapsed time: only [copySourceToSink] can say whether bytes
+     * are arriving, and it reports each read that delivered any. A transfer that takes hours
+     * is fine; a transfer that delivers nothing for [stallTimeoutMs] is not.
+     *
+     * **What this can and cannot interrupt.** Cancelling the transfer unwinds an
+     * implementation that suspends while it waits. An implementation that *blocks a thread*
+     * instead cannot be interrupted by anyone — `ByteReadChannel.asSource()` in Ktor reads
+     * through `runBlocking`, so the read is not a suspension point and the cancellation stays
+     * pending until the socket itself gives up. That is why `KtorDownloadAdapter` imposes a
+     * socket timeout on every request it makes: this watchdog names the condition, and the
+     * transport's own timeout is what ends it.
+     */
+    private suspend fun runWithStallWatchdog(
+        progressTicks: Channel<Unit>,
+        block: suspend () -> KResult<Unit, DownloadError>
+    ): KResult<Unit, DownloadError> {
+        val timeout = stallTimeoutMs ?: return block()
+
+        return coroutineScope {
+            var stalled = false
+
+            val transfer = async { block() }
+
+            // Cancelling a child cancels only that child, so the failure below is reported
+            // from a scope that is still very much alive.
+            val watchdog = launch {
+                while (true) {
+                    val tick = withTimeoutOrNull(timeout) { progressTicks.receive() }
+                    if (tick == null) {
+                        // The flag, not the cancellation cause, is what the catch below reads:
+                        // in common code `Job.cancel` wants kotlinx's CancellationException and
+                        // an unwinding transfer may wrap whatever it is given, so identity of
+                        // the cause is not something to depend on.
+                        stalled = true
+                        transfer.cancel()
+                        return@launch
+                    }
+                }
+            }
+
+            try {
+                transfer.await()
+            } catch (e: CancellationException) {
+                // Ours, or the caller's? A pause or a cancelDownload arrives the same way and
+                // must keep unwinding; only a stall becomes a failure to report.
+                if (!stalled || !currentCoroutineContext().isActive) throw e
+                Failure(
+                    DownloadError.TemporaryError(
+                        TemporaryDownloadErrorCause.TransportFailure(
+                            KError(
+                                code = "transfer_stalled",
+                                message = "The transfer delivered no bytes for $timeout ms."
+                            )
+                        )
+                    )
+                )
+            } finally {
+                // Cancelled, not closed: cancellation is not synchronous, so a watchdog already
+                // suspended in `receive()` would lose the race against a close and throw
+                // ClosedReceiveChannelException — a child failing, which cancels this scope and
+                // surfaces as an unexpected error on a transfer that had just succeeded. The
+                // channel is local to one attempt and needs no closing.
+                watchdog.cancel()
+            }
+        }
+    }
+
+    /**
      * @param digest fed every byte that passes, when a digest is being computed.
+     * @param progressTicks told about every read that delivered bytes, so
+     * [runWithStallWatchdog] can tell a slow transfer from a dead one.
      */
     @OptIn(InternalIoApi::class)
     private suspend fun copySourceToSink(
@@ -610,9 +838,11 @@ internal class DownloadAdapter(
         id: String,
         totalFileSize: Long,
         initialProgressBytes: Long,
-        digest: ContentDigest?
-    ): Long {
+        digest: ContentDigest?,
+        progressTicks: Channel<Unit>? = null
+    ): CopyOutcome {
         var progressBytes = initialProgressBytes
+        var bodyLongerThanDeclared = false
         source.use { input ->
             var bytesSinceLastProgressUpdate = 0L
 
@@ -626,11 +856,24 @@ internal class DownloadAdapter(
             val chunk = digest?.let { ByteArray(bufferSize.toInt()) }
 
             while (readingBody { !input.exhausted() } && currentCoroutineContext().isActive) {
+                // Nothing past the declared size is written. `exhausted()` just said more bytes
+                // are waiting, so reaching this with none of them owed means the server is
+                // sending more than it announced — and a write loop that simply followed the
+                // body would fill the volume with it. A 200 MB asset whose origin serves an
+                // HTML error page in a loop, or a file replaced between the HEAD and the GET,
+                // is the whole of eight gigabytes on an appliance that has no more.
+                val outstanding = totalFileSize - progressBytes
+                if (outstanding <= 0L) {
+                    bodyLongerThanDeclared = true
+                    break
+                }
+
                 val bytesRead = if (chunk == null) {
                     val target = sink.buffer
-                    readingBody { input.readAtMostTo(target, bufferSize) }
+                    readingBody { input.readAtMostTo(target, minOf(bufferSize, outstanding)) }
                 } else {
-                    val read = readingBody { input.readAtMostTo(chunk, 0, chunk.size) }
+                    val room = minOf(chunk.size.toLong(), outstanding).toInt()
+                    val read = readingBody { input.readAtMostTo(chunk, 0, room) }
                     if (read > 0) {
                         digest.update(chunk, 0, read)
                         sink.write(chunk, 0, read)
@@ -648,6 +891,13 @@ internal class DownloadAdapter(
                 bytesSinceLastProgressUpdate += bytesRead
                 sink.emit()
 
+                // The only evidence the watchdog gets. Sent per read rather than per progress
+                // notification, because a link crawling along below the notification threshold
+                // is slow, not dead, and must not be killed as if it were. `trySend` on a
+                // conflated channel never suspends and never fails, so the hot path pays one
+                // atomic swap for it.
+                progressTicks?.trySend(Unit)
+
                 if (bytesSinceLastProgressUpdate >= notifyEveryBytes) {
                     val progress = getDownloadProgress(progressBytes, totalFileSize)
                     downloadProgressCallback.onDownloadProgress(id, progress)
@@ -656,23 +906,39 @@ internal class DownloadAdapter(
                 }
             }
         }
-        return progressBytes
+        return CopyOutcome(
+            bytes = progressBytes,
+            bodyLongerThanDeclared = bodyLongerThanDeclared
+        )
     }
+
+    /**
+     * What one pass over the body did.
+     *
+     * The byte count alone cannot say why the loop stopped, and the two reasons lead opposite
+     * ways: a body that ended is a transfer to verify, a body that kept going past the declared
+     * length is a server contradicting itself and a download to stop.
+     */
+    private class CopyOutcome(val bytes: Long, val bodyLongerThanDeclared: Boolean)
 
     private fun shouldRetry(
         error: DownloadError,
-        retryAttempt: Int,
+        nextAttempt: Int,
         isStillActive: Boolean
     ): Boolean {
         return error is DownloadError.TemporaryError &&
-                retryAttempt < maxRetryAttempts &&
+                transportRetry.allowsAttempt(nextAttempt) &&
                 isStillActive
     }
 
-    private fun createExceptionHandler(id: String): CoroutineExceptionHandler {
+    private fun createExceptionHandler(
+        id: String,
+        fileUrl: String
+    ): CoroutineExceptionHandler {
         return CoroutineExceptionHandler { _, throwable ->
             val error = unexpectedDownloadError(throwable)
             downloadScope.launch {
+                logger?.log(NimbusLogEvent.Unexpected(fileUrl, throwable))
                 notifyFailureAndCleanup(
                     id,
                     DownloadError.PermanentError(PermanentDownloadErrorCause.UnexpectedError(error))
@@ -704,11 +970,11 @@ internal class DownloadAdapter(
     private suspend fun finishCompleteFileOnDisk(
         downloadTask: DownloadTaskDTO,
         id: String
-    ): KResult<Unit, DownloadError> {
+    ) {
         val algorithm = digestAlgorithm
         if (algorithm == null) {
             downloadProgressCallback.onDownloadFinished(id)
-            return Success(Unit)
+            return
         }
 
         val checksum = when (val r = contentDigestPort.digestOf(downloadTask.filePath, algorithm)) {
@@ -721,14 +987,13 @@ internal class DownloadAdapter(
                     id,
                     DownloadError.TemporaryError(TemporaryDownloadErrorCause.FileNotAccessible)
                 )
-                return Success(Unit)
+                return
             }
         }
 
-        if (!verifyFileIntegrity(downloadTask, id, checksum)) return Success(Unit)
+        if (!verifyFileIntegrity(downloadTask, id, checksum)) return
 
         downloadProgressCallback.onDownloadFinished(id, checksum)
-        return Success(Unit)
     }
 
     private suspend fun notifyFailureAndCleanup(id: String, error: DownloadError) {
@@ -739,4 +1004,12 @@ internal class DownloadAdapter(
     }
 
     private suspend fun removeJob(id: String): Job? = jobsMutex.withLock { downloadJobs.remove(id) }
+
+    private companion object {
+        /**
+         * One 416 is a server disagreeing about a range; two in a row is a server that will
+         * never agree, and each one costs a delete and a recreate of the file.
+         */
+        const val MAX_CONSECUTIVE_TRUNCATIONS = 1
+    }
 }

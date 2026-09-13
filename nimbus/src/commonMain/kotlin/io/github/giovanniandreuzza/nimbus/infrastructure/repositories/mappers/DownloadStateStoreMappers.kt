@@ -69,6 +69,7 @@ internal object DownloadStateStoreMappers {
         when (this.errorCode) {
             "server_error" -> TemporaryDownloadErrorCause.ServerError(this.errorMessage.parseStatusCode())
             "range_not_satisfiable" -> TemporaryDownloadErrorCause.RangeNotSatisfiable
+            "remote_file_changed" -> TemporaryDownloadErrorCause.RemoteFileChanged
             "file_integrity_mismatch" -> TemporaryDownloadErrorCause.FileIntegrityMismatch
             "file_not_accessible" -> TemporaryDownloadErrorCause.FileNotAccessible
             "truncate_race" -> TemporaryDownloadErrorCause.TruncateRace
@@ -89,6 +90,9 @@ internal object DownloadStateStoreMappers {
             )
 
             "local_file_oversized" -> PermanentDownloadErrorCause.LocalFileOversized
+            "body_longer_than_declared" -> PermanentDownloadErrorCause.BodyLongerThanDeclared(
+                this.errorMessage.parseDeclaredBytes()
+            )
             "insufficient_disk_space" -> PermanentDownloadErrorCause.InsufficientDiskSpace(
                 this.errorCause?.toKError() ?: toKError()
             )
@@ -99,6 +103,16 @@ internal object DownloadStateStoreMappers {
 
             else -> PermanentDownloadErrorCause.UnexpectedError(toKError())
         }
+
+    /**
+     * The declared size back out of the message it was written into.
+     *
+     * The store keeps a cause as its code and its message, so a cause that carries a number
+     * has to find that number again on the way back. Zero when it cannot be read: the value is
+     * for a human reading a log, and inventing one would be worse than admitting it is gone.
+     */
+    private fun String.parseDeclaredBytes(): Long =
+        Regex("""\d+""").find(this)?.value?.toLongOrNull() ?: 0L
 
     private fun DownloadStateStore.Failed.toKError(): KError =
         KError(

@@ -7,6 +7,7 @@ import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 import io.github.giovanniandreuzza.nimbus.withAndroidContext
 import io.ktor.client.HttpClient
+import java.io.File
 import timber.log.Timber
 
 /**
@@ -18,6 +19,11 @@ import timber.log.Timber
  *
  * Content digest is enabled here so the sample exercises it. It is opt-in: with
  * no algorithm configured nothing is hashed and the transfer path is unchanged.
+ *
+ * [withDownloadRoot][Nimbus.Builder.withDownloadRoot] is the one line worth copying
+ * into anything that takes its file list from a server: without it the only check
+ * on a destination is that it holds no `..`, so a path naming the app's own
+ * database would be accepted and written to.
  */
 fun buildNimbusApi(
     context: android.content.Context,
@@ -25,6 +31,7 @@ fun buildNimbusApi(
 ): NimbusAPI = Nimbus.Builder()
     .withAndroidContext(context)
     .withNimbusDownloadPort(KtorDownloadAdapter(httpClient))
+    .withDownloadRoot(File(context.filesDir, "downloads").absolutePath)
     .withConcurrencyLimit(3)
     .withAutoStart(true)
     .withContentDigest(DigestAlgorithm.SHA256)

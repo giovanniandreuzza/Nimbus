@@ -30,12 +30,14 @@ nimbus/src/commonMain/kotlin/…nimbus/
     NimbusAPI.kt                     ← public interface (all suspend, KResult returns)
     NimbusError.kt                   ← single public sealed error type
     NimbusLogEvent.kt                ← NimbusLogEvent sealed class + NimbusLogger fun interface
-    Checksum.kt                      ← public Checksum + DigestAlgorithm
+    Checksum.kt                      ← public Checksum (internal ctor, use `of`) + DigestAlgorithm
+    RetryPolicy.kt                   ← public retry shape; two instances: Transport, AutoRetry
   core/
     application/DownloadService.kt   ← implements NimbusAPI; all business logic lives here
     application/NimbusErrorMappers.kt ← internal extension functions mapping internal errors → NimbusError
     application/dtos/DownloadTaskDTO.kt
-    application/errors/              ← internal error types (DownloadError, GetFileSizeError, …)
+    application/errors/              ← internal error types (DownloadError, GetFileSizeError,
+                                       TransitionFailure, …)
     application/services/DownloadProgressService.kt
     domain/entities/DownloadTask.kt  ← aggregate root; owns state transitions
     domain/states/DownloadState.kt   ← sealed: Enqueued / Downloading / Paused / Failed / Finished
@@ -45,22 +47,28 @@ nimbus/src/commonMain/kotlin/…nimbus/
       StoragePort.kt                 ←   size/create/delete/usableSpaceBytes (impl: StorageAdapter)
       StoragePortError.kt            ←   core-side storage error family + CreateOutcome/DeleteOutcome
       ContentDigestPort.kt           ←   digest accumulation (impl: ContentDigestAdapter)
+      ClockPort.kt                   ←   wall clock (impl: SystemClock); testable timestamps
+      RemoteFileInfo.kt              ←   what a transport can say before transferring: size + validator
       DownloadTaskRepository.kt, DownloadProgressCallback.kt, IdProviderPort.kt
   infrastructure/
     ports/DownloadAdapter.kt         ← HTTP download execution, semaphore concurrency, retry
     ports/StorageAdapter.kt          ← implements StoragePort over NimbusStoragePort
     ports/ContentDigestAdapter.kt    ← implements ContentDigestPort over ContentDigest
     ports/IdProviderAdapter.kt       ← SHA-256(url) → stable task ID
-    digest/ContentDigest.kt          ← streaming digest accumulator
+    digest/ContentDigest.kt          ← streaming digest accumulator; counts what it consumed
+    time/SystemClock.kt              ← expect/actual wall clock per platform
     repositories/DownloadRepository.kt ← in-memory (Mutex-guarded) + ProtoBuf disk store
-    plugins/ports/download/NimbusDownloadPort.kt  ← public interface for HTTP client
+    plugins/ports/download/NimbusDownloadPort.kt  ← public transport interface + RemoteFile
     plugins/ports/storage/NimbusStoragePort.kt    ← public interface for file I/O
     plugins/adapters/storage/FileSystemNimbusStorageAdapter.kt  ← KMP-native impl
     plugins/adapters/storage/NimbusFileSystem.kt  ← internal seam over SystemFileSystem (testability)
     plugins/adapters/storage/UsableSpace.kt       ← expect/actual for platform usable-space query
   di/Module.kt                       ← wires all internal components together
+  di/AutoRetryScheduler.kt           ← the second retry loop: back-off after a task has Failed
   frameworks/store/StoreManager.kt   ← generic ProtoBuf persistence layer
-  shared/utils/                      ← FlowUtils (takeUntil), DownloadUtils (progress calc)
+  shared/utils/                      ← FlowUtils (takeUntil), DownloadUtils (progress calc),
+                                       RetryDelay (back-off arithmetic), PathUtils (normalise,
+                                       containment)
 
 nimbus/src/commonTest/kotlin/…nimbus/   ← runs on JVM, iOS and Android host
   testing/Fakes.kt                   ← fake ports (no filesystem, no network)
@@ -69,7 +77,13 @@ nimbus/src/commonTest/kotlin/…nimbus/   ← runs on JVM, iOS and Android host
 nimbus/src/jvmTest/kotlin/…nimbus/      ← only what is genuinely platform-bound
   ArchitectureTest.kt                ← source scan: no core/ import of infrastructure
   FileSystemNimbusStorageAdapterTest.kt, ContentDigestResumeTest.kt,
-  DownloadRepository{Observability,Persistence}Test.kt, DownloadStoreWriteAmplificationTest.kt
+  DownloadRepository{Observability,Persistence}Test.kt, DownloadStoreWriteAmplificationTest.kt,
+  DownloadServiceInitRetryTest.kt,
+  SlowLinkNotStalledTest.kt          ← a slow link has to wait *inside a read*, and
+                                       RawSource.readAtMostTo is not suspending: the only way to
+                                       model it is to block a thread, and a virtual clock would
+                                       report the wait as instant and prove nothing
+  RepositoryConcurrencyTest.kt       ← real threads against the transition lock
 
 nimbus-ktor/src/commonMain/kotlin/…ktor/
   KtorDownloadAdapter.kt             ← NimbusDownloadPort backed by Ktor HttpClient
@@ -86,14 +100,16 @@ sample_android/                      ← Android demo app (Koin DI, KtorDownload
   `TemporaryDownloadErrorCause`, `PermanentDownloadErrorCause`, `GetFileSizeError`,
   `TemporaryGetFileSizeErrorCause`, `PermanentGetFileSizeErrorCause`, `DownloadTaskDTO`,
   `NimbusDownloadPort`, `NimbusStoragePort`, `NimbusLogger`, `NimbusLogEvent`,
-  `Checksum`, `DigestAlgorithm`).
+  `Checksum`, `DigestAlgorithm`, `RetryPolicy`, `RemoteFile`).
   Everything else is `internal`.
 - **`DownloadService`** is the single application service. Do not split it into use cases.
 - **`DownloadTask`** owns all state-transition logic. Call `.start()`, `.pause()`, `.resume()`,
   `.fail()`, `.finish()`, `.cancel()`, `.resetToEnqueued()`, `.resetFromFailedToEnqueued()`,
   `.updateExpectedFileSize()` on the domain entity — never mutate state directly.
 - **`DownloadRepository`** is the only repository class. All map accesses must be inside
-  `mutex.withLock {}`.  `observeDownloadTask` is `suspend` so it can use the mutex.
+  `mutex.withLock {}`, and so must every mutation of a `DownloadTask`: callers go through
+  `transitionDownloadTask` (mutate, publish, persist) or `readDownloadTask` (snapshot), and the
+  entity itself never leaves the repository.  `observeDownloadTask` is `suspend` so it can use the mutex.
   The hot path publishes a monotonic `revision` counter and nothing else — never a copy of
   the task map. `DownloadTask` is an `Entity` whose `equals` is identity on the id, so a
   `StateFlow` holding tasks conflates every state change away; and copying the map on each
@@ -162,7 +178,7 @@ sample_android/                      ← Android demo app (Koin DI, KtorDownload
 | A failed coalesced flush is reported as `NimbusLogEvent.StoreFlushFailed`           | The flush runs in the background, so its caller is already gone and there is no `KResult` to return it in. A terminal save reports to the caller and must *not* also log |
 | `DownloadRepository` publishes a revision counter, not a copy of the task map       | `DownloadTask` is an `Entity` whose `equals` is identity on the id, so a map of the same tasks in new states compares equal and `StateFlow` conflates the emission away — `observeAllDownloads()` emitted only additions and removals |
 | Resume offset re-read from the file at the start of every attempt, never carried in a variable | The variable is only assigned when a transfer returns, so an attempt that died mid-body leaves it stale while its bytes are already on disk — the next attempt then appends the same stretch twice |
-| Digest primed from disk at the start of every streaming attempt                     | The resume offset comes from the file's length, so a session-only digest would hash the tail alone after a restart and produce a plausible wrong value  |
+| The digest is kept equal to the bytes on disk, and re-primed only when it is not    | The resume offset comes from the file's length, so a session-only digest would hash the tail alone after a restart and produce a plausible wrong value. `ContentDigest.consumedBytes` is compared with the partial's length: they disagree on the first attempt, after a restart, after a 416 truncation and after an attempt that died with bytes buffered but unwritten — and agree for a link that merely dropped, where re-reading cost O(partial × attempts) |
 | `schemaVersion` defaults to a value no build writes                                 | ProtoBuf omits values equal to their default, so a stamp defaulting to "current" never reaches the disk and every old store claims to be current        |
 | `TemporaryDownloadErrorCause.ChecksumMismatch` is temporary, never permanent        | A mismatch describes the transfer, not the file at the origin; marking it permanent sends the caller back to delete-and-refetch                          |
 | Core validates that a url has a scheme, never which scheme it is                    | Requiring http/https put a transport decision in the layer whose design rule is that it knows nothing about transports, and made `NimbusDownloadPort` unimplementable for ftp or a local share however capable the adapter was. The syntax check stays because the url is also the task identity |
@@ -173,6 +189,43 @@ sample_android/                      ← Android demo app (Koin DI, KtorDownload
 | `checksum()` with no algorithm returns `ContentDigestDisabled`, not `UnexpectedError` | A foreseeable configuration mistake the caller can fix should not arrive in the branch they wrote for failures they could not foresee |
 | A refused write asks the volume for free space rather than reading the exception text | The message is the platform's to phrase; and what is left to write comes from the file, since the byte counter advances before the buffered sink flushes |
 | An `expectedChecksum` no configured digest can produce is refused before a task exists | With the digest off the comparison is skipped and the download reports finished, so a caller who asked for a verification is told nothing — and `checksum()` already answers `ContentDigestDisabled` for the same configuration. A checksum naming another algorithm compares unequal forever: `ChecksumMismatch` is temporary, so the file is refetched on every pass for a condition no retry changes |
+| `NimbusError.causeCode` unwraps the two causes that only carry another               | `DownloadFailed` and `GetFileSizeFailed` exist to nest a more specific cause, and matching all three levels is a `when` inside a `when` inside a `when` — which is why the repo's own reference consumer carried a thirty-line one that stopped compiling. A new *wrapping* cause needs a branch here, the way a new download cause needs one in `DownloadStateStoreMappers` |
+| A cause's own `cause` is not followed by `causeCode`                                | For `StorageError` that is the platform's I/O detail, and `io_error` is not a thing a caller branches on |
+| A complete file is hashed inside the download job, under the semaphore              | With a digest configured, "already complete" is not a check but a full read: two gigabytes off eMMC is twenty seconds of the caller suspended inside what looks like a start, and on a loop walking a manifest it is twenty seconds per asset with nothing else moving |
+| `fileName` is a label and defaults to the last path segment                         | It is validated, stored and reported, and no file operation uses it — required, it only made integrators wonder whether `filePath` was a directory |
+| `withDownloadRoot` is opt-in, and the check inside it is lexical                     | A library cannot know where an app keeps its files, so it cannot default to a root; but on a kiosk the destination comes from a manifest, and the only check it faced was "no `..`". Normalise and compare as strings: a symlink under the root cannot be seen before the file exists, and the case that actually happens is a path naming somewhere it should not |
+| `Checksum`'s constructor is internal; `of` validates                                | It accepted any string, so `Checksum(SHA256, "abc")` compiled and mismatched on every transfer — for ever, since a mismatch is temporary and retried. `@ConsistentCopyVisibility` keeps `copy` from being the same hole |
+| Builder options are validated where they are written                                | A buffer of zero was a loop that never advanced and a concurrency of zero was a `Semaphore` exception naming neither the option nor the value, both hours after the build that got it wrong |
+| The resume validator is stored with the task and sent as `If-Range`                 | The size alone cannot tell a resumed file from a replaced one of the same length — a re-encode at the same bitrate, a regenerated manifest — and appending the tail of the new file to the prefix of the old produces exactly the right length and bytes that were never a file. `RemoteFileChanged` is temporary and recovers the way a 416 does |
+| A timestamp from before the field could exist is the absence of a date, not an old one | The boards this runs on often have no battery-backed clock: they come up at the epoch and learn the time when the network appears, so a night's downloads can all be stamped 1970 and the first `pruneFinished(30 days)` would delete every one. Stamps below 2025-01-01 are repaired at load, once the clock itself is believable; if it is not, nothing is touched and the next boot tries again |
+| `pruneFinished` never reads a future finish time as an age                          | That is a clock that moved backwards — a device correcting a guess, or an operator. Deleting a file over arithmetic that came out negative is not a decision anyone made |
+| A migrated store is stamped with the time of the migration, not with zero           | The timestamps decode as zero for a pre-2.5.0 blob, which reads as 1970, and the first `pruneFinished` would take that as older than anything and delete every file the device already had. The stamp says what is known: these tasks existed by the time this build first ran |
+| `resetToEnqueued`/`resetFromFailedToEnqueued` clear `finishedAtEpochMs`             | A task waiting to be downloaded that still carries a finish time is a task `pruneFinished` will delete |
+| Wall-clock time is a port (`ClockPort`), not a call to the platform                 | The timestamps end up on disk and are read back weeks later by `pruneFinished`; a test that cannot move time could only test pruning by waiting through it |
+| `enqueueDownload` asks an index, not every task                                     | It walked the whole catalogue for each enqueue, after copying the map outside the lock: a manifest of two thousand assets cost two million comparisons and two thousand copies, on a device whose catalogue only grows. A path is fixed for the life of a task, so the index is maintained where a task appears and disappears — including the load, or a restart would report every path as free |
+| `NimbusLogEvent.Unexpected` carries the throwable itself                            | Every other event carries a `KError`: a code and a message, which reaches a monitoring backend as "null" or "Index 3 out of bounds" with nothing saying where. It is in addition to the typed failure, never instead of it |
+| Admission and shutdown share one lock; `close()` drains, bounded at 5 s             | Reading an `isClosed` flag and then proceeding is not the same as being admitted: a call that read it a moment before `close` set it carried on past the flush and the scope cancellation. The drain is bounded because one of those calls may be waiting on a server that never answers, and a shutdown that waits for a dead socket is a process the system kills instead |
+| The auto-retry chain is a loop, and continues on a *retryable* preparation failure  | Bringing a task back re-asks the origin, so it fails for the same transient reasons a download does; stopping there left a task `Failed` for good on one timed-out HEAD. A loop rather than a call that repeats itself, because an unbounded policy against a dead backend would otherwise stack a suspended frame per attempt for days |
+| A permanent failure still reaches the auto-retry loop                               | Several permanent causes describe the local state — `LocalFileOversized`, `BodyLongerThanDeclared`, `InconsistentRangeResponse` — and the reset the loop performs is what clears them. One that really is permanent costs one round-trip and stops, because the preparation gets the same answer |
+| A digest restored from the store is validated, and dropped when impossible          | Before 2.5.0 `Checksum`'s constructor took any string, so a store can hold `"abc"` where a digest belongs; restored, it mismatches on every transfer for ever. A check that could never pass is not a check being skipped |
+| `close()` stops, commits, then releases — and returns `Unit`                        | Each step decides what the next sees: nothing may still be writing while the store is committed, and the commit still needs a scope to run in. It returns nothing because there is nothing a caller can do with a failure while the process is going away, and a `close` that can fail is one people wrap in a `try` and get wrong |
+| `close()` cancels the coroutine scope only when Nimbus made it                      | A scope from `withDownloadScope` belongs to the caller and usually runs more than downloads. The builder tracks which one it is |
+| A call after `close()` fails with `Closed` rather than doing nothing                | The scope is gone, so a download would be registered and never run: a call that reports success and silently does nothing, discovered weeks later as a file that never arrived |
+| Every state transition happens inside `DownloadTaskRepository.transitionDownloadTask`| A `DownloadTask` is a mutable entity shared by the service, which serialises per task, and the progress callbacks, which run on the download's coroutine and never took that lock. Read-mutate-save as three steps left a window on every transition; under one lock there is none, and on Kotlin/Native there is no unsynchronised write either. `readDownloadTask` is the same for reads, so a DTO snapshot is taken under the lock instead of from a live entity — which is also why the port no longer hands the entity out at all |
+| `pauseDownload` stops the transfer *before* changing the state                      | Progress callbacks run on the download's own coroutine, so a tick landing after `pause()` wrote `Downloading` back over it and persisted a task as downloading with no job behind it. `stopDownload` joins the job, so after it returns nothing else can touch the task. The state is still read first, only so a task with nothing running is refused without being stopped |
+| `retryFailedDownload` applies the new size and the reset in one transition          | As two they were two windows: a failure landing from a job that had already deregistered itself could write `Failed` back between them, and the reset the method exists to perform was the change that got lost |
+| A flow watching one download ends on a permanent failure, `autoStart` or not        | Keeping it open for a failure nothing will retry suspends the caller forever — a 404 stopped a reconciliation loop on the first asset the backend had removed. A *capped* auto-retry running out is the case still left open; `AutoRetryExhausted` reports it |
+| The write loop stops at the declared size, and says the server contradicted itself  | The size drove the progress bar, the headroom check and the final integrity check, and none of the writing: an origin serving an HTML error page for a 200 MB asset, or a file swapped between the HEAD and the GET, filled the volume and was only caught afterwards. `BodyLongerThanDeclared` is permanent because the next attempt asks the same question, and each one would cost the whole oversized body again |
+| A new `PermanentDownloadErrorCause` carrying a number needs a way back out of the message | The store flattens a cause to its code and message, so `BodyLongerThanDeclared(declaredBytes)` parses the number back the way `ServerError` parses its status code. Both have a round-trip test; without one the value returns as zero and only a log reader notices |
+| One `RetryPolicy` type, two instances: transport and auto-retry                      | The two loops answer different questions on different scales — seconds inside a download that stays `Downloading`, minutes after it has failed — and had drifted into three unrelated shapes: linear waits with no ceiling in one, no wait at all in the other, and an unbounded 416 loop in between |
+| Auto-retry is unbounded by default, and backs off to five minutes                   | On a kiosk, giving up permanently is what a technician's visit looks like; the fix for a flood is the wait, not the surrender. A cap is available and reports `AutoRetryExhausted` when it is reached |
+| Jitter is ±20 % and is not configurable                                            | A value a caller could set to zero lets a fleet that lost the same backend retry in lockstep. Nobody tunes jitter; they only switch it off by accident |
+| The auto-retry count resets when a download for that url finishes                   | Otherwise a device up for months meets its next transient failure already at the longest wait. In memory on purpose: a restart has lost whatever it knew about why it was failing |
+| A 416 truncates and restarts once, then counts like any other temporary failure     | The retry after a truncation asks from offset 0 with no `Range` header at all, so a server that answers that with a 416 will answer the next one the same way. Measured: 500 consecutive 416s were 500 truncations at full speed, CPU pinned, task still `Downloading` |
+| A transfer that delivers nothing for `stallTimeoutMs` is abandoned and retried       | Every other failure announces itself; a stall does not. The response stays open, the task stays `Downloading`, the permit stays taken — at the default concurrency of one that is the whole queue — and an unattended device stops updating while reporting health. Progress is measured, never elapsed time, so a transfer that takes hours is untouched |
+| The stall guard names the condition; the transport's own deadline ends it           | Cancelling unwinds a port that suspends while it waits. Ktor's `asSource()` waits inside `runBlocking`, so the read is not a suspension point and the cancellation stays pending — `KtorDownloadAdapter` therefore sets a socket timeout on every request rather than trusting the client's config, 30 s against the library's 60 s so the socket lets go first |
+| `getFileSizeToDownload` carries the same deadline as a transfer                     | It runs on the caller's coroutine, so a server that answers nothing suspends whoever asked to enqueue — on a device reconciling a manifest, the loop that keeps the whole catalogue current |
+| A file already at full length ends the retry loop before another request            | Reached when an attempt delivered every byte and then failed on its way out. Resuming from the end of a complete file invites a 416, and a 416 makes the adapter truncate everything the transfer just paid for |
 | A stale `Finished` task hands its expectation to the download that replaces it      | `ensureDownloaded` removes the task and enqueues a new one from its arguments, so a caller who passed none lost an expectation the store was holding and the replacement transferred unverified. Carried only when this build could honour it, so a leftover from a build with a digest does not wall off one without |
 | `startDownload`/`resumeDownload` re-check the stored expectation                    | A task outlives the build that created it: a store written while a digest was configured is read by one where it is not, and the enqueue-time check never ran there |
 | The transfer loop leaves on a zero-length read instead of continuing                | `exhausted()` already said bytes were waiting, so a read returning nothing spins forever. Leaving ends the attempt short of the declared length, which the size check reports as `FileIntegrityMismatch` — temporary, and retried |
@@ -187,6 +240,12 @@ These are used internally during boot (`loadDownloadTasks`) and retry flows:
 | `resetToEnqueued()`                      | `Finished`                     | Boot recovery when finished file is missing from disk                 |
 | `resetFromFailedToEnqueued(): Boolean`   | `Failed`                       | Used by `retryFailedDownload`; returns `false` if state wasn't Failed |
 | `updateExpectedFileSize(bytes): Boolean` | `Enqueued`, `Paused`, `Failed` | Updates size after re-fetching HEAD on retry                          |
+| `updateExpectedChecksum(c): Boolean`     | anything but `Finished`        | `ensureDownloaded` carrying a caller's expectation into an existing task |
+| `updateResumeValidator(v)`               | any                            | Adopts what the origin now says identifies the file                   |
+
+Both resets also clear `finishedAtEpochMs` and `checksum`: a task waiting to be downloaded that
+still carries a finish time is one `pruneFinished` will delete, and a checksum left behind
+describes a file that is missing or wrong — and would be reported for whatever arrives next.
 
 ## DownloadError hierarchy (internal — but reachable via DownloadState.Failed and NimbusError cause chains)
 
@@ -205,6 +264,7 @@ These are used internally during boot (`loadDownloadTasks`) and retry flows:
 | `FileIntegrityMismatch` | Downloaded size ≠ expected size; will retry                                    |
 | `FileNotAccessible`     | Local file could not be opened for writing; will retry                         |
 | `TruncateRace`          | Could not recreate file after 416 truncation; will retry                       |
+| `RemoteFileChanged`     | A conditional resume was answered with the whole file: the origin no longer has the file the partial came from. Discard and refetch |
 
 **`PermanentDownloadErrorCause` variants:**
 
@@ -214,6 +274,7 @@ These are used internally during boot (`loadDownloadTasks`) and retry flows:
 | `ClientError(statusCode)`          | HTTP 4xx (excluding 404) — non-recoverable client error           |
 | `InconsistentRangeResponse(reason)`| Server returned 200 with body when 206 was expected on resume     |
 | `LocalFileOversized`               | Local file is larger than the expected download size              |
+| `BodyLongerThanDeclared(declared)` | The body kept arriving past the declared size; the partial is discarded |
 | `InsufficientDiskSpace(cause)`     | The volume ran out of room while writing; detail in the cause     |
 | `StorageError(cause)`              | I/O or permission failure on local storage                        |
 | `UnexpectedError(cause?)`          | Unhandled exception                                               |

@@ -6,6 +6,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailu
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.MoveFileError
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
 import io.github.giovanniandreuzza.nimbus.testing.RecordingLogger
 import kotlinx.coroutines.CoroutineScope
@@ -112,6 +113,7 @@ class StoreFlushFailureTest {
                 storePath = STORE_PATH,
                 dispatcher = dispatcher,
                 nimbusStoragePort = storage,
+                clock = FakeClock(),
                 logger = logger,
                 storeScope = CoroutineScope(SupervisorJob() + dispatcher)
             )

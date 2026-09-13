@@ -6,16 +6,21 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
+import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
 import io.github.giovanniandreuzza.nimbus.core.application.errors.FailedToLoadDownloadTasks
+import io.github.giovanniandreuzza.nimbus.core.application.errors.TransitionFailure
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
+import io.github.giovanniandreuzza.nimbus.core.ports.ClockPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.frameworks.store.StoreManager
 import io.github.giovanniandreuzza.nimbus.frameworks.store.errors.InitStoreError
 import io.github.giovanniandreuzza.nimbus.frameworks.store.errors.StoreError
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadStateStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadStore
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadTaskStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
 import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.mappers.DownloadTaskStoreMappers.toDomains
 import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.mappers.DownloadTaskStoreMappers.toStore
@@ -58,6 +63,7 @@ internal class DownloadRepository(
     storePath: String,
     dispatcher: CoroutineDispatcher,
     private val nimbusStoragePort: NimbusStoragePort,
+    private val clock: ClockPort,
     private val logger: NimbusLogger? = null,
     storeScope: CoroutineScope = CoroutineScope(SupervisorJob() + dispatcher),
     coalesceWindowMs: Long = DEFAULT_COALESCE_WINDOW_MS
@@ -66,6 +72,32 @@ internal class DownloadRepository(
     private val mutex = Mutex()
     private val tasks = mutableMapOf<DownloadId, DownloadTask>()
     private val stateFlows = mutableMapOf<DownloadId, MutableStateFlow<DownloadState>>()
+
+    /**
+     * Destinations that already belong to a task, so `enqueueDownload` can ask in one lookup.
+     *
+     * It used to walk every task for each enqueue — after copying the whole map, outside the
+     * lock. Fine for a handful and quadratic for a manifest: two thousand assets loaded at
+     * boot cost two million comparisons and two thousand map copies, on a device whose
+     * catalogue only ever grows. A path is fixed for the life of a task, so an index of them
+     * needs maintaining in exactly the two places a task appears and disappears.
+     *
+     * Counted rather than a set, so that it answers what the scan answered. `enqueueDownload`
+     * refuses a path that is taken, so two tasks cannot normally share one — but a store can
+     * be older than that rule, or edited, or corrupt, and with a set the first of the two to
+     * be deleted would free a path the other is still writing to. The next enqueue would then
+     * be handed a destination that already belongs to something.
+     */
+    private val filePathUsers = mutableMapOf<String, Int>()
+
+    private fun claimFilePath(path: String) {
+        filePathUsers[path] = (filePathUsers[path] ?: 0) + 1
+    }
+
+    private fun releaseFilePath(path: String) {
+        val remaining = (filePathUsers[path] ?: 0) - 1
+        if (remaining <= 0) filePathUsers.remove(path) else filePathUsers[path] = remaining
+    }
 
     /**
      * Monotonic counter bumped on every mutation, and the only thing the hot path pushes.
@@ -87,6 +119,7 @@ internal class DownloadRepository(
         storePath = storePath,
         dispatcher = dispatcher,
         nimbusStoragePort = nimbusStoragePort,
+        clock = clock,
         scope = storeScope,
         coalesceWindowMs = coalesceWindowMs,
         onReset = { reason -> logger?.log(NimbusLogEvent.StoreReset(reason)) },
@@ -112,7 +145,7 @@ internal class DownloadRepository(
                         // Crash/restart recovery: Downloading tasks that were never
                         // paused are reset to Paused so they can be resumed cleanly.
                         task.pause()
-                        diskStore.publish(task)
+                        diskStore.publish(task.toStore())
                         recovered = true
                     }
 
@@ -124,13 +157,14 @@ internal class DownloadRepository(
                             .let { result -> if (result is Success) result.value else -1L }
                         if (actualSize != task.fileSize.value) {
                             task.resetToEnqueued()
-                            diskStore.publish(task)
+                            diskStore.publish(task.toStore())
                             recovered = true
                         }
                     }
                 }
                 tasks[id] = task
                 stateFlows[id] = MutableStateFlow(task.state)
+                claimFilePath(task.filePath.value)
             }
             revision.value++
         }
@@ -149,16 +183,23 @@ internal class DownloadRepository(
      * moments when a caller knows the process may not survive long enough for the next
      * coalesced commit — an appliance being backgrounded or told to shut down.
      */
-    internal suspend fun flushPendingState(): KResult<Unit, KError> = diskStore.flush()
+    override suspend fun flushPendingState(): KResult<Unit, KError> = diskStore.flush()
 
-    override suspend fun getDownloadTask(id: DownloadId): KResult<DownloadTask, DownloadTaskNotFound> {
-        val task = mutex.withLock { tasks[id] }
-        return task?.let { Success(it) } ?: Failure(DownloadTaskNotFound)
+    override suspend fun getAllDownloadTasks(): List<DownloadTaskDTO> = mutex.withLock {
+        tasks.values.map { DownloadTaskDTO.fromDomain(it) }
     }
 
-    override suspend fun getAllDownloadTask(): Map<DownloadId, DownloadTask> {
-        return mutex.withLock { tasks.toMap() }
+    override suspend fun isFilePathInUse(filePath: String): Boolean = mutex.withLock {
+        filePathUsers.containsKey(filePath)
     }
+
+    /**
+     * The entities themselves, for the tests that exercise this class directly. Not on the
+     * port: everything else sees snapshots, which is what keeps the entity's mutable state
+     * inside this lock.
+     */
+    internal suspend fun allTasksForTest(): Map<DownloadId, DownloadTask> =
+        mutex.withLock { tasks.toMap() }
 
     override suspend fun observeDownloadTask(id: DownloadId): KResult<Flow<DownloadState>, DownloadTaskNotFound> {
         val flow = mutex.withLock { stateFlows[id] }
@@ -171,20 +212,29 @@ internal class DownloadRepository(
      * rendered anyway, so the cost of a snapshot is bounded by how fast it is consumed
      * rather than by how fast downloads report progress.
      */
-    override fun observeAllDownloadTasks(): Flow<List<DownloadTask>> =
-        revision.map { getAllDownloadTask().values.toList() }.conflate()
+    override fun observeAllDownloadTasks(): Flow<List<DownloadTaskDTO>> =
+        revision.map { getAllDownloadTasks() }.conflate()
 
     override suspend fun saveDownloadTask(downloadTask: DownloadTask): KResult<Unit, KError> {
-        mutex.withLock {
-            tasks[downloadTask.entityId.id] = downloadTask
+        // The snapshot is taken inside the lock and the write happens outside it. A
+        // `DownloadTask` is mutable and shared, so serialising it out here would read fields
+        // another transition may be changing — and what reached the disk would be neither
+        // state in full.
+        val snapshot = mutex.withLock {
+            // Saving the same task twice — a state change on one that already exists — must
+            // not count its path twice, or nothing would ever release it.
+            if (tasks.put(downloadTask.entityId.id, downloadTask) == null) {
+                claimFilePath(downloadTask.filePath.value)
+            }
             stateFlows[downloadTask.entityId.id]?.update { downloadTask.state }
                 ?: run {
                     stateFlows[downloadTask.entityId.id] = MutableStateFlow(downloadTask.state)
                 }
             revision.value++
+            Snapshot(downloadTask.toStore(), downloadTask.state.mustBeDurable())
         }
 
-        diskStore.save(downloadTask, durable = downloadTask.state.mustBeDurable())
+        diskStore.save(snapshot.task, durable = snapshot.durable)
             .onFailure { return Failure(it) }
 
         return Success(Unit)
@@ -215,18 +265,50 @@ internal class DownloadRepository(
         is DownloadState.Paused -> false
     }
 
-    override suspend fun updateDownloadProgress(downloadTask: DownloadTask): KResult<Unit, KError> {
-        mutex.withLock {
-            tasks[downloadTask.entityId.id] = downloadTask
-            stateFlows[downloadTask.entityId.id]?.update { downloadTask.state }
-            revision.value++
-        }
-        return Success(Unit)
+    override suspend fun <T : Any> readDownloadTask(
+        id: DownloadId,
+        read: (DownloadTask) -> T?
+    ): KResult<T, TransitionFailure> = mutex.withLock {
+        val task = tasks[id] ?: return Failure(TransitionFailure.NotFound)
+        val value = read(task) ?: return Failure(TransitionFailure.Refused(task.state))
+        Success(value)
     }
+
+    override suspend fun <T : Any> transitionDownloadTask(
+        id: DownloadId,
+        persist: Boolean,
+        transition: (DownloadTask) -> T?
+    ): KResult<T, TransitionFailure> {
+        // Everything the entity touches happens here, inside the lock: the read, the
+        // transition, and whatever the caller needs to take away from it.
+        val applied = mutex.withLock {
+            val task = tasks[id] ?: return Failure(TransitionFailure.NotFound)
+            val value = transition(task)
+                ?: return Failure(TransitionFailure.Refused(task.state))
+
+            stateFlows[id]?.update { task.state } ?: run {
+                stateFlows[id] = MutableStateFlow(task.state)
+            }
+            revision.value++
+            Applied(Snapshot(task.toStore(), task.state.mustBeDurable()), value)
+        }
+
+        if (!persist) return Success(applied.value)
+
+        diskStore.save(applied.snapshot.task, durable = applied.snapshot.durable)
+            .onFailure { return Failure(TransitionFailure.NotPersisted(it)) }
+
+        return Success(applied.value)
+    }
+
+    /** A task as it was under the lock, ready to be written without reading the entity again. */
+    private class Snapshot(val task: DownloadTaskStore, val durable: Boolean)
+
+    private class Applied<T>(val snapshot: Snapshot, val value: T)
 
     override suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, KError> {
         mutex.withLock {
-            tasks.remove(id)
+            tasks.remove(id)?.let { releaseFilePath(it.filePath.value) }
             stateFlows.remove(id)
             revision.value++
         }
@@ -244,6 +326,7 @@ internal class DownloadRepository(
         storePath: String,
         dispatcher: CoroutineDispatcher,
         nimbusStoragePort: NimbusStoragePort,
+        private val clock: ClockPort,
         scope: CoroutineScope,
         coalesceWindowMs: Long,
         onReset: suspend (reason: String) -> Unit,
@@ -294,10 +377,71 @@ internal class DownloadRepository(
                 // it so the migration is paid once rather than on every boot; the tasks
                 // themselves are kept, because discarding them would cost the device a
                 // re-download of everything it had already fetched.
-                update { it.copy(schemaVersion = DownloadStore.SCHEMA_VERSION) }
+                //
+                // The timestamps are the one field that cannot be left at its decoded value:
+                // zero reads as 1970, and the first `pruneFinished` would take that as
+                // "older than anything you could ask for" and delete every file the device
+                // already had. Stamping them with the time of the migration says what is
+                // actually known — that these tasks existed by the time this build first ran.
+                val now = clock.nowEpochMs()
+                update { store ->
+                    store.copy(
+                        schemaVersion = DownloadStore.SCHEMA_VERSION,
+                        downloads = store.downloads.mapValues { (_, task) -> task.stamped(now) }
+                    )
+                }
             }
 
+            repairStampsFromAnUnsetClock()
+
             return result
+        }
+
+        /**
+         * Gives a task from an older store the timestamps it never had.
+         *
+         * Only where they are missing: a store already carrying them is left exactly as it is,
+         * so a second migration — or a build that reads a v3 store — cannot move a date.
+         */
+        private fun DownloadTaskStore.needsStamping(): Boolean =
+            createdAtEpochMs < EARLIEST_PLAUSIBLE_STAMP
+
+        private fun DownloadTaskStore.stamped(now: Long): DownloadTaskStore {
+            if (!needsStamping()) return this
+            return copy(
+                createdAtEpochMs = now,
+                finishedAtEpochMs = now.takeIf { state is DownloadStateStore.Finished }
+            )
+        }
+
+        /**
+         * Restamps tasks recorded while the device did not know what time it was.
+         *
+         * The boards this library runs on often have no battery-backed clock: they come up at
+         * the epoch, or at some build date, and only learn the real time when the network
+         * appears. Anything finished in that window carries a timestamp from 1970 — and the
+         * first `pruneFinished(30 days)` after the clock syncs would read that as ancient and
+         * delete every file the device had just spent a night fetching.
+         *
+         * So a stamp from before this field could plausibly have been written is not a date,
+         * it is the absence of one, and it is replaced with the first moment the clock is
+         * believable. That is what the v2 migration already does for tasks that predate the
+         * field; this is the same repair for the same reason, applied when the reason is a
+         * clock rather than a schema.
+         *
+         * If the clock is *still* not believable, nothing is touched: stamping an unset clock
+         * with an unset clock records nothing, and the next boot gets another chance.
+         */
+        private suspend fun repairStampsFromAnUnsetClock() {
+            val now = clock.nowEpochMs()
+            if (now < EARLIEST_PLAUSIBLE_STAMP) return
+            if (data?.downloads?.values?.none { it.needsStamping() } != false) return
+
+            update { store ->
+                store.copy(
+                    downloads = store.downloads.mapValues { (_, task) -> task.stamped(now) }
+                )
+            }
         }
 
         fun getAll(): Map<DownloadId, DownloadTask> =
@@ -307,8 +451,7 @@ internal class DownloadRepository(
          * @param durable commit before returning, rather than letting the change ride along
          * with the next coalesced commit.
          */
-        suspend fun save(task: DownloadTask, durable: Boolean): KResult<Unit, StoreError> {
-            val taskStore = task.toStore()
+        suspend fun save(taskStore: DownloadTaskStore, durable: Boolean): KResult<Unit, StoreError> {
             val transform: (DownloadStore) -> DownloadStore = {
                 it.copy(downloads = it.downloads + (taskStore.id to taskStore))
             }
@@ -320,9 +463,8 @@ internal class DownloadRepository(
             return Success(Unit)
         }
 
-        /** Publishes [task] in memory without committing and without asking for a commit. */
-        suspend fun publish(task: DownloadTask) {
-            val taskStore = task.toStore()
+        /** Publishes [taskStore] in memory without committing and without asking for a commit. */
+        suspend fun publish(taskStore: DownloadTaskStore) {
             mutate { it.copy(downloads = it.downloads + (taskStore.id to taskStore)) }
         }
 
@@ -339,5 +481,13 @@ internal class DownloadRepository(
          * within the time it takes a person to notice anything happened.
          */
         const val DEFAULT_COALESCE_WINDOW_MS: Long = 250L
+
+        /**
+         * The earliest moment a task timestamp can honestly claim: 2025-01-01.
+         *
+         * The fields did not exist before 2.5.0, so anything below this was not written by a
+         * clock that knew the date — it was written by a device that had not been told yet.
+         */
+        const val EARLIEST_PLAUSIBLE_STAMP: Long = 1_735_689_600_000L
     }
 }

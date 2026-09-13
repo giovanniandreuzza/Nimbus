@@ -14,9 +14,12 @@ import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.CreateFileError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.DeleteFileError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
+import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
+import io.github.giovanniandreuzza.nimbus.testing.MidJitter
 import io.github.giovanniandreuzza.nimbus.testing.digestPortFor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -31,6 +34,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /**
  * What happens after HTTP 416.
@@ -126,10 +130,11 @@ class RangeNotSatisfiableTest {
     }
 
     @Test
-    fun `a 416 does not consume the transport retry budget`() = runTest {
-        // Three 416s in a row, against a budget of two ordinary retries. A 416 resets the
-        // attempt counter because it is not a failing transfer — it is a transfer that has
-        // to start from a different offset — so the download still completes.
+    fun `the first 416 does not consume the transport retry budget`() = runTest {
+        // The first one is not a failing transfer — it is a transfer that has to start from a
+        // different offset — so it truncates and restarts with the budget untouched. The two
+        // that follow are budgeted like any other temporary failure (see the test below), and
+        // a budget of two absorbs them, so the download still completes.
         val h = harness(maxRetryAttempts = 2)
         h.storage.write(PATH, CONTENT.copyOf(40))
 
@@ -137,6 +142,72 @@ class RangeNotSatisfiableTest {
 
         assertTrue(h.finished, "expected the download to finish, failures: ${h.failures}")
         assertContentEquals(CONTENT, h.storage.read(PATH))
+    }
+
+    @Test
+    fun `a range refused over and over gives up instead of truncating forever`() = runTest {
+        // Measured before this change: five hundred consecutive 416s were five hundred
+        // truncations, at full speed, with no delay between them and no end — each one a
+        // delete and a create of the file, the CPU pinned, the task still reporting
+        // `Downloading`. The truncation puts the request back at offset 0, which carries no
+        // Range header at all; a server that answers *that* with a 416 will answer the next
+        // one the same way, so treating the second as ordinary is what makes this terminate.
+        val h = harness(maxRetryAttempts = 2)
+        val port = RangeRejectingPort(CONTENT, rejectFirstRequest = true, rejectCount = 500)
+
+        h.run(port)
+
+        val failure = h.failures.lastOrNull()
+            ?: throw AssertionError("a range that is never satisfiable has to be reported")
+        assertTrue(
+            failure is DownloadError.TemporaryError &&
+                    failure.errorCause is TemporaryDownloadErrorCause.RangeNotSatisfiable,
+            "and reported as what it is, got $failure"
+        )
+        assertEquals(
+            4,
+            port.requests,
+            "one truncation, then the budget of two, and nothing more"
+        )
+    }
+
+    @Test
+    fun `a file that changed at the origin is thrown away and fetched again`() = runTest {
+        // The transport reports it the way a 416 is reported, and the recovery is the same:
+        // the local bytes came from a file that no longer exists at that url, so keeping them
+        // would append the tail of one file to the head of another.
+        val h = harness(digestAlgorithm = DigestAlgorithm.SHA256)
+        h.storage.write(PATH, CONTENT.copyOf(40))
+
+        h.run(ChangedFilePort(CONTENT))
+
+        assertTrue(h.finished, "expected the download to finish, failures: ${h.failures}")
+        assertContentEquals(CONTENT, h.storage.read(PATH))
+        assertEquals(
+            CONTENT_SHA256,
+            h.finishedChecksum?.value,
+            "the digest has to describe the file that was actually fetched, not the prefix " +
+                    "that was discarded"
+        )
+    }
+
+    @Test
+    fun `an origin that keeps saying the file changed gives up instead of looping`() = runTest {
+        // Same cap as the 416: the attempt after the truncation asks from offset 0 with no
+        // validator to check, so an origin that answers *that* the same way will answer every
+        // one the same way.
+        val h = harness(maxRetryAttempts = 1)
+        val port = ChangedFilePort(CONTENT, changedForever = true)
+
+        h.run(port)
+
+        val failure = h.failures.lastOrNull() ?: fail("it has to be reported")
+        assertTrue(
+            failure is DownloadError.TemporaryError &&
+                    failure.errorCause is TemporaryDownloadErrorCause.RemoteFileChanged,
+            "got $failure"
+        )
+        assertEquals(3, port.requests, "one truncation, then the budget of one, and no more")
     }
 
     // -- harness -----------------------------------------------------------
@@ -202,8 +273,16 @@ class RangeNotSatisfiableTest {
                 nimbusDownloadPort = port,
                 bufferSize = 16L,
                 notifyEveryBytes = 32L,
-                maxRetryAttempts = maxRetryAttempts,
-                retryBaseDelayMs = 1L,
+                transportRetry = RetryPolicy(
+                    maxAttempts = maxRetryAttempts,
+                    baseDelayMs = 1L,
+                    // Flat rather than exponential: these scenarios are about what is
+                    // retried, not about how long the waiting takes.
+                    maxDelayMs = 1L
+                ),
+                random = MidJitter,
+                // The stall guard has its own test; these scenarios all deliver or fail promptly.
+                stallTimeoutMs = null,
                 digestAlgorithm = digestAlgorithm,
                 contentDigestPort = digestPortFor(storage)
             )
@@ -236,6 +315,35 @@ class RangeNotSatisfiableTest {
  * Answers the first [rejectCount] requests with 416, then serves the content from the
  * offset asked for.
  */
+/** Answers a resume by saying the file is not the one the partial came from. */
+private class ChangedFilePort(
+    private val content: ByteArray,
+    private val changedForever: Boolean = false
+) : NimbusDownloadPort {
+
+    var requests: Int = 0
+        private set
+
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
+        Success(RemoteFile(content.size.toLong(), validator = "\"v2\""))
+
+    override suspend fun downloadFile(
+        fileUrl: String,
+        offset: Long,
+        resumeValidator: String?,
+        onSourceOpened: suspend (Source) -> Unit
+    ): KResult<Unit, DownloadError> {
+        requests++
+        if (changedForever || offset > 0L) {
+            return Failure(
+                DownloadError.TemporaryError(TemporaryDownloadErrorCause.RemoteFileChanged)
+            )
+        }
+        onSourceOpened(Buffer().apply { write(content) })
+        return Success(Unit)
+    }
+}
+
 private class RangeRejectingPort(
     private val content: ByteArray,
     private val rejectFirstRequest: Boolean,
@@ -244,14 +352,19 @@ private class RangeRejectingPort(
 
     private var rejected = 0
 
-    override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> =
-        Success(content.size.toLong())
+    var requests: Int = 0
+        private set
+
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
+        Success(RemoteFile(content.size.toLong()))
 
     override suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
+        resumeValidator: String?,
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError> {
+        requests++
         if (rejectFirstRequest && rejected < rejectCount) {
             rejected++
             // A 416 carries no body, so nothing is written and nothing is opened.
