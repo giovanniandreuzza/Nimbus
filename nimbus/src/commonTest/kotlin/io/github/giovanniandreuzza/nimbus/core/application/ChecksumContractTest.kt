@@ -272,6 +272,8 @@ class ChecksumContractTest {
             minReservedDiskBytes = null,
             logger = RecordingLogger(),
             autoStart = false,
+            // The test scope is the test's to end.
+            ownsDownloadScope = false,
             downloadScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         )
         return Fixture(service, repository, downloadPort)

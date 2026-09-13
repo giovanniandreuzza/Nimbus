@@ -104,6 +104,19 @@ suspend fun ensureDownloaded(fileUrl: String, filePath: String, fileName: String
 //   not found         → enqueues, starts, returns observeDownload flow
 ```
 
+```kotlin
+// Lifecycle
+suspend fun flush(): KResult<Unit, NimbusError>
+// Commits state that was waiting for a coalesced write. Terminal states are already durable.
+
+suspend fun close()
+// Stops every transfer, commits, then releases the scope — in that order. Returns Unit: there is
+// nothing a caller can do about a failure while the process is going away, and what can be
+// reported goes to the logger. A scope supplied with withDownloadScope is left running; one
+// Nimbus created is cancelled. Idempotent. Afterwards every call fails with
+// PermanentNimbusErrorCause.Closed rather than quietly doing nothing.
+```
+
 ## DownloadState sealed class
 
 ```kotlin
@@ -233,6 +246,7 @@ sealed class PermanentNimbusErrorCause {
     data object DownloadNotFound   // no task registered for this fileUrl
     data class  FilePathInUse(filePath: String)
     data class  InsufficientDiskSpace(path: String, requiredBytes: Long, availableBytes: Long)
+    data object Closed                 // the instance was closed; build a new one
     data object ContentDigestDisabled  // a digest was asked for with no withContentDigest(...):
                                        // checksum(), or an expectedChecksum passed to
                                        // enqueueDownload/ensureDownloaded that nothing would check

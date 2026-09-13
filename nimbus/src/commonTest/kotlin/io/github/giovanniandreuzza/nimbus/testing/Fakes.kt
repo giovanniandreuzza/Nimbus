@@ -103,6 +103,14 @@ internal class FakeDownloadTaskRepository(
         return Success(value)
     }
 
+    var flushCount: Int = 0
+        private set
+
+    override suspend fun flushPendingState(): KResult<Unit, KError> {
+        flushCount++
+        return saveFailure?.let { Failure(it) } ?: Success(Unit)
+    }
+
     override suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, KError> {
         tasks.remove(id)
         flows.remove(id)
@@ -154,6 +162,13 @@ internal class ScriptedDownloadPort(
     override suspend fun stopDownload(downloadId: String) {
         stopped.add(downloadId)
         onStop?.invoke(downloadId)
+    }
+
+    var stoppedAll: Int = 0
+        private set
+
+    override suspend fun stopAllDownloads() {
+        stoppedAll++
     }
 
     companion object {

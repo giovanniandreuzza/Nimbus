@@ -149,6 +149,8 @@ class EnsureDownloadedChecksumTest {
             minReservedDiskBytes = null,
             logger = logger,
             autoStart = false,
+            // The test scope is the test's to end.
+            ownsDownloadScope = false,
             downloadScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         )
         return Fixture(service, repository, storage, logger)

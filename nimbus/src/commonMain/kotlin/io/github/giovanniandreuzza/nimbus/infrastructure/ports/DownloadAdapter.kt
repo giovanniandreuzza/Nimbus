@@ -156,6 +156,17 @@ internal class DownloadAdapter(
         job?.cancelAndJoin()
     }
 
+    override suspend fun stopAllDownloads() {
+        // Emptied under the lock, then joined outside it: a job's own `finally` deregisters
+        // itself, so holding the lock while waiting for one would deadlock against it.
+        val running = jobsMutex.withLock {
+            val all = downloadJobs.values.toList()
+            downloadJobs.clear()
+            all
+        }
+        running.forEach { it.cancelAndJoin() }
+    }
+
     private suspend fun runDownloadJob(
         downloadTask: DownloadTaskDTO,
         id: String

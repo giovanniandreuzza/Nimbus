@@ -152,7 +152,7 @@ internal class DownloadRepository(
      * moments when a caller knows the process may not survive long enough for the next
      * coalesced commit — an appliance being backgrounded or told to shut down.
      */
-    internal suspend fun flushPendingState(): KResult<Unit, KError> = diskStore.flush()
+    override suspend fun flushPendingState(): KResult<Unit, KError> = diskStore.flush()
 
     override suspend fun getAllDownloadTasks(): List<DownloadTaskDTO> = mutex.withLock {
         tasks.values.map { DownloadTaskDTO.fromDomain(it) }

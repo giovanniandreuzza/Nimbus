@@ -604,6 +604,8 @@ class DownloadServiceLifecycleTest {
             minReservedDiskBytes = minReservedDiskBytes,
             logger = logger,
             autoStart = autoStart,
+            // The test scope is the test's to end.
+            ownsDownloadScope = false,
             // Not `backgroundScope`: work launched there runs only while the test body is
             // suspended, so `advanceUntilIdle` would never run the autoStart, and a test
             // asserting the start happened would fail for a reason that is about the test

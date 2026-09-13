@@ -28,6 +28,7 @@ import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 import io.github.giovanniandreuzza.nimbus.presentation.PermanentNimbusErrorCause
 import io.github.giovanniandreuzza.nimbus.shared.utils.takeUntil
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -62,6 +63,11 @@ internal class DownloadService(
     private val minReservedDiskBytes: Long?,
     private val logger: NimbusLogger?,
     private val autoStart: Boolean,
+    /**
+     * Whether [close] may cancel the scope. False when the caller supplied their own: theirs
+     * to end, and cancelling it would take down whatever else they run in it.
+     */
+    private val ownsDownloadScope: Boolean,
     downloadScope: CoroutineScope
 ) : NimbusAPI {
     private val lockMapMutex = Mutex()
@@ -75,6 +81,9 @@ internal class DownloadService(
 
     private val loadMutex = Mutex()
     private var isLoaded = false
+
+    private val closeMutex = Mutex()
+    private var isClosed = false
 
     private val scope = downloadScope
 
@@ -106,8 +115,47 @@ internal class DownloadService(
     private suspend fun <T> withReady(
         block: suspend () -> KResult<T, NimbusError>
     ): KResult<T, NimbusError> {
+        if (isClosed) {
+            return Failure(NimbusError.PermanentError(PermanentNimbusErrorCause.Closed))
+        }
         ensureLoaded().onFailure { return Failure(it) }
         return block()
+    }
+
+    override suspend fun flush(): KResult<Unit, NimbusError> = withReady {
+        repository.flushPendingState().onFailure {
+            return@withReady Failure(
+                NimbusError.PermanentError(PermanentNimbusErrorCause.StorageError(it))
+            )
+        }
+        Success(Unit)
+    }
+
+    /**
+     * Stop, commit, release — in that order, because each step decides what the next one sees.
+     *
+     * Stopping first means nothing is still writing a file or reporting a state while the
+     * store is being committed, so what reaches the disk is what the next boot will read.
+     * Releasing last means the commit still has a scope to run in.
+     *
+     * Failures here are deliberately not returned. There is nothing a caller can do with them
+     * at this point — the process is going away, which is why they called — and a `close` that
+     * can fail is a `close` people wrap in a `try` and get wrong. What can be reported is
+     * reported to the logger.
+     */
+    override suspend fun close() {
+        closeMutex.withLock {
+            if (isClosed) return
+            isClosed = true
+        }
+
+        downloadPort.stopAllDownloads()
+
+        repository.flushPendingState().onFailure {
+            logger?.log(NimbusLogEvent.StoreFlushFailed(it))
+        }
+
+        if (ownsDownloadScope) scope.cancel()
     }
 
     private suspend fun loadDownloadTasks(): KResult<Unit, NimbusError> {
@@ -124,6 +172,7 @@ internal class DownloadService(
     }
 
     override suspend fun isDownloaded(fileUrl: String): Boolean {
+        if (isClosed) return false
         ensureLoaded().onFailure { return false }
         val id = idProvider.generateUniqueId(fileUrl)
         val finished = repository.readDownloadTask(DownloadId.create(id)) { task ->

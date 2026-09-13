@@ -187,6 +187,27 @@ Every method is `suspend` and returns `KResult<T, NimbusError>` unless noted.
 | `getFileSize(url)` | Remote size without downloading |
 | `isDownloaded(url)` | *Returns `Boolean`.* Finished **and** the file is on disk |
 | `checksum(url)` | Re-hashes the finished file from disk |
+| `flush()` | Commits state that was waiting for a coalesced write |
+| `close()` | *Returns `Unit`.* Stops transfers, commits, releases the scope |
+
+### Shutting down
+
+Terminal states — finished, failed, cancelled — are on disk before their call returns. The rest
+(an enqueue, a pause, a progress position) rides along with the next coalesced commit, because a
+commit rewrites every task and paying that per transition makes one download's cost grow with the
+whole catalogue.
+
+When the process is about to end on purpose, say so:
+
+```kotlin
+override fun onDestroy() {           // or a SIGTERM handler, or before a provisioning reboot
+    scope.launch { nimbus.close() }  // stops transfers, commits, releases Nimbus's own scope
+}
+```
+
+`flush()` is the commit on its own, for when the instance keeps living. After `close()` every call
+returns `PermanentNimbusErrorCause.Closed` rather than quietly doing nothing, and a scope you
+supplied with `withDownloadScope` is left running — it is yours.
 
 ## Configuration
 

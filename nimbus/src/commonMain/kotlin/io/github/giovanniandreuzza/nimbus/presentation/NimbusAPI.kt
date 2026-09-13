@@ -149,6 +149,35 @@ public interface NimbusAPI {
     ): KResult<Flow<DownloadState>, NimbusError>
 
     /**
+     * Commits anything still waiting for a coalesced write, and returns when it is on disk.
+     *
+     * State that a caller was told was durable already is: a finished, failed or cancelled
+     * task reaches the disk before its call returns. What waits for the next commit is the
+     * rest — an enqueue, a pause, a progress position — because a commit rewrites every task
+     * and paying that on each transition makes one download's cost grow with the catalogue.
+     *
+     * Call this when the process may not live long enough for that commit: an Android service
+     * being torn down, a provisioning run about to reboot the device, a `SIGTERM` from the
+     * supervisor. Without it those states are re-derived at boot, which costs a re-enqueue at
+     * worst — but on a device that is about to restart on purpose, "at worst" is avoidable.
+     */
+    public suspend fun flush(): KResult<Unit, NimbusError>
+
+    /**
+     * Stops every transfer, commits the store, and releases the library's resources.
+     *
+     * In that order, so that what is committed is what the next boot will read. The coroutine
+     * scope is cancelled only if Nimbus created it — a scope handed in with
+     * [Nimbus.Builder.withDownloadScope][io.github.giovanniandreuzza.nimbus.Nimbus.Builder.withDownloadScope]
+     * belongs to the caller and is left alone.
+     *
+     * The instance is unusable afterwards: every call returns
+     * [PermanentNimbusErrorCause.Closed] rather than quietly doing nothing. Calling this twice
+     * is harmless.
+     */
+    public suspend fun close()
+
+    /**
      * Recomputes the content digest of an already-downloaded file, reading it from disk.
      *
      * Uses the algorithm configured with

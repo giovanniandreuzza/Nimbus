@@ -49,6 +49,7 @@ public class Nimbus private constructor(
     stallTimeoutMs: Long?,
     minReservedDiskBytes: Long?,
     autoStart: Boolean,
+    ownsDownloadScope: Boolean,
     digestAlgorithm: DigestAlgorithm?,
     logger: NimbusLogger?
 ) {
@@ -66,12 +67,19 @@ public class Nimbus private constructor(
         stallTimeoutMs = stallTimeoutMs,
         minReservedDiskBytes = minReservedDiskBytes,
         autoStart = autoStart,
+        ownsDownloadScope = ownsDownloadScope,
         digestAlgorithm = digestAlgorithm,
         logger = logger
     )
 
     public class Builder {
         private var downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        /**
+         * Whether the scope above is still the one this builder made. A scope the caller
+         * supplied is theirs to end, so [NimbusAPI.close] leaves it running.
+         */
+        private var ownsDownloadScope = true
         private var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
         private var concurrencyLimit = 1
         private var nimbusDownloadPort: NimbusDownloadPort? = null
@@ -88,7 +96,10 @@ public class Nimbus private constructor(
         private var logger: NimbusLogger? = null
 
         public fun withDownloadScope(scope: CoroutineScope): Builder =
-            apply { downloadScope = scope }
+            apply {
+                downloadScope = scope
+                ownsDownloadScope = false
+            }
 
         public fun withIODispatcher(dispatcher: CoroutineDispatcher): Builder =
             apply { ioDispatcher = dispatcher }
@@ -258,6 +269,7 @@ public class Nimbus private constructor(
                 stallTimeoutMs = stallTimeoutMs,
                 minReservedDiskBytes = minReservedDiskBytes,
                 autoStart = autoStart,
+                ownsDownloadScope = ownsDownloadScope,
                 digestAlgorithm = digestAlgorithm,
                 logger = logger
             )

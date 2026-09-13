@@ -91,6 +91,18 @@ public sealed class PermanentNimbusErrorCause(
                 "${configured.name}."
     )
 
+    /**
+     * The instance has been closed.
+     *
+     * Its coroutine scope is gone, so a download started from here would be registered and
+     * never run — a call that appears to succeed and does nothing, which on an unattended
+     * device is discovered weeks later as a file that never arrived. Build a new instance.
+     */
+    public data object Closed : PermanentNimbusErrorCause(
+        code = "closed",
+        message = "This Nimbus instance has been closed."
+    )
+
     /** The requested download task was not found. */
     public data object DownloadNotFound : PermanentNimbusErrorCause(
         code = "download_not_found",

@@ -47,6 +47,7 @@ internal fun init(
     stallTimeoutMs: Long?,
     minReservedDiskBytes: Long?,
     autoStart: Boolean,
+    ownsDownloadScope: Boolean,
     digestAlgorithm: DigestAlgorithm?,
     logger: NimbusLogger?
 ): DownloadService {
@@ -100,6 +101,7 @@ internal fun init(
         minReservedDiskBytes = minReservedDiskBytes,
         logger = logger,
         autoStart = autoStart,
+        ownsDownloadScope = ownsDownloadScope,
         downloadScope = downloadScope
     )
 

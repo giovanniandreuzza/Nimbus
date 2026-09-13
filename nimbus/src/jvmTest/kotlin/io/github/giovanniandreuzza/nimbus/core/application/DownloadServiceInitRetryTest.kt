@@ -75,6 +75,8 @@ class DownloadServiceInitRetryTest {
         minReservedDiskBytes = null,
         logger = null,
         autoStart = false,
+        // The test scope is the test's to end.
+        ownsDownloadScope = false,
         downloadScope = CoroutineScope(Dispatchers.Default)
     )
 }
@@ -117,6 +119,8 @@ private class FlakyRepository(private val failuresBeforeSuccess: Int) : Download
         Success(Unit)
 
     override suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, KError> = Success(Unit)
+
+    override suspend fun flushPendingState(): KResult<Unit, KError> = Success(Unit)
 }
 
 /**
@@ -155,4 +159,6 @@ private object NoopDownloadPort : DownloadPort {
         Success(Unit)
 
     override suspend fun stopDownload(downloadId: String): Unit = Unit
+
+    override suspend fun stopAllDownloads(): Unit = Unit
 }

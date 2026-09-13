@@ -86,4 +86,13 @@ internal interface DownloadTaskRepository {
 
     suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, KError>
 
+    /**
+     * Commits anything still waiting for a coalesced write.
+     *
+     * Terminal states are already durable when their save returns; the states that ride along
+     * with the next commit — an enqueue, a pause, a progress position — are what this is for,
+     * at the moments a caller knows the process may not be alive for that commit.
+     */
+    suspend fun flushPendingState(): KResult<Unit, KError>
+
 }
