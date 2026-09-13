@@ -18,7 +18,16 @@ import kotlinx.coroutines.flow.Flow
 public interface NimbusAPI {
 
     /**
-     * Returns `true` if the download for [fileUrl] has already finished.
+     * Whether the file for [fileUrl] is finished **and** on disk at the expected size.
+     *
+     * `false` also means "cannot say": there is no task, the persisted store could not be
+     * loaded, or this instance has been closed. A `Boolean` has nowhere to put the difference,
+     * and the alternative — a task that exists and is complete reported as missing — is the
+     * safer way round: the caller downloads something they already had rather than plays
+     * something they do not.
+     *
+     * When the difference matters, [getDownloadTask] returns it: a failure names the reason,
+     * and a task carries its state.
      */
     public suspend fun isDownloaded(fileUrl: String): Boolean
 

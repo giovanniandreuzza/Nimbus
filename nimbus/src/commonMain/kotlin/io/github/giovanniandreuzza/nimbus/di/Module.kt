@@ -90,7 +90,8 @@ internal fun init(
         transportRetry = transportRetry,
         stallTimeoutMs = stallTimeoutMs,
         digestAlgorithm = digestAlgorithm,
-        contentDigestPort = contentDigestPort
+        contentDigestPort = contentDigestPort,
+        logger = logger
     )
 
     val idProvider: IdProviderPort = IdProviderAdapter()

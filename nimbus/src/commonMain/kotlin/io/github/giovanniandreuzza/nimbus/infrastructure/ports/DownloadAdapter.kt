@@ -24,6 +24,8 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
+import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import io.github.giovanniandreuzza.nimbus.shared.utils.allowsAttempt
 import io.github.giovanniandreuzza.nimbus.shared.utils.delayForAttempt
@@ -84,6 +86,8 @@ internal class DownloadAdapter(
     private val digestAlgorithm: DigestAlgorithm? = null,
     /** Hashes a file that is already on disk, for the case where nothing is transferred. */
     private val contentDigestPort: ContentDigestPort,
+    /** Told about throwables this adapter did not expect, stack and all. */
+    private val logger: NimbusLogger? = null,
     /** Injectable so a test can assert the back-off arithmetic instead of a range. */
     private val random: Random = Random.Default
 ) : DownloadPort {
@@ -133,7 +137,7 @@ internal class DownloadAdapter(
         val id = downloadTask.id
 
         val job = downloadScope.launch(
-            context = createExceptionHandler(id),
+            context = createExceptionHandler(id, downloadTask.fileUrl),
             start = CoroutineStart.LAZY
         ) {
             try {
@@ -202,6 +206,7 @@ internal class DownloadAdapter(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            logger?.log(NimbusLogEvent.Unexpected(downloadTask.fileUrl, e))
             val error = unexpectedDownloadError(e)
             notifyFailureAndCleanup(
                 id,
@@ -926,10 +931,14 @@ internal class DownloadAdapter(
                 isStillActive
     }
 
-    private fun createExceptionHandler(id: String): CoroutineExceptionHandler {
+    private fun createExceptionHandler(
+        id: String,
+        fileUrl: String
+    ): CoroutineExceptionHandler {
         return CoroutineExceptionHandler { _, throwable ->
             val error = unexpectedDownloadError(throwable)
             downloadScope.launch {
+                logger?.log(NimbusLogEvent.Unexpected(fileUrl, throwable))
                 notifyFailureAndCleanup(
                     id,
                     DownloadError.PermanentError(PermanentDownloadErrorCause.UnexpectedError(error))

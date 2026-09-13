@@ -412,6 +412,12 @@ Two rules that are easy to miss, and expensive to miss:
   of an old one produces a file of exactly the right length that was never a file, which only a
   digest would catch. Return `null` for the validator if your transport has no such notion and
   resumes behave as they always did.
+- **Know what a blocking read costs you.** `KtorDownloadAdapter` reads the body through
+  `ByteReadChannel.asSource()`, which waits inside `runBlocking`: every active download holds a
+  thread of the dispatcher for its duration. At the default `withConcurrencyLimit(1)`, or any
+  small number, that is nothing; at 32 it is half of `Dispatchers.IO`'s default 64 on the JVM and
+  Android, and whatever else the app runs there waits. Raise the limit deliberately, and give
+  Nimbus its own dispatcher with `withIODispatcher` if you do.
 - **Give the transport its own deadline for inactivity.** Nimbus abandons a transfer that delivers
   nothing for `withStallTimeoutMs`, but abandoning it means cancelling your call — which only
   unwinds an adapter that *suspends* while it waits. `KtorDownloadAdapter` blocks a thread inside

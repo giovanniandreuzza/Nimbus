@@ -74,6 +74,17 @@ internal class DownloadRepository(
     private val stateFlows = mutableMapOf<DownloadId, MutableStateFlow<DownloadState>>()
 
     /**
+     * Destinations that already belong to a task, so `enqueueDownload` can ask in one lookup.
+     *
+     * It used to walk every task for each enqueue — after copying the whole map, outside the
+     * lock. Fine for a handful and quadratic for a manifest: two thousand assets loaded at
+     * boot cost two million comparisons and two thousand map copies, on a device whose
+     * catalogue only ever grows. A path is fixed for the life of a task, so an index of them
+     * needs maintaining in exactly the two places a task appears and disappears.
+     */
+    private val filePathsInUse = mutableSetOf<String>()
+
+    /**
      * Monotonic counter bumped on every mutation, and the only thing the hot path pushes.
      *
      * [observeAllDownloadTasks] derives its snapshots from this instead of the repository
@@ -138,6 +149,7 @@ internal class DownloadRepository(
                 }
                 tasks[id] = task
                 stateFlows[id] = MutableStateFlow(task.state)
+                filePathsInUse += task.filePath.value
             }
             revision.value++
         }
@@ -163,7 +175,7 @@ internal class DownloadRepository(
     }
 
     override suspend fun isFilePathInUse(filePath: String): Boolean = mutex.withLock {
-        tasks.values.any { it.filePath.value == filePath }
+        filePath in filePathsInUse
     }
 
     /**
@@ -195,6 +207,7 @@ internal class DownloadRepository(
         // state in full.
         val snapshot = mutex.withLock {
             tasks[downloadTask.entityId.id] = downloadTask
+            filePathsInUse += downloadTask.filePath.value
             stateFlows[downloadTask.entityId.id]?.update { downloadTask.state }
                 ?: run {
                     stateFlows[downloadTask.entityId.id] = MutableStateFlow(downloadTask.state)
@@ -277,7 +290,7 @@ internal class DownloadRepository(
 
     override suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, KError> {
         mutex.withLock {
-            tasks.remove(id)
+            tasks.remove(id)?.let { filePathsInUse -= it.filePath.value }
             stateFlows.remove(id)
             revision.value++
         }

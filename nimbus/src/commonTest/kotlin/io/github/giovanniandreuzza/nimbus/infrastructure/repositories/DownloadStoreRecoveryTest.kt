@@ -3,6 +3,7 @@ package io.github.giovanniandreuzza.nimbus.infrastructure.repositories
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isSuccess
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
+import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
 import kotlinx.coroutines.CoroutineScope
@@ -88,6 +89,59 @@ class DownloadStoreRecoveryTest {
         write(STORE_PATH, ProtoBuf.encodeToByteArray(legacyStore()))
     }
 
+    @Test
+    fun `the destinations index is rebuilt from the store on load`() = runTest {
+        // `enqueueDownload` asks this rather than walking every task, so an index that is only
+        // filled by saves would report a path as free the moment a device restarted — and the
+        // second task would happily write over the first one's file.
+        val storage = InMemoryStorage()
+        val repository = repositoryOn(storage)
+        // The store is created by the load, and nothing persists before it.
+        repository.loadDownloadTasks()
+        repository.saveDownloadTask(
+            DownloadTask.create(
+                id = "task-1",
+                fileUrl = "https://example.com/clip.mp4",
+                filePath = TAKEN_PATH,
+                fileName = "clip.mp4",
+                fileSize = 1_024L
+            )
+        )
+        // Enqueued is a coalesced state, so without this the store on disk is still empty and
+        // the test would be asserting about a repository that loaded nothing.
+        repository.flushPendingState()
+
+        val afterRestart = repositoryOn(storage)
+        afterRestart.loadDownloadTasks()
+
+        assertTrue(
+            afterRestart.isFilePathInUse(TAKEN_PATH),
+            "the path belongs to a task that survived the restart"
+        )
+        assertTrue(!afterRestart.isFilePathInUse("/tmp/nimbus/other.mp4"))
+    }
+
+    @Test
+    fun `a destination is free again once its task is gone`() = runTest {
+        val storage = InMemoryStorage()
+        val repository = repositoryOn(storage)
+        val task = DownloadTask.create(
+            id = "task-1",
+            fileUrl = "https://example.com/clip.mp4",
+            filePath = TAKEN_PATH,
+            fileName = "clip.mp4",
+            fileSize = 1_024L
+        )
+        repository.saveDownloadTask(task)
+
+        repository.deleteDownloadTask(task.entityId.id)
+
+        assertTrue(
+            !repository.isFilePathInUse(TAKEN_PATH),
+            "an index that only ever grows refuses a path nothing is using"
+        )
+    }
+
     private fun TestScope.repositoryOn(
         storage: InMemoryStorage,
         logger: NimbusLogger? = null
@@ -118,6 +172,7 @@ class DownloadStoreRecoveryTest {
     )
 
     private companion object {
+        const val TAKEN_PATH = "/tmp/nimbus/clip.mp4"
         const val STORE_PATH = "/tmp/nimbus/download_manager"
     }
 }
