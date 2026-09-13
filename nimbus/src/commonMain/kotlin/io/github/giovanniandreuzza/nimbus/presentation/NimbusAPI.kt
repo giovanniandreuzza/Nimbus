@@ -149,6 +149,28 @@ public interface NimbusAPI {
     ): KResult<Flow<DownloadState>, NimbusError>
 
     /**
+     * Forgets finished downloads that have been finished for longer than [olderThanMs], and
+     * returns the urls it removed.
+     *
+     * A catalogue that only grows is the shape this library was heading for: a signage player
+     * cycles content for years, every asset it has ever fetched stays a `Finished` task, and
+     * each one costs a `stat` at every boot and a slot in every commit — a commit rewrites the
+     * whole store. Nothing removed them, because nothing recorded *when* they finished and so
+     * no caller could tell which ones were old.
+     *
+     * A task carries no finish time until this build has seen it — tasks from an older store
+     * are stamped with the time of the upgrade, so their age is measured from there rather
+     * than from 1970, which would have the first call delete everything.
+     *
+     * @param deleteFiles whether the files go too. False keeps them on disk and forgets only
+     * the metadata, which is the safer default when something else on the device reads them.
+     */
+    public suspend fun pruneFinished(
+        olderThanMs: Long,
+        deleteFiles: Boolean = false
+    ): KResult<List<String>, NimbusError>
+
+    /**
      * Commits anything still waiting for a coalesced write, and returns when it is on disk.
      *
      * State that a caller was told was durable already is: a finished, failed or cancelled

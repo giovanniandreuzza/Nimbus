@@ -1,6 +1,7 @@
 package io.github.giovanniandreuzza.nimbus.infrastructure.repositories
 
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
@@ -118,7 +119,8 @@ class DownloadStoreWriteAmplificationTest {
     ): DownloadRepository = DownloadRepository(
         storePath = store.absolutePath,
         dispatcher = Dispatchers.IO,
-        nimbusStoragePort = CommitCountingStoragePort(FileSystemNimbusStorageAdapter(), commits)
+        nimbusStoragePort = CommitCountingStoragePort(FileSystemNimbusStorageAdapter(), commits),
+        clock = FakeClock()
     )
 
     private fun taskNamed(name: String, path: String = "/tmp/nimbus/$name") = DownloadTask.create(

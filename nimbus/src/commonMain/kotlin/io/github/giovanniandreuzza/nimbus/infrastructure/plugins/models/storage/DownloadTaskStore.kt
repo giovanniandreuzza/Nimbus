@@ -31,5 +31,12 @@ internal data class DownloadTaskStore(
     @ProtoNumber(7)
     val expectedChecksum: ChecksumStore? = null,
     @ProtoNumber(8)
-    val checksum: ChecksumStore? = null
+    val checksum: ChecksumStore? = null,
+    /** Milliseconds since the epoch. Zero means a store written before the field existed. */
+    @ProtoNumber(9)
+    val createdAtEpochMs: Long = 0L,
+    @ProtoNumber(10)
+    val finishedAtEpochMs: Long? = null,
+    @ProtoNumber(11)
+    val resumeValidator: String? = null
 )

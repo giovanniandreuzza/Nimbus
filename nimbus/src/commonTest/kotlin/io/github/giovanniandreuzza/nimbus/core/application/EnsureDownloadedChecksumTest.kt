@@ -7,6 +7,7 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.ports.StorageAdapter
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.testing.FakeContentDigestPort
 import io.github.giovanniandreuzza.nimbus.testing.FakeDownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
@@ -145,6 +146,7 @@ class EnsureDownloadedChecksumTest {
             repository = repository,
             storagePort = StorageAdapter(storage),
             contentDigestPort = FakeContentDigestPort(Success(EXPECTED)),
+            clock = FakeClock(),
             digestAlgorithm = DigestAlgorithm.SHA256,
             minReservedDiskBytes = null,
             logger = logger,

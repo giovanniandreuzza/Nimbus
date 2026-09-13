@@ -6,6 +6,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isFailure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isSuccess
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.core.application.dtos.DownloadTaskDTO
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadTaskNotFound
@@ -15,6 +16,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeErr
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
+import io.github.giovanniandreuzza.nimbus.core.ports.RemoteFileInfo
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.CreateOutcome
@@ -71,6 +73,7 @@ class DownloadServiceInitRetryTest {
         repository = repository,
         storagePort = NoopStoragePort,
         contentDigestPort = NoopContentDigestPort,
+        clock = FakeClock(),
         digestAlgorithm = null,
         minReservedDiskBytes = null,
         logger = null,
@@ -152,8 +155,8 @@ private object EchoIdProvider : IdProviderPort {
 }
 
 private object NoopDownloadPort : DownloadPort {
-    override suspend fun getFileSizeToDownload(fileUrl: String): KResult<Long, GetFileSizeError> =
-        Success(0L)
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFileInfo, GetFileSizeError> =
+        Success(RemoteFileInfo(0L, null))
 
     override suspend fun startDownload(downloadTask: DownloadTaskDTO): KResult<Unit, DownloadError> =
         Success(Unit)

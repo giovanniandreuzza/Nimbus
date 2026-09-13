@@ -9,6 +9,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeErr
 import io.github.giovanniandreuzza.nimbus.core.application.errors.PermanentDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
@@ -124,12 +125,13 @@ class ObserveCompletionTest {
 
     /** Fails every transfer, permanently or not. */
     private class FailingPort(private val permanent: Boolean) : NimbusDownloadPort {
-        override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> =
-            Success(1_024L)
+        override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
+            Success(RemoteFile(1_024L))
 
         override suspend fun downloadFile(
             fileUrl: String,
             offset: Long,
+            resumeValidator: String?,
             onSourceOpened: suspend (Source) -> Unit
         ): KResult<Unit, DownloadError> = Failure(
             if (permanent) {

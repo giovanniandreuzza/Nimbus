@@ -3,6 +3,7 @@ package io.github.giovanniandreuzza.nimbus.infrastructure.repositories
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isSuccess
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -96,6 +97,7 @@ class DownloadStoreRecoveryTest {
             storePath = STORE_PATH,
             dispatcher = dispatcher,
             nimbusStoragePort = storage,
+            clock = FakeClock(),
             logger = logger,
             storeScope = CoroutineScope(SupervisorJob() + dispatcher)
         )

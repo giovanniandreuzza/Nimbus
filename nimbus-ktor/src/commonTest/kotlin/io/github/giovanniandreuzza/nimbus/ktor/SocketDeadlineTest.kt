@@ -33,7 +33,7 @@ class SocketDeadlineTest {
         val seen = mutableListOf<Long?>()
         val adapter = KtorDownloadAdapter(HttpClient(recording(seen)))
 
-        adapter.getFileSize(url)
+        adapter.getRemoteFile(url)
 
         assertEquals(
             listOf<Long?>(KtorDownloadAdapter.DEFAULT_SOCKET_TIMEOUT_MS),
@@ -47,7 +47,7 @@ class SocketDeadlineTest {
         val seen = mutableListOf<Long?>()
         val adapter = KtorDownloadAdapter(HttpClient(recording(seen)))
 
-        adapter.downloadFile(url, offset = 0L) { source -> source.readByteArray() }
+        adapter.downloadFile(url, offset = 0L, resumeValidator = null) { source -> source.readByteArray() }
 
         assertEquals(listOf<Long?>(KtorDownloadAdapter.DEFAULT_SOCKET_TIMEOUT_MS), seen)
     }
@@ -68,7 +68,7 @@ class SocketDeadlineTest {
             )
         )
 
-        adapter.downloadFile(url, offset = 4L) { source -> source.readByteArray() }
+        adapter.downloadFile(url, offset = 4L, resumeValidator = null) { source -> source.readByteArray() }
 
         assertEquals(listOf<Long?>(KtorDownloadAdapter.DEFAULT_SOCKET_TIMEOUT_MS), seen)
     }
@@ -80,7 +80,7 @@ class SocketDeadlineTest {
         val seen = mutableListOf<Long?>()
         val adapter = KtorDownloadAdapter(HttpClient(recording(seen)), socketTimeoutMillis = null)
 
-        adapter.getFileSize(url)
+        adapter.getRemoteFile(url)
 
         assertEquals(listOf<Long?>(null), seen, "nothing may be imposed on the request")
     }

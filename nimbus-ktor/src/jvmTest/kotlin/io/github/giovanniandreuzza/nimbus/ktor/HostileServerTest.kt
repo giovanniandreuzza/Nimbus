@@ -217,7 +217,7 @@ class HostileServerTest {
     /** Runs [downloadFile] and returns what actually crossed the wire. */
     private suspend fun collect(offset: Long): KResult<ByteArray, DownloadError> {
         var delivered = ByteArray(0)
-        val result = adapter.downloadFile(server.url, offset) { source ->
+        val result = adapter.downloadFile(server.url, offset, null) { source ->
             delivered = source.readByteArray()
         }
         return when (result) {

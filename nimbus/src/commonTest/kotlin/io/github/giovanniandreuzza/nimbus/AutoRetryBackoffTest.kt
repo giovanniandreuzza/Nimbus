@@ -7,6 +7,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
@@ -178,12 +179,13 @@ class AutoRetryBackoffTest {
         var attempts: Int = 0
             private set
 
-        override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> =
-            Success(SIZE)
+        override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
+            Success(RemoteFile(SIZE))
 
         override suspend fun downloadFile(
             fileUrl: String,
             offset: Long,
+            resumeValidator: String?,
             onSourceOpened: suspend (Source) -> Unit
         ): KResult<Unit, DownloadError> {
             attempts++
@@ -201,12 +203,13 @@ class AutoRetryBackoffTest {
             failuresBeforeSuccess = 1
         }
 
-        override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> =
-            Success(SIZE)
+        override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
+            Success(RemoteFile(SIZE))
 
         override suspend fun downloadFile(
             fileUrl: String,
             offset: Long,
+            resumeValidator: String?,
             onSourceOpened: suspend (Source) -> Unit
         ): KResult<Unit, DownloadError> {
             if (failuresBeforeSuccess > 0) {

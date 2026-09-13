@@ -11,6 +11,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryGetFi
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
@@ -137,12 +138,10 @@ class StalledTransferTest {
         // suspends that caller, not a download.
         val h = Harness(this, QuietSizeNetwork(), stallTimeoutMs = STALL, maxRetryAttempts = 0)
 
-        val result = h.adapter.getFileSizeToDownload(URL)
+        val result = h.adapter.getRemoteFile(URL)
 
-        val error = when (result) {
-            is Failure -> result.error
-            is Success -> fail("the size request never answered; it must not report a size")
-        }
+        val error = (result as? Failure)?.error
+            ?: fail("the size request never answered; it must not report a size")
         val cause = (error as GetFileSizeError.TemporaryError).errorCause
         assertEquals(
             "size_request_stalled",
@@ -265,12 +264,13 @@ private class QuietNetwork(private val deliverBeforeGoingQuiet: Int) : NimbusDow
         private set
     val offsets = mutableListOf<Long>()
 
-    override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> =
-        Success(2_000L)
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
+        Success(RemoteFile(2_000L))
 
     override suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
+        resumeValidator: String?,
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError> {
         attempts++
@@ -286,12 +286,13 @@ private class QuietNetwork(private val deliverBeforeGoingQuiet: Int) : NimbusDow
 
 /** Never answers the size request at all. */
 private class QuietSizeNetwork : NimbusDownloadPort {
-    override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> =
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
         awaitCancellation()
 
     override suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
+        resumeValidator: String?,
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError> = awaitCancellation()
 }

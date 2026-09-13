@@ -8,6 +8,7 @@ import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusError
 import io.github.giovanniandreuzza.nimbus.presentation.PermanentNimbusErrorCause
 import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.testing.FakeContentDigestPort
 import io.github.giovanniandreuzza.nimbus.testing.FakeDownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
@@ -138,6 +139,7 @@ class LifecycleTest {
             contentDigestPort = FakeContentDigestPort(
                 Success(Checksum(DigestAlgorithm.SHA256, "0".repeat(64)))
             ),
+            clock = FakeClock(),
             digestAlgorithm = null,
             minReservedDiskBytes = null,
             logger = RecordingLogger(),

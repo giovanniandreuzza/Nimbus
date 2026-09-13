@@ -4,6 +4,7 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.isSucce
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadStateStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadTaskStore
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -82,25 +83,131 @@ class DownloadStoreVersionTest {
         assertEquals(DownloadStore.SCHEMA_VERSION, restamped.schemaVersion)
     }
 
+    @Test
+    fun `a migrated task is stamped with the time of the migration`() = runTest {
+        // Its timestamps do not exist in the old blob and decode as zero, which reads as
+        // 1970 — and the first `pruneFinished` after the upgrade would take that as "older
+        // than anything you could ask for" and delete every file the device already had.
+        // Stamping says what is actually known: these tasks existed by the time this build
+        // first ran.
+        val storage = InMemoryStorage()
+        storage.write(STORE_PATH, ProtoBuf.encodeToByteArray(storeStampedAt(2)))
+        val clock = FakeClock(nowMs = MIGRATED_AT)
+
+        val repository = repositoryOn(storage, clock)
+        repository.loadDownloadTasks()
+
+        val task = assertNotNull(repository.allTasksForTest().values.firstOrNull())
+        assertEquals(MIGRATED_AT, task.createdAtEpochMs)
+        assertEquals(
+            null,
+            task.finishedAtEpochMs,
+            "this one is paused: stamping a finish time on it would make it prunable"
+        )
+    }
+
+    @Test
+    fun `a migrated task that had already finished is stamped as finished then`() = runTest {
+        val storage = InMemoryStorage()
+        storage.write(
+            STORE_PATH,
+            ProtoBuf.encodeToByteArray(storeStampedAt(2, DownloadStateStore.Finished))
+        )
+        // Its file has to be there, or boot recovery rightly decides the task is not finished
+        // at all — see the test below.
+        storage.write(FILE_PATH, ByteArray(FILE_SIZE.toInt()))
+        val clock = FakeClock(nowMs = MIGRATED_AT)
+
+        val repository = repositoryOn(storage, clock)
+        repository.loadDownloadTasks()
+
+        val task = assertNotNull(repository.allTasksForTest().values.firstOrNull())
+        assertEquals(
+            MIGRATED_AT,
+            task.finishedAtEpochMs,
+            "its age is measured from the upgrade, which is when this build first knew of it"
+        )
+    }
+
+    @Test
+    fun `a finished task whose file has vanished loses its finish time with its state`() =
+        runTest {
+            // Boot recovery resets it to Enqueued because the file is gone. A finish time left
+            // behind would make `pruneFinished` delete a task that is waiting to be
+            // downloaded — and the file it would delete does not exist either way, but the
+            // task the device still needs would be gone.
+            val storage = InMemoryStorage()
+            storage.write(
+                STORE_PATH,
+                ProtoBuf.encodeToByteArray(storeStampedAt(2, DownloadStateStore.Finished))
+            )
+
+            val repository = repositoryOn(storage, FakeClock(nowMs = MIGRATED_AT))
+            repository.loadDownloadTasks()
+
+            val task = assertNotNull(repository.allTasksForTest().values.firstOrNull())
+            assertEquals(null, task.finishedAtEpochMs, "it is not finished any more")
+        }
+
+    @Test
+    fun `timestamps already on disk are left alone`() = runTest {
+        // A second migration, or any later boot, must not move a date that was recorded.
+        val storage = InMemoryStorage()
+        val recorded = MIGRATED_AT - 5_000L
+        storage.write(
+            STORE_PATH,
+            ProtoBuf.encodeToByteArray(
+                storeStampedAt(2, DownloadStateStore.Finished, createdAt = recorded)
+            )
+        )
+        storage.write(FILE_PATH, ByteArray(FILE_SIZE.toInt()))
+
+        val repository = repositoryOn(storage, FakeClock(nowMs = MIGRATED_AT))
+        repository.loadDownloadTasks()
+
+        val task = assertNotNull(repository.allTasksForTest().values.firstOrNull())
+        assertEquals(recorded, task.createdAtEpochMs)
+    }
+
     private fun TestScope.repositoryOn(storage: InMemoryStorage): DownloadRepository {
         val dispatcher = StandardTestDispatcher(testScheduler)
         return DownloadRepository(
             storePath = STORE_PATH,
             dispatcher = dispatcher,
             nimbusStoragePort = storage,
+            clock = FakeClock(),
             storeScope = CoroutineScope(SupervisorJob() + dispatcher)
         )
     }
 
-    private fun storeStampedAt(version: Int) = FutureStore(
+    private fun TestScope.repositoryOn(
+        storage: InMemoryStorage,
+        clock: FakeClock
+    ): DownloadRepository {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        return DownloadRepository(
+            storePath = STORE_PATH,
+            dispatcher = dispatcher,
+            nimbusStoragePort = storage,
+            clock = clock,
+            storeScope = CoroutineScope(SupervisorJob() + dispatcher)
+        )
+    }
+
+    private fun storeStampedAt(
+        version: Int,
+        state: DownloadStateStore = DownloadStateStore.Paused(progress = 12.5),
+        createdAt: Long = 0L
+    ) = FutureStore(
         downloads = mapOf(
             "task-1" to DownloadTaskStore(
                 id = "task-1",
                 fileName = "screens.apk",
                 fileUrl = "https://example.com/screens.apk",
-                filePath = "/files/installer/screens.apk",
-                fileSize = 1_024L,
-                state = DownloadStateStore.Paused(progress = 12.5)
+                filePath = FILE_PATH,
+                fileSize = FILE_SIZE,
+                state = state,
+                createdAtEpochMs = createdAt
             )
         ),
         schemaVersion = version
@@ -108,5 +215,8 @@ class DownloadStoreVersionTest {
 
     private companion object {
         const val STORE_PATH = "/tmp/nimbus/download_manager"
+        const val MIGRATED_AT = 1_757_700_000_000L
+        const val FILE_PATH = "/files/installer/screens.apk"
+        const val FILE_SIZE = 1_024L
     }
 }

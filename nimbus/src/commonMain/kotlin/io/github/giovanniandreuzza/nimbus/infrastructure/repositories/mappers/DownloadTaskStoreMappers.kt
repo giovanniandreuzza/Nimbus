@@ -32,7 +32,10 @@ internal object DownloadTaskStoreMappers {
             fileSize = fileSize,
             state = state.toState(),
             expectedChecksum = expectedChecksum.toChecksum(),
-            checksum = checksum.toChecksum()
+            checksum = checksum.toChecksum(),
+            createdAtEpochMs = createdAtEpochMs,
+            finishedAtEpochMs = finishedAtEpochMs,
+            resumeValidator = resumeValidator
         )
     }
 
@@ -63,7 +66,10 @@ internal object DownloadTaskStoreMappers {
             fileSize = fileSize.value,
             state = state.toStore(),
             expectedChecksum = expectedChecksum.toStore(),
-            checksum = checksum.toStore()
+            checksum = checksum.toStore(),
+            createdAtEpochMs = createdAtEpochMs,
+            finishedAtEpochMs = finishedAtEpochMs,
+            resumeValidator = resumeValidator
         )
     }
 

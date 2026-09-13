@@ -1,5 +1,6 @@
 package io.github.giovanniandreuzza.nimbus.infrastructure.repositories
 
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage.FileSystemNimbusStorageAdapter
@@ -97,7 +98,8 @@ class DownloadRepositoryObservabilityTest {
         return DownloadRepository(
             storePath = dir.resolve("download_manager").absolutePath,
             dispatcher = Dispatchers.IO,
-            nimbusStoragePort = FileSystemNimbusStorageAdapter()
+            nimbusStoragePort = FileSystemNimbusStorageAdapter(),
+            clock = FakeClock()
         )
     }
 

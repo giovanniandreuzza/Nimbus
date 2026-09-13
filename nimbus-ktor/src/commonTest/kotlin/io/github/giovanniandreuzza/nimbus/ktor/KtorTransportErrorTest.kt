@@ -6,6 +6,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryGetFileSizeErrorCause
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -41,7 +42,7 @@ class KtorTransportErrorTest {
     @Test
     fun `a socket timeout while asking for the size is temporary`() = runTest {
         val result = adapterThrowing(SocketTimeoutException("Socket timeout has expired"))
-            .getFileSize(url)
+            .getRemoteFile(url)
 
         assertEquals(
             "transport_failure",
@@ -53,7 +54,7 @@ class KtorTransportErrorTest {
     @Test
     fun `a connect timeout while asking for the size is temporary`() = runTest {
         val result = adapterThrowing(ConnectTimeoutException("Connect timeout has expired"))
-            .getFileSize(url)
+            .getRemoteFile(url)
 
         assertEquals("transport_failure", result.temporarySizeCause().code)
     }
@@ -61,7 +62,7 @@ class KtorTransportErrorTest {
     @Test
     fun `a request timeout while asking for the size is temporary`() = runTest {
         val result = adapterThrowing(HttpRequestTimeoutException(url, 1_000L))
-            .getFileSize(url)
+            .getRemoteFile(url)
 
         assertEquals("transport_failure", result.temporarySizeCause().code)
     }
@@ -69,7 +70,7 @@ class KtorTransportErrorTest {
     @Test
     fun `a socket timeout while transferring is temporary`() = runTest {
         val result = adapterThrowing(SocketTimeoutException("Socket timeout has expired"))
-            .downloadFile(url, offset = 0L) { fail("the body was never opened") }
+            .downloadFile(url, offset = 0L, resumeValidator = null) { fail("the body was never opened") }
 
         assertEquals(
             "transport_failure",
@@ -81,7 +82,7 @@ class KtorTransportErrorTest {
     @Test
     fun `the underlying transport error is carried on the cause`() = runTest {
         val result = adapterThrowing(SocketTimeoutException("Socket timeout has expired"))
-            .downloadFile(url, offset = 0L) { fail("the body was never opened") }
+            .downloadFile(url, offset = 0L, resumeValidator = null) { fail("the body was never opened") }
 
         val cause = result.temporaryDownloadCause()
         assertTrue(
@@ -93,7 +94,7 @@ class KtorTransportErrorTest {
     @Test
     fun `a connection reset before the body is temporary`() = runTest {
         val result = adapterThrowing(IOException("Connection reset by peer"))
-            .downloadFile(url, offset = 0L) { fail("the body was never opened") }
+            .downloadFile(url, offset = 0L, resumeValidator = null) { fail("the body was never opened") }
 
         assertEquals(
             "transport_failure",
@@ -105,7 +106,7 @@ class KtorTransportErrorTest {
     @Test
     fun `a name that does not resolve is temporary`() = runTest {
         val result = adapterThrowing(IOException("Unable to resolve host"))
-            .getFileSize(url)
+            .getRemoteFile(url)
 
         assertEquals("transport_failure", result.temporarySizeCause().code)
     }
@@ -117,7 +118,7 @@ class KtorTransportErrorTest {
     @Test
     fun `a failure that is not a timeout stays permanent`() = runTest {
         val result = adapterThrowing(IllegalStateException("engine exploded"))
-            .downloadFile(url, offset = 0L) { fail("the body was never opened") }
+            .downloadFile(url, offset = 0L, resumeValidator = null) { fail("the body was never opened") }
 
         val error = (result as? Failure)?.error ?: fail("expected a failure, got $result")
         assertTrue(
@@ -137,7 +138,7 @@ class KtorTransportErrorTest {
     // Helpers
     // -----------------------------------------------------------------------
 
-    private fun KResult<Long, GetFileSizeError>.temporarySizeCause():
+    private fun KResult<RemoteFile, GetFileSizeError>.temporarySizeCause():
             TemporaryGetFileSizeErrorCause {
         val error = (this as? Failure)?.error ?: fail("expected a failure, got $this")
         val temporary = error as? GetFileSizeError.TemporaryError

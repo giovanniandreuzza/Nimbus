@@ -11,6 +11,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.PermanentGetFi
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryGetFileSizeErrorCause
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.HttpRequestBuilder
@@ -87,12 +88,13 @@ public class KtorDownloadAdapter(
         timeout { socketTimeoutMillis = deadline }
     }
 
-    override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> {
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> {
         return try {
             val headResponse = httpClient.head(fileUrl) { applySocketTimeout() }
+            val validator = headResponse.resumeValidator()
             when (val head = mapFileSizeResponse(headResponse)) {
                 is Success -> {
-                    if (head.value > 0L) Success(head.value)
+                    if (head.value > 0L) Success(RemoteFile(head.value, validator))
                     else probeTotalSizeWithRangeGet(fileUrl)
                 }
 
@@ -119,23 +121,24 @@ public class KtorDownloadAdapter(
         }
     }
 
-    private suspend fun probeTotalSizeWithRangeGet(fileUrl: String): KResult<Long, GetFileSizeError> {
+    private suspend fun probeTotalSizeWithRangeGet(fileUrl: String): KResult<RemoteFile, GetFileSizeError> {
         return try {
             httpClient.prepareGet(fileUrl) {
                 applySocketTimeout()
                 headers { append("Range", "bytes=0-0") }
             }.execute { response ->
+                val validator = response.resumeValidator()
                 when (response.status.value) {
                     206 -> {
                         val total = parseContentRangeTotal(response.headers["Content-Range"])
                             ?: response.headers["Content-Length"]?.toLongOrNull()
-                        if (total != null && total > 0L) Success(total)
+                        if (total != null && total > 0L) Success(RemoteFile(total, validator))
                         else Failure(GetFileSizeError.PermanentError(PermanentGetFileSizeErrorCause.FileSizeUnavailable))
                     }
 
                     in 200..299 -> {
                         val cl = response.headers["Content-Length"]?.toLongOrNull() ?: 0L
-                        if (cl > 0L) Success(cl)
+                        if (cl > 0L) Success(RemoteFile(cl, validator))
                         else Failure(GetFileSizeError.PermanentError(PermanentGetFileSizeErrorCause.FileSizeUnavailable))
                     }
 
@@ -207,16 +210,23 @@ public class KtorDownloadAdapter(
     override suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
+        resumeValidator: String?,
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError> {
+        // `If-Range` only alongside a `Range`: on its own the header means nothing, and RFC
+        // 9110 says a server must ignore it there.
+        val conditional = offset > 0 && resumeValidator != null
         return try {
             httpClient.prepareGet(fileUrl) {
                 applySocketTimeout()
                 if (offset > 0) {
-                    headers { append("Range", "bytes=$offset-") }
+                    headers {
+                        append("Range", "bytes=$offset-")
+                        if (resumeValidator != null) append("If-Range", resumeValidator)
+                    }
                 }
             }.execute { response ->
-                mapDownloadResponse(response, offset, onSourceOpened)
+                mapDownloadResponse(response, offset, conditional, onSourceOpened)
             }
         } catch (e: CancellationException) {
             throw e
@@ -242,6 +252,7 @@ public class KtorDownloadAdapter(
     private suspend fun mapDownloadResponse(
         response: HttpResponse,
         offset: Long,
+        conditional: Boolean,
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError> {
         return when (response.status.value) {
@@ -301,8 +312,25 @@ public class KtorDownloadAdapter(
 
             in 200..299 -> {
                 if (offset > 0L) {
-                    // RFC 9110: partial content should be 206. Appending a full 200 body would corrupt the file.
                     response.bodyAsChannel().cancel(null)
+
+                    // With `If-Range` sent, a 200 is not a broken server: it is the origin
+                    // saying the file no longer matches what the partial came from, and
+                    // answering with the whole of the new one. Appending that to the old
+                    // prefix produces a file of the right length that was never a file, so
+                    // the partial goes and the transfer starts again — temporary, because
+                    // starting again works.
+                    if (conditional) {
+                        return Failure(
+                            DownloadError.TemporaryError(
+                                TemporaryDownloadErrorCause.RemoteFileChanged
+                            )
+                        )
+                    }
+
+                    // Without one, the same 200 says nothing about why. RFC 9110 asks for a
+                    // 206 here, and a server that answers otherwise cannot be resumed from
+                    // safely.
                     return Failure(
                         DownloadError.PermanentError(
                             PermanentDownloadErrorCause.InconsistentRangeResponse(
@@ -398,6 +426,18 @@ public class KtorDownloadAdapter(
 
         override fun close() = delegate.close()
     }
+
+    /**
+     * What identifies this version of the file: the `ETag` if the origin has one, otherwise
+     * `Last-Modified`.
+     *
+     * Both are opaque to Nimbus — they go back out unchanged as `If-Range`, which is exactly
+     * what RFC 9110 says that header takes. `Last-Modified` is the weaker of the two (one
+     * second of resolution, so a file rewritten within the same second looks unchanged), and
+     * it is still far better than the alternative of assuming nothing ever changes.
+     */
+    private fun HttpResponse.resumeValidator(): String? =
+        headers["ETag"] ?: headers["Last-Modified"]
 
     private fun isTransportFailure(error: Throwable): Boolean = error is IOException
 

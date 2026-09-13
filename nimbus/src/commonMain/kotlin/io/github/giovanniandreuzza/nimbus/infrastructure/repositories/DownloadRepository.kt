@@ -13,10 +13,12 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.TransitionFail
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
+import io.github.giovanniandreuzza.nimbus.core.ports.ClockPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.frameworks.store.StoreManager
 import io.github.giovanniandreuzza.nimbus.frameworks.store.errors.InitStoreError
 import io.github.giovanniandreuzza.nimbus.frameworks.store.errors.StoreError
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadStateStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadTaskStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
@@ -61,6 +63,7 @@ internal class DownloadRepository(
     storePath: String,
     dispatcher: CoroutineDispatcher,
     private val nimbusStoragePort: NimbusStoragePort,
+    private val clock: ClockPort,
     private val logger: NimbusLogger? = null,
     storeScope: CoroutineScope = CoroutineScope(SupervisorJob() + dispatcher),
     coalesceWindowMs: Long = DEFAULT_COALESCE_WINDOW_MS
@@ -90,6 +93,7 @@ internal class DownloadRepository(
         storePath = storePath,
         dispatcher = dispatcher,
         nimbusStoragePort = nimbusStoragePort,
+        clock = clock,
         scope = storeScope,
         coalesceWindowMs = coalesceWindowMs,
         onReset = { reason -> logger?.log(NimbusLogEvent.StoreReset(reason)) },
@@ -291,6 +295,7 @@ internal class DownloadRepository(
         storePath: String,
         dispatcher: CoroutineDispatcher,
         nimbusStoragePort: NimbusStoragePort,
+        private val clock: ClockPort,
         scope: CoroutineScope,
         coalesceWindowMs: Long,
         onReset: suspend (reason: String) -> Unit,
@@ -341,10 +346,37 @@ internal class DownloadRepository(
                 // it so the migration is paid once rather than on every boot; the tasks
                 // themselves are kept, because discarding them would cost the device a
                 // re-download of everything it had already fetched.
-                update { it.copy(schemaVersion = DownloadStore.SCHEMA_VERSION) }
+                //
+                // The timestamps are the one field that cannot be left at its decoded value:
+                // zero reads as 1970, and the first `pruneFinished` would take that as
+                // "older than anything you could ask for" and delete every file the device
+                // already had. Stamping them with the time of the migration says what is
+                // actually known — that these tasks existed by the time this build first ran.
+                val now = clock.nowEpochMs()
+                update { store ->
+                    store.copy(
+                        schemaVersion = DownloadStore.SCHEMA_VERSION,
+                        downloads = store.downloads.mapValues { (_, task) -> task.stamped(now) }
+                    )
+                }
             }
 
             return result
+        }
+
+        /**
+         * Gives a task from an older store the timestamps it never had.
+         *
+         * Only where they are missing: a store already carrying them is left exactly as it is,
+         * so a second migration — or a build that reads a v3 store — cannot move a date.
+         */
+        private fun DownloadTaskStore.stamped(now: Long): DownloadTaskStore {
+            if (createdAtEpochMs != 0L) return this
+            return copy(
+                createdAtEpochMs = now,
+                finishedAtEpochMs = finishedAtEpochMs
+                    ?: now.takeIf { state is DownloadStateStore.Finished }
+            )
         }
 
         fun getAll(): Map<DownloadId, DownloadTask> =

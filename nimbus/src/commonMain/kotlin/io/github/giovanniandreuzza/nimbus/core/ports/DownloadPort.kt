@@ -6,7 +6,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
 
 internal interface DownloadPort {
-    suspend fun getFileSizeToDownload(fileUrl: String): KResult<Long, GetFileSizeError>
+    suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFileInfo, GetFileSizeError>
     suspend fun startDownload(downloadTask: DownloadTaskDTO): KResult<Unit, DownloadError>
     suspend fun stopDownload(downloadId: String)
 

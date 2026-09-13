@@ -13,6 +13,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.PermanentDownl
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryGetFileSizeErrorCause
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
+import io.github.giovanniandreuzza.nimbus.core.ports.RemoteFileInfo
 import io.github.giovanniandreuzza.nimbus.core.ports.ContentDigestPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.digest.ContentDigest
@@ -99,10 +100,10 @@ internal class DownloadAdapter(
      * fail a download, it suspends whoever asked for one. On a device reconciling a manifest
      * that is the loop that keeps the whole catalogue up to date.
      */
-    override suspend fun getFileSizeToDownload(fileUrl: String): KResult<Long, GetFileSizeError> {
-        val timeout = stallTimeoutMs ?: return nimbusDownloadPort.getFileSize(fileUrl)
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFileInfo, GetFileSizeError> {
+        val timeout = stallTimeoutMs ?: return askOrigin(fileUrl)
 
-        return withTimeoutOrNull(timeout) { nimbusDownloadPort.getFileSize(fileUrl) }
+        return withTimeoutOrNull(timeout) { askOrigin(fileUrl) }
             ?: Failure(
                 GetFileSizeError.TemporaryError(
                     TemporaryGetFileSizeErrorCause.TransportFailure(
@@ -114,6 +115,18 @@ internal class DownloadAdapter(
                 )
             )
     }
+
+    private suspend fun askOrigin(fileUrl: String): KResult<RemoteFileInfo, GetFileSizeError> =
+        when (val remote = nimbusDownloadPort.getRemoteFile(fileUrl)) {
+            is Success -> Success(
+                RemoteFileInfo(
+                    sizeBytes = remote.value.sizeBytes,
+                    validator = remote.value.validator
+                )
+            )
+
+            is Failure -> remote
+        }
 
     @OptIn(InternalIoApi::class)
     override suspend fun startDownload(downloadTask: DownloadTaskDTO): KResult<Unit, DownloadError> {
@@ -451,7 +464,8 @@ internal class DownloadAdapter(
             val result = runWithStallWatchdog(progressTicks) {
                 nimbusDownloadPort.downloadFile(
                     fileUrl = downloadTask.fileUrl,
-                    offset = progressBytes
+                    offset = progressBytes,
+                    resumeValidator = downloadTask.resumeValidator
                 ) { source ->
                     try {
                         sink.use { output ->
@@ -509,8 +523,12 @@ internal class DownloadAdapter(
                     // situation and the truncation budget starts over.
                     if (progressBytes > bytesBeforeAttempt) truncations = 0
 
-                    val rangeRefused = downloadError is DownloadError.TemporaryError &&
-                            downloadError.errorCause is TemporaryDownloadErrorCause.RangeNotSatisfiable
+                    // Two ways to be told the local bytes are worthless: the origin refused
+                    // the range, or it no longer recognises the file they came from. The
+                    // recovery is the same and so is the budget for it.
+                    val cause = (downloadError as? DownloadError.TemporaryError)?.errorCause
+                    val startOver = cause is TemporaryDownloadErrorCause.RangeNotSatisfiable ||
+                            cause is TemporaryDownloadErrorCause.RemoteFileChanged
 
                     when {
                         // A 416 means the server rejected the range this adapter asked for, so
@@ -523,7 +541,7 @@ internal class DownloadAdapter(
                         // recreating the file on every pass. From here it is an ordinary
                         // temporary failure, which is budgeted, backed off, and eventually
                         // reported.
-                        rangeRefused && truncations < MAX_CONSECUTIVE_TRUNCATIONS -> {
+                        startOver && truncations < MAX_CONSECUTIVE_TRUNCATIONS -> {
                             if (!truncateLocalFile(downloadTask.filePath, id)) return null
                             truncations += 1
                             progressBytes = 0L

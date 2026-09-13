@@ -3,6 +3,7 @@ package io.github.giovanniandreuzza.nimbus.infrastructure.repositories
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadStateStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadStore
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.models.storage.DownloadTaskStore
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -70,6 +71,7 @@ class InterruptedStoreWriteTest {
             storePath = STORE_PATH,
             dispatcher = dispatcher,
             nimbusStoragePort = storage,
+            clock = FakeClock(),
             logger = null,
             storeScope = CoroutineScope(SupervisorJob() + dispatcher)
         )

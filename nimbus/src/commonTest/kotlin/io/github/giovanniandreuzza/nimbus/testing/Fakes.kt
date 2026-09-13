@@ -13,6 +13,8 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeErr
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
+import io.github.giovanniandreuzza.nimbus.core.ports.ClockPort
+import io.github.giovanniandreuzza.nimbus.core.ports.RemoteFileInfo
 import io.github.giovanniandreuzza.nimbus.core.ports.ContentDigestPort
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.ContentDigestAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.NimbusStoragePort
@@ -151,8 +153,11 @@ internal class ScriptedDownloadPort(
         remoteSize = size
     }
 
-    override suspend fun getFileSizeToDownload(fileUrl: String): KResult<Long, GetFileSizeError> =
-        sizeFailure?.let { Failure(it) } ?: Success(remoteSize)
+    /** What the origin claims identifies the file. Change it to make a resume look stale. */
+    var remoteValidator: String? = null
+
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFileInfo, GetFileSizeError> =
+        sizeFailure?.let { Failure(it) } ?: Success(RemoteFileInfo(remoteSize, remoteValidator))
 
     override suspend fun startDownload(downloadTask: DownloadTaskDTO): KResult<Unit, DownloadError> {
         started.add(downloadTask)
@@ -228,4 +233,18 @@ internal fun digestPortFor(storage: NimbusStoragePort): ContentDigestPort =
 internal object MidJitter : Random() {
     override fun nextBits(bitCount: Int): Int = 0
     override fun nextDouble(): Double = 0.5
+}
+
+/**
+ * A clock a test can move.
+ *
+ * The timestamps this library writes are read back weeks later by `pruneFinished`, so a test
+ * that could not move time could only test pruning by waiting through it.
+ */
+internal class FakeClock(private var nowMs: Long = 1_700_000_000_000L) : ClockPort {
+    override fun nowEpochMs(): Long = nowMs
+
+    fun advanceBy(millis: Long) {
+        nowMs += millis
+    }
 }

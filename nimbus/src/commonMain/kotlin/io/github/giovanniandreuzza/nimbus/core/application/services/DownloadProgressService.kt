@@ -7,6 +7,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TransitionFailure
 import io.github.giovanniandreuzza.nimbus.core.application.toNimbusError
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
+import io.github.giovanniandreuzza.nimbus.core.ports.ClockPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
@@ -28,6 +29,7 @@ import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 @IsApplicationService
 internal class DownloadProgressService(
     private val downloadTaskRepository: DownloadTaskRepository,
+    private val clock: ClockPort,
     private val logger: NimbusLogger?,
     private val onAutoRetry: (suspend (fileUrl: String) -> Unit)?,
     private val onDownloadSucceeded: (suspend (fileUrl: String) -> Unit)? = null
@@ -79,7 +81,7 @@ internal class DownloadProgressService(
             .getOr { return }
 
         downloadTaskRepository.transitionDownloadTask(downloadId) { task ->
-            task.finish(checksum)
+            task.finish(checksum, atEpochMs = clock.nowEpochMs())
         }.onFailure { failure ->
             if (failure is TransitionFailure.NotPersisted) {
                 logger?.log(NimbusLogEvent.PersistenceFailed(fileUrl, failure.cause))

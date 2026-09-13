@@ -105,6 +105,13 @@ suspend fun ensureDownloaded(fileUrl: String, filePath: String, fileName: String
 ```
 
 ```kotlin
+// Housekeeping
+suspend fun pruneFinished(olderThanMs: Long, deleteFiles: Boolean = false): KResult<List<String>, NimbusError>
+// Forgets finished tasks that finished longer ago than olderThanMs; returns the urls removed.
+// Age is measured from DownloadTaskDTO.finishedAtEpochMs, which is null until this build has
+// seen the task finish — tasks from a pre-2.5.0 store are stamped at the upgrade, so the first
+// call after an update does not empty the device. A task that has not finished is never pruned.
+
 // Lifecycle
 suspend fun flush(): KResult<Unit, NimbusError>
 // Commits state that was waiting for a coalesced write. Terminal states are already durable.
@@ -283,6 +290,7 @@ sealed class DownloadError {
 
 sealed class TemporaryDownloadErrorCause {
     data class  ServerError(statusCode: Int)   // HTTP 5xx
+    data object RemoteFileChanged      // the origin answered a conditional resume with the whole file
     data object RangeNotSatisfiable            // HTTP 416; adapter truncates and retries from byte 0
     data object FileIntegrityMismatch          // downloaded size ≠ expected size; will retry
     data object FileNotAccessible              // local file could not be opened for writing; will retry
@@ -502,6 +510,16 @@ have to discover from a bug report.
   request it makes (`KtorDownloadAdapter(client, socketTimeoutMillis = …)`, `null` to opt out).
   A hand-written port must do the same, or a wedged read outlives both `pauseDownload` and the
   stall guard.
+- **A resume asks the origin whether the file is still the same one.** `getRemoteFile` reports a
+  validator (HTTP: `ETag`, else `Last-Modified`) alongside the size; it is stored with the task
+  and sent back as `If-Range`. An origin that answers with the whole file means the file changed:
+  `TemporaryDownloadErrorCause.RemoteFileChanged`, the partial is discarded and the transfer
+  starts from zero. `retryFailedDownload` applies the same rule — a validator that no longer
+  matches discards the partial even when the size is identical, which is exactly the case
+  (a re-encode, a regenerated manifest) that every previous check passed.
+- **`DownloadTaskDTO` carries `createdAtEpochMs`, `finishedAtEpochMs` and `resumeValidator`**
+  as of schema 3. Zero and null mean "this build has not seen it yet"; the migration stamps
+  tasks from an older store with the time of the upgrade.
 - **Nothing past the declared size is ever written.** The size request drives the writing as
   well as the progress and the checks: a body still arriving after the declared number of bytes
   stops being read, and the download fails with

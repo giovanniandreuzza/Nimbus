@@ -6,6 +6,7 @@ import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
 import io.github.giovanniandreuzza.nimbus.core.ports.IdProviderPort
+import io.github.giovanniandreuzza.nimbus.core.ports.ClockPort
 import io.github.giovanniandreuzza.nimbus.core.ports.ContentDigestPort
 import io.github.giovanniandreuzza.nimbus.core.ports.StoragePort
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage.FileSystemNimbusStorageAdapter
@@ -16,6 +17,7 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.ports.IdProviderAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.ContentDigestAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.ports.StorageAdapter
 import io.github.giovanniandreuzza.nimbus.infrastructure.repositories.DownloadRepository
+import io.github.giovanniandreuzza.nimbus.infrastructure.time.SystemClock
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
@@ -53,10 +55,13 @@ internal fun init(
 ): DownloadService {
     val storage: NimbusStoragePort = nimbusStoragePort ?: FileSystemNimbusStorageAdapter()
 
+    val clock: ClockPort = SystemClock
+
     val repository: DownloadTaskRepository = DownloadRepository(
         storePath = downloadManagerPath,
         dispatcher = ioDispatcher,
         nimbusStoragePort = storage,
+        clock = clock,
         logger = logger,
         storeScope = downloadScope
     )
@@ -65,6 +70,7 @@ internal fun init(
 
     val progressCallback: DownloadProgressCallback = DownloadProgressService(
         downloadTaskRepository = repository,
+        clock = clock,
         logger = logger,
         onAutoRetry = if (autoStart) { url -> autoRetryRef.scheduler?.schedule(url) } else null,
         onDownloadSucceeded = if (autoStart) { url -> autoRetryRef.scheduler?.forget(url) } else null
@@ -97,6 +103,7 @@ internal fun init(
         repository = repository,
         storagePort = storagePort,
         contentDigestPort = contentDigestPort,
+        clock = clock,
         digestAlgorithm = digestAlgorithm,
         minReservedDiskBytes = minReservedDiskBytes,
         logger = logger,

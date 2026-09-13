@@ -26,8 +26,27 @@ internal class DownloadTask private constructor(
     private var _state: DownloadState,
     /** What the caller said the finished file should hash to, if anything. */
     private var _expectedChecksum: Checksum?,
-    private var _checksum: Checksum?
+    private var _checksum: Checksum?,
+    /** When the task was created, in milliseconds since the epoch. */
+    val createdAtEpochMs: Long,
+    private var _finishedAtEpochMs: Long?,
+    private var _resumeValidator: String?
 ) : Entity<DownloadId>(id = id) {
+
+    /** When the file was last reported complete, or null if it has not been. */
+    val finishedAtEpochMs: Long?
+        get() = _finishedAtEpochMs
+
+    /**
+     * What the origin said identified this file when its size was asked for — an HTTP `ETag`
+     * or `Last-Modified`, or whatever the transport in use calls the same thing.
+     *
+     * Opaque here on purpose: the only thing this library does with it is hand it back on a
+     * resume, so the transport can refuse to append the tail of a file that is no longer the
+     * file the prefix came from.
+     */
+    val resumeValidator: String?
+        get() = _resumeValidator
 
     val expectedChecksum: Checksum?
         get() = _expectedChecksum
@@ -76,6 +95,11 @@ internal class DownloadTask private constructor(
         _state = DownloadState.Failed(error)
     }
 
+    /** Adopts what the origin now says identifies the file. */
+    fun updateResumeValidator(validator: String?) {
+        _resumeValidator = validator
+    }
+
     fun cancel() {
         _state = DownloadState.Cancelled
     }
@@ -88,6 +112,9 @@ internal class DownloadTask private constructor(
      */
     fun resetToEnqueued() {
         _state = DownloadState.Enqueued
+        // It is not finished any more, and a timestamp saying otherwise would have
+        // `pruneFinished` delete a task that is waiting to be downloaded.
+        _finishedAtEpochMs = null
     }
 
     /**
@@ -98,6 +125,7 @@ internal class DownloadTask private constructor(
     fun resetFromFailedToEnqueued(): Boolean {
         if (_state !is DownloadState.Failed) return false
         _state = DownloadState.Enqueued
+        _finishedAtEpochMs = null
         return true
     }
 
@@ -141,9 +169,10 @@ internal class DownloadTask private constructor(
      * task whose content is identified are the same fact, and splitting them would allow a
      * window where one is true and the other is not.
      */
-    fun finish(checksum: Checksum? = null) {
+    fun finish(checksum: Checksum? = null, atEpochMs: Long? = null) {
         _state = DownloadState.Finished
         if (checksum != null) _checksum = checksum
+        if (atEpochMs != null) _finishedAtEpochMs = atEpochMs
     }
 
     override fun toString(): String {
@@ -167,7 +196,9 @@ internal class DownloadTask private constructor(
             filePath: String,
             fileName: String,
             fileSize: Long,
-            expectedChecksum: Checksum? = null
+            expectedChecksum: Checksum? = null,
+            createdAtEpochMs: Long = 0L,
+            resumeValidator: String? = null
         ): DownloadTask {
             val id = DownloadId.create(id)
             val fileUrl = FileUrl.create(fileUrl)
@@ -183,7 +214,10 @@ internal class DownloadTask private constructor(
                 fileSize = fileSize,
                 _state = DownloadState.Enqueued,
                 _expectedChecksum = expectedChecksum,
-                _checksum = null
+                _checksum = null,
+                createdAtEpochMs = createdAtEpochMs,
+                _finishedAtEpochMs = null,
+                _resumeValidator = resumeValidator
             )
         }
 
@@ -206,7 +240,10 @@ internal class DownloadTask private constructor(
             fileSize: Long,
             state: DownloadState,
             expectedChecksum: Checksum? = null,
-            checksum: Checksum? = null
+            checksum: Checksum? = null,
+            createdAtEpochMs: Long = 0L,
+            finishedAtEpochMs: Long? = null,
+            resumeValidator: String? = null
         ): DownloadTask {
             val id = DownloadId.create(id)
             val fileUrl = FileUrl.create(fileUrl)
@@ -222,7 +259,10 @@ internal class DownloadTask private constructor(
                 fileSize = fileSize,
                 _state = state,
                 _expectedChecksum = expectedChecksum,
-                _checksum = checksum
+                _checksum = checksum,
+                createdAtEpochMs = createdAtEpochMs,
+                _finishedAtEpochMs = finishedAtEpochMs,
+                _resumeValidator = resumeValidator
             )
         }
     }

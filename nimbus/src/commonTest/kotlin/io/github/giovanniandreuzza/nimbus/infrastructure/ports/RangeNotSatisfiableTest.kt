@@ -14,6 +14,7 @@ import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.CreateFileError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.errors.storage.DeleteFileError
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
@@ -285,12 +286,13 @@ private class RangeRejectingPort(
     var requests: Int = 0
         private set
 
-    override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> =
-        Success(content.size.toLong())
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
+        Success(RemoteFile(content.size.toLong()))
 
     override suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
+        resumeValidator: String?,
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError> {
         requests++

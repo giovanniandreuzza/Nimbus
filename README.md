@@ -187,8 +187,22 @@ Every method is `suspend` and returns `KResult<T, NimbusError>` unless noted.
 | `getFileSize(url)` | Remote size without downloading |
 | `isDownloaded(url)` | *Returns `Boolean`.* Finished **and** the file is on disk |
 | `checksum(url)` | Re-hashes the finished file from disk |
+| `pruneFinished(olderThanMs, deleteFiles = false)` | Forgets old finished tasks; returns their urls |
 | `flush()` | Commits state that was waiting for a coalesced write |
 | `close()` | *Returns `Unit`.* Stops transfers, commits, releases the scope |
+
+### Keeping the catalogue from growing forever
+
+A finished task stays until something removes it — a `stat` at every boot, a slot in every
+commit. On a player that cycles content for years that is a cost with no ceiling, so tasks record
+when they finished and `pruneFinished` uses it:
+
+```kotlin
+nimbus.pruneFinished(olderThanMs = 30.days.inWholeMilliseconds, deleteFiles = true)
+```
+
+Tasks stored before 2.5.0 are stamped at the upgrade, so their age is measured from there rather
+than from 1970 — the first call after an update does not empty the device.
 
 ### Shutting down
 
@@ -291,13 +305,16 @@ interface:
 
 ```kotlin
 interface NimbusDownloadPort {
-    suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError>
+    suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError>
     suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
+        resumeValidator: String?,
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError>
 }
+
+data class RemoteFile(val sizeBytes: Long, val validator: String? = null)
 ```
 
 A URL, a byte offset, and a stream of bytes. There is no HTTP in that shape, and core does not
@@ -349,6 +366,14 @@ Two rules that are easy to miss, and expensive to miss:
 
 - **Call `onSourceOpened` exactly once**, with one `Source` for the whole body. Nimbus opens the
   destination file around that call and closes it when the call returns.
+- **Report a validator, and honour it on a resume.** `getRemoteFile` returns the size *and* an
+  opaque token identifying that version of the file (over HTTP: `ETag`, else `Last-Modified`);
+  `downloadFile` gets it back as `resumeValidator` and sends it as `If-Range`. If the origin
+  answers with the whole file instead of the range, report
+  `TemporaryDownloadErrorCause.RemoteFileChanged` — appending the tail of a new file to the prefix
+  of an old one produces a file of exactly the right length that was never a file, which only a
+  digest would catch. Return `null` for the validator if your transport has no such notion and
+  resumes behave as they always did.
 - **Give the transport its own deadline for inactivity.** Nimbus abandons a transfer that delivers
   nothing for `withStallTimeoutMs`, but abandoning it means cancelling your call — which only
   unwinds an adapter that *suspends* while it waits. `KtorDownloadAdapter` blocks a thread inside

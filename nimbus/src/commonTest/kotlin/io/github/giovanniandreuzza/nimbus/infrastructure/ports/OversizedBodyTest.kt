@@ -9,6 +9,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.PermanentDownl
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
@@ -217,12 +218,13 @@ private class OversizedPort(
     /** What the transfer left on the wire. */
     val unreadBytes: Long get() = body.size
 
-    override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> =
-        Success(declared)
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
+        Success(RemoteFile(declared))
 
     override suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
+        resumeValidator: String?,
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError> {
         attempts++

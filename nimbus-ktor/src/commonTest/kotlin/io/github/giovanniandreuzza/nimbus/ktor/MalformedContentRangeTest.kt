@@ -31,7 +31,7 @@ class MalformedContentRangeTest {
     fun `a 206 with an unparsable Content-Range is refused during a resume`() = runTest {
         val adapter = adapterRespondingWith("bytes garbage/1000")
 
-        val result = adapter.downloadFile(URL, offset = 100L) { }
+        val result = adapter.downloadFile(URL, offset = 100L, resumeValidator = null) { }
 
         assertRefused(result)
     }
@@ -41,7 +41,7 @@ class MalformedContentRangeTest {
         runTest {
             val adapter = adapterRespondingWith("pages 1-2/3")
 
-            val result = adapter.downloadFile(URL, offset = 100L) { }
+            val result = adapter.downloadFile(URL, offset = 100L, resumeValidator = null) { }
 
             assertRefused(result)
         }

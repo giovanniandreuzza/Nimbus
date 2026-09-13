@@ -69,6 +69,7 @@ internal object DownloadStateStoreMappers {
         when (this.errorCode) {
             "server_error" -> TemporaryDownloadErrorCause.ServerError(this.errorMessage.parseStatusCode())
             "range_not_satisfiable" -> TemporaryDownloadErrorCause.RangeNotSatisfiable
+            "remote_file_changed" -> TemporaryDownloadErrorCause.RemoteFileChanged
             "file_integrity_mismatch" -> TemporaryDownloadErrorCause.FileIntegrityMismatch
             "file_not_accessible" -> TemporaryDownloadErrorCause.FileNotAccessible
             "truncate_race" -> TemporaryDownloadErrorCause.TruncateRace

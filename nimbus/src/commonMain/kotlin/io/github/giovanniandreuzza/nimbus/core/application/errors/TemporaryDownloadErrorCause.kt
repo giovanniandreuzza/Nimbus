@@ -31,6 +31,23 @@ public sealed class TemporaryDownloadErrorCause(
      * HTTP 416 — the server rejected the `Range` header (e.g. local file is longer than
      * the remote resource). The adapter will truncate the local file and restart from byte 0.
      */
+    /**
+     * The file at the origin is no longer the one the local partial came from.
+     *
+     * Reported by a transport that asked the origin to honour a range only if the file still
+     * matched what it looked like when the transfer began, and was answered with the whole
+     * file instead. Temporary, and the recovery is the same as for a refused range: the
+     * partial is discarded and the file is fetched from the start.
+     *
+     * Without this the tail of the new file is appended to the prefix of the old one, and the
+     * result is exactly the right length and was never a file. The size check cannot see it;
+     * only a digest can, and the digest is opt-in.
+     */
+    public data object RemoteFileChanged : TemporaryDownloadErrorCause(
+        code = "remote_file_changed",
+        message = "The file at the origin changed while a resume was in progress."
+    )
+
     public data object RangeNotSatisfiable : TemporaryDownloadErrorCause(
         code = "range_not_satisfiable",
         message = "The server rejected the byte range (HTTP 416)."

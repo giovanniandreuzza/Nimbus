@@ -86,7 +86,7 @@ sample_android/                      ← Android demo app (Koin DI, KtorDownload
   `TemporaryDownloadErrorCause`, `PermanentDownloadErrorCause`, `GetFileSizeError`,
   `TemporaryGetFileSizeErrorCause`, `PermanentGetFileSizeErrorCause`, `DownloadTaskDTO`,
   `NimbusDownloadPort`, `NimbusStoragePort`, `NimbusLogger`, `NimbusLogEvent`,
-  `Checksum`, `DigestAlgorithm`, `RetryPolicy`).
+  `Checksum`, `DigestAlgorithm`, `RetryPolicy`, `RemoteFile`).
   Everything else is `internal`.
 - **`DownloadService`** is the single application service. Do not split it into use cases.
 - **`DownloadTask`** owns all state-transition logic. Call `.start()`, `.pause()`, `.resume()`,
@@ -175,6 +175,10 @@ sample_android/                      ← Android demo app (Koin DI, KtorDownload
 | `checksum()` with no algorithm returns `ContentDigestDisabled`, not `UnexpectedError` | A foreseeable configuration mistake the caller can fix should not arrive in the branch they wrote for failures they could not foresee |
 | A refused write asks the volume for free space rather than reading the exception text | The message is the platform's to phrase; and what is left to write comes from the file, since the byte counter advances before the buffered sink flushes |
 | An `expectedChecksum` no configured digest can produce is refused before a task exists | With the digest off the comparison is skipped and the download reports finished, so a caller who asked for a verification is told nothing — and `checksum()` already answers `ContentDigestDisabled` for the same configuration. A checksum naming another algorithm compares unequal forever: `ChecksumMismatch` is temporary, so the file is refetched on every pass for a condition no retry changes |
+| The resume validator is stored with the task and sent as `If-Range`                 | The size alone cannot tell a resumed file from a replaced one of the same length — a re-encode at the same bitrate, a regenerated manifest — and appending the tail of the new file to the prefix of the old produces exactly the right length and bytes that were never a file. `RemoteFileChanged` is temporary and recovers the way a 416 does |
+| A migrated store is stamped with the time of the migration, not with zero           | The timestamps decode as zero for a pre-2.5.0 blob, which reads as 1970, and the first `pruneFinished` would take that as older than anything and delete every file the device already had. The stamp says what is known: these tasks existed by the time this build first ran |
+| `resetToEnqueued`/`resetFromFailedToEnqueued` clear `finishedAtEpochMs`             | A task waiting to be downloaded that still carries a finish time is a task `pruneFinished` will delete |
+| Wall-clock time is a port (`ClockPort`), not a call to the platform                 | The timestamps end up on disk and are read back weeks later by `pruneFinished`; a test that cannot move time could only test pruning by waiting through it |
 | `close()` stops, commits, then releases — and returns `Unit`                        | Each step decides what the next sees: nothing may still be writing while the store is committed, and the commit still needs a scope to run in. It returns nothing because there is nothing a caller can do with a failure while the process is going away, and a `close` that can fail is one people wrap in a `try` and get wrong |
 | `close()` cancels the coroutine scope only when Nimbus made it                      | A scope from `withDownloadScope` belongs to the caller and usually runs more than downloads. The builder tracks which one it is |
 | A call after `close()` fails with `Closed` rather than doing nothing                | The scope is gone, so a download would be registered and never run: a call that reports success and silently does nothing, discovered weeks later as a file that never arrived |

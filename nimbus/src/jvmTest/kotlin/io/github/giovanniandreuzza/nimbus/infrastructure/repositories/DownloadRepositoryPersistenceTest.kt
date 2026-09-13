@@ -1,5 +1,6 @@
 package io.github.giovanniandreuzza.nimbus.infrastructure.repositories
 
+import io.github.giovanniandreuzza.nimbus.testing.FakeClock
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.adapters.storage.FileSystemNimbusStorageAdapter
@@ -88,7 +89,8 @@ class DownloadRepositoryPersistenceTest {
     private fun repositoryOn(storeFile: File) = DownloadRepository(
         storePath = storeFile.absolutePath,
         dispatcher = Dispatchers.IO,
-        nimbusStoragePort = FileSystemNimbusStorageAdapter()
+        nimbusStoragePort = FileSystemNimbusStorageAdapter(),
+        clock = FakeClock()
     )
 
     private fun taskNamed(name: String) = DownloadTask.create(

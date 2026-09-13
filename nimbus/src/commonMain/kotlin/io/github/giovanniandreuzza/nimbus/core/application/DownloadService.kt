@@ -14,6 +14,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.TransitionFail
 import io.github.giovanniandreuzza.nimbus.core.domain.entities.DownloadTask
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.domain.value_objects.DownloadId
+import io.github.giovanniandreuzza.nimbus.core.ports.ClockPort
 import io.github.giovanniandreuzza.nimbus.core.ports.ContentDigestPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadPort
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadTaskRepository
@@ -59,6 +60,7 @@ internal class DownloadService(
     private val repository: DownloadTaskRepository,
     private val storagePort: StoragePort,
     private val contentDigestPort: ContentDigestPort,
+    private val clock: ClockPort,
     private val digestAlgorithm: DigestAlgorithm?,
     private val minReservedDiskBytes: Long?,
     private val logger: NimbusLogger?,
@@ -194,10 +196,10 @@ internal class DownloadService(
     // via downloadPort and never touches the repository, so there is no need to wait
     // for the loading gate to complete.
     override suspend fun getFileSize(fileUrl: String): KResult<Long, NimbusError> {
-        val size = downloadPort.getFileSizeToDownload(fileUrl).getOr {
+        val remote = downloadPort.getRemoteFile(fileUrl).getOr {
             return Failure(it.toNimbusError())
         }
-        return Success(size)
+        return Success(remote.sizeBytes)
     }
 
     override suspend fun getDownloadTask(fileUrl: String): KResult<DownloadTaskDTO, NimbusError> =
@@ -252,9 +254,10 @@ internal class DownloadService(
                 )
             }
 
-            val fileSize = downloadPort.getFileSizeToDownload(fileUrl).getOr {
+            val remote = downloadPort.getRemoteFile(fileUrl).getOr {
                 return@withOperationLock Failure(it.toNimbusError())
             }
+            val fileSize = remote.sizeBytes
             validateFileSize(fileSize).onFailure { return@withOperationLock Failure(it) }
 
             ensureDiskHeadroom(
@@ -271,7 +274,9 @@ internal class DownloadService(
                 filePath = filePath,
                 fileName = fileName,
                 fileSize = fileSize,
-                expectedChecksum = expectedChecksum
+                expectedChecksum = expectedChecksum,
+                createdAtEpochMs = clock.nowEpochMs(),
+                resumeValidator = remote.validator
             )
 
             repository.saveDownloadTask(task).onFailure {
@@ -534,6 +539,29 @@ internal class DownloadService(
         }
     }
 
+    override suspend fun pruneFinished(
+        olderThanMs: Long,
+        deleteFiles: Boolean
+    ): KResult<List<String>, NimbusError> = withReady {
+        require(olderThanMs >= 0L) { "olderThanMs must be >= 0" }
+
+        val cutoff = clock.nowEpochMs() - olderThanMs
+        val stale = repository.getAllDownloadTasks().filter { task ->
+            val finishedAt = task.finishedAtEpochMs
+            task.state is DownloadState.Finished && finishedAt != null && finishedAt < cutoff
+        }
+
+        val pruned = mutableListOf<String>()
+        for (task in stale) {
+            // Through removeDownload, so each one takes the task's own operation lock and
+            // cannot race a download that has just been started for the same url.
+            removeDownload(task.fileUrl, deleteAssociatedFile = deleteFiles)
+                .onFailure { return@withReady Failure(it) }
+            pruned += task.fileUrl
+        }
+        Success(pruned)
+    }
+
     /**
      * Applies [expectedChecksum] to a task that already exists.
      *
@@ -703,14 +731,16 @@ internal class DownloadService(
                         FailedSnapshot(
                             filePath = task.filePath.value,
                             previousSize = task.fileSize.value,
+                            validator = task.resumeValidator,
                             error = failure.error
                         )
                     }
                 }.getOr { return@withOperationLock Failure(it.toNimbusError()) }
 
-                val newSize = downloadPort.getFileSizeToDownload(fileUrl).getOr {
+                val remote = downloadPort.getRemoteFile(fileUrl).getOr {
                     return@withOperationLock Failure(it.toNimbusError())
                 }
+                val newSize = remote.sizeBytes
                 validateFileSize(newSize).onFailure { return@withOperationLock Failure(it) }
 
                 // Keep the partial only when nothing about this retry can invalidate it.
@@ -727,7 +757,13 @@ internal class DownloadService(
                 // same wrong bytes on every attempt and never converge. A cause added later
                 // therefore falls through to discarding, which is the old behaviour, rather
                 // than silently keeping a file nobody has reasoned about.
+                // The validator is the other half of the question the size was asked to
+                // answer alone. A file replaced by one of exactly the same length passes the
+                // size test and is a different file, and resuming into it appends the tail of
+                // the new one to the prefix of the old.
+                val sameFile = remote.validator == null || remote.validator == failed.validator
                 val resumable = newSize == failed.previousSize &&
+                        sameFile &&
                         failed.error.isAboutTheTransport()
 
                 if (!resumable) {
@@ -753,6 +789,7 @@ internal class DownloadService(
                 // be the change that got lost.
                 repository.transitionDownloadTask(downloadId) { task ->
                     if (!task.updateExpectedFileSize(newSize)) return@transitionDownloadTask null
+                    task.updateResumeValidator(remote.validator)
                     if (!task.resetFromFailedToEnqueued()) return@transitionDownloadTask null
                     Unit
                 }.getOr { return@withOperationLock Failure(it.toNimbusError()) }
@@ -765,6 +802,7 @@ internal class DownloadService(
     private class FailedSnapshot(
         val filePath: String,
         val previousSize: Long,
+        val validator: String?,
         val error: DownloadError
     )
 

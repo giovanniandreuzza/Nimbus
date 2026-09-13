@@ -19,6 +19,13 @@ import io.github.giovanniandreuzza.nimbus.presentation.Checksum
  * @param expectedChecksum What the caller asked the finished file to hash to, if anything.
  * @param checksum What the file actually hashed to. Non-null only once the download has
  *   finished and a digest algorithm was configured on the builder.
+ * @param createdAtEpochMs When the task was created. Zero for a task stored before 2.5.0 and
+ *   not yet seen by a build that stamps it.
+ * @param finishedAtEpochMs When the file was last reported complete, or null if it has not
+ *   been. What `pruneFinished` measures an age against.
+ * @param resumeValidator What the origin said identified the file — an HTTP `ETag` or
+ *   `Last-Modified`. Handed back on a resume so the transport can refuse to append the tail of
+ *   a file that is no longer the one the prefix came from.
  * @author Giovanni Andreuzza
  */
 @IsDto
@@ -30,7 +37,10 @@ public data class DownloadTaskDTO(
     val fileSize: Long,
     val state: DownloadState,
     val expectedChecksum: Checksum? = null,
-    val checksum: Checksum? = null
+    val checksum: Checksum? = null,
+    val createdAtEpochMs: Long = 0L,
+    val finishedAtEpochMs: Long? = null,
+    val resumeValidator: String? = null
 ) {
 
     internal companion object {
@@ -50,7 +60,10 @@ public data class DownloadTaskDTO(
                 fileSize = downloadTask.fileSize.value,
                 state = downloadTask.state,
                 expectedChecksum = downloadTask.expectedChecksum,
-                checksum = downloadTask.checksum
+                checksum = downloadTask.checksum,
+                createdAtEpochMs = downloadTask.createdAtEpochMs,
+                finishedAtEpochMs = downloadTask.finishedAtEpochMs,
+                resumeValidator = downloadTask.resumeValidator
             )
         }
 

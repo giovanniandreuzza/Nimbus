@@ -6,6 +6,7 @@ import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownl
 import io.github.giovanniandreuzza.nimbus.core.domain.states.DownloadState
 import io.github.giovanniandreuzza.nimbus.core.ports.DownloadProgressCallback
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
+import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.github.giovanniandreuzza.nimbus.presentation.Checksum
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
@@ -140,12 +141,13 @@ class CompleteFileOnDiskTest {
 
         /** The file is already complete: nothing may be requested over the network. */
         private fun neverCalled(): NimbusDownloadPort = object : NimbusDownloadPort {
-            override suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError> =
+            override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
                 throw AssertionError("the file is already complete; no request may be made")
 
             override suspend fun downloadFile(
                 fileUrl: String,
                 offset: Long,
+                resumeValidator: String?,
                 onSourceOpened: suspend (Source) -> Unit
             ): KResult<Unit, DownloadError> =
                 throw AssertionError("the file is already complete; no request may be made")
