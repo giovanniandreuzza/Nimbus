@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.0](https://github.com/giovanniandreuzza/Nimbus/compare/v2.4.0...v2.5.0) (2026-09-13)
+
+
+### Features
+
+* field-audit hardening for unattended 24/7 devices ([#27](https://github.com/giovanniandreuzza/Nimbus/issues/27)) ([6f5727c](https://github.com/giovanniandreuzza/Nimbus/commit/6f5727c20b2061644d56c8d5b648b4a3f079d5e8))
+
 ## [2.5.0](https://github.com/giovanniandreuzza/Nimbus/compare/v2.4.0...v2.5.0) (unreleased)
 
 A field audit of the library against what it claims to be built for — a kiosk or a signage
