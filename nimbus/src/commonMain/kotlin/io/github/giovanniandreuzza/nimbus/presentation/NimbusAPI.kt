@@ -57,6 +57,11 @@ public interface NimbusAPI {
      * you supply, not here.
      * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.InvalidPath] or [PermanentNimbusErrorCause.InvalidFileName] when
      * filesystem input is unsafe.
+     * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.ContentDigestDisabled]
+     * when [expectedChecksum] is given and no digest is configured, and with
+     * [PermanentNimbusErrorCause.ChecksumAlgorithmMismatch] when it names a different algorithm
+     * than the configured one — in both cases the verification asked for could not happen, and
+     * saying so is the only way the caller learns it did not.
      */
     public suspend fun enqueueDownload(
         fileUrl: String,
@@ -129,6 +134,12 @@ public interface NimbusAPI {
      * - Otherwise enqueues (if needed), repairs failed tasks, removes stale finished metadata,
      *   applies [min reserved disk][io.github.giovanniandreuzza.nimbus.Nimbus.Builder.withMinReservedDiskBytes]
      *   when configured, starts or resumes the download, then returns the same [observeDownload] flow.
+     *
+     * Returns [NimbusError.PermanentError] with [PermanentNimbusErrorCause.ContentDigestDisabled]
+     * when [expectedChecksum] is given and no digest is configured, and with
+     * [PermanentNimbusErrorCause.ChecksumAlgorithmMismatch] when it names a different algorithm
+     * than the configured one — in both cases the verification asked for could not happen, and
+     * saying so is the only way the caller learns it did not.
      */
     public suspend fun ensureDownloaded(
         fileUrl: String,
