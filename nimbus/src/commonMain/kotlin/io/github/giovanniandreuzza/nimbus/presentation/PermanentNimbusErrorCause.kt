@@ -26,6 +26,26 @@ public sealed class PermanentNimbusErrorCause(
     )
 
     /**
+     * The destination is outside the directory Nimbus was told it may write to.
+     *
+     * Only reachable when a root was set with
+     * [Nimbus.Builder.withDownloadRoot][io.github.giovanniandreuzza.nimbus.Nimbus.Builder.withDownloadRoot].
+     * On a device that takes its file list from a backend, the destination is a string from
+     * that backend — and without a root, a compromised manifest or one served over plain HTTP
+     * can name the app's own database, and Nimbus will write there.
+     *
+     * @param filePath what was asked for, normalised.
+     * @param downloadRoot what it has to be under.
+     */
+    public data class PathOutsideDownloadRoot(
+        val filePath: String,
+        val downloadRoot: String
+    ) : PermanentNimbusErrorCause(
+        code = "path_outside_download_root",
+        message = "File path '$filePath' is outside the download root '$downloadRoot'."
+    )
+
+    /**
      * The supplied file URL carries no scheme.
      *
      * A syntax check only, per RFC 3986 — it says nothing about which transports exist. Which

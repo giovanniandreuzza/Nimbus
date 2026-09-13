@@ -74,6 +74,7 @@ class DownloadServiceInitRetryTest {
         storagePort = NoopStoragePort,
         contentDigestPort = NoopContentDigestPort,
         clock = FakeClock(),
+        downloadRoot = null,
         digestAlgorithm = null,
         minReservedDiskBytes = null,
         logger = null,

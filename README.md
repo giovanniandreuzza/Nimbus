@@ -240,6 +240,7 @@ Everything except the download port and the store location has a working default
 | `withMaxRetryAttempts(n)` | `5` | Shorthand for the transport policy's attempt count |
 | `withRetryBaseDelayMs(ms)` | `500` | Shorthand for the transport policy's first wait |
 | `withStallTimeoutMs(ms)` | `60_000` | Abandon a transfer that delivers nothing for this long; `null` disables |
+| `withDownloadRoot(dir)` | `null` | Refuse any destination outside this directory |
 | `withMinReservedDiskBytes(bytes)` | `null` | Refuse to start without this much headroom |
 | `withDownloadBufferSize(bytes)` | `8 KB` | Transfer buffer |
 | `withDownloadNotifyEveryBytes(bytes)` | `512 KB` | How often progress is emitted |
@@ -273,6 +274,31 @@ Nimbus.Builder()
 
 `NimbusLogEvent.AutoRetryScheduled` reports each wait as it is decided, and
 `AutoRetryExhausted` fires only if you set a cap.
+
+## When the file list comes from a server
+
+On a kiosk it usually does, and then `filePath` and `fileUrl` are input rather than constants.
+Two things are worth doing:
+
+**Confine the writes.** Without a root the only check on a destination is that it holds no `..`,
+so an absolute path naming the app's own database is accepted and written to:
+
+```kotlin
+Nimbus.Builder().withDownloadRoot(File(context.filesDir, "nimbus").absolutePath)
+```
+
+A destination outside it is refused with `PermanentNimbusErrorCause.PathOutsideDownloadRoot`. The
+check is lexical — paths are normalised and compared — so a symlink under the root pointing
+elsewhere still leads elsewhere.
+
+**Watch what your logger forwards.** Every `NimbusLogEvent` carries the full `fileUrl`, and assets
+are often served from signed URLs (S3 presigned, Azure SAS, CloudFront signed) whose signature
+lives in the query string and is valid for hours. A logger that ships events to a monitoring
+backend ships those credentials with them:
+
+```kotlin
+NimbusLogger { event -> Timber.tag("Nimbus").d("%s", event.redactingQueryStrings()) }
+```
 
 ## Handling errors
 

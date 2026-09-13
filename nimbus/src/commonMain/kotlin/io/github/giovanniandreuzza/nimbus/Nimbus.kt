@@ -6,6 +6,7 @@ import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.storage.N
 import io.github.giovanniandreuzza.nimbus.presentation.DigestAlgorithm
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusAPI
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
+import io.github.giovanniandreuzza.nimbus.presentation.PermanentNimbusErrorCause
 import io.github.giovanniandreuzza.nimbus.presentation.RetryPolicy
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +43,7 @@ public class Nimbus private constructor(
     nimbusDownloadPort: NimbusDownloadPort,
     nimbusStoragePort: NimbusStoragePort?,
     downloadManagerPath: String,
+    downloadRoot: String?,
     downloadBufferSize: Long,
     downloadNotifyEveryBytes: Long,
     transportRetry: RetryPolicy,
@@ -60,6 +62,7 @@ public class Nimbus private constructor(
         nimbusDownloadPort = nimbusDownloadPort,
         nimbusStoragePort = nimbusStoragePort,
         downloadManagerPath = downloadManagerPath,
+        downloadRoot = downloadRoot,
         downloadBufferSize = downloadBufferSize,
         downloadNotifyEveryBytes = downloadNotifyEveryBytes,
         transportRetry = transportRetry,
@@ -85,6 +88,7 @@ public class Nimbus private constructor(
         private var nimbusDownloadPort: NimbusDownloadPort? = null
         private var nimbusStoragePort: NimbusStoragePort? = null
         private var downloadManagerPath: String? = null
+        private var downloadRoot: String? = null
         private var downloadBufferSize: Long = 8 * 1024L
         private var downloadNotifyEveryBytes: Long = 16 * 32 * 1024L
         private var transportRetry: RetryPolicy = RetryPolicy.Transport
@@ -105,7 +109,10 @@ public class Nimbus private constructor(
             apply { ioDispatcher = dispatcher }
 
         public fun withConcurrencyLimit(limit: Int): Builder =
-            apply { concurrencyLimit = limit }
+            apply {
+                require(limit >= 1) { "concurrencyLimit must be >= 1" }
+                concurrencyLimit = limit
+            }
 
         public fun withNimbusDownloadPort(port: NimbusDownloadPort): Builder =
             apply { nimbusDownloadPort = port }
@@ -116,11 +123,46 @@ public class Nimbus private constructor(
         public fun withDownloadManagerPath(path: String): Builder =
             apply { downloadManagerPath = path }
 
+        /**
+         * How much of the body is read at a time. Bounded on both sides: a buffer of zero
+         * makes a transfer that never advances, and one past [MAX_BUFFER_SIZE_BYTES] is an
+         * allocation an appliance with two gigabytes of RAM cannot make. Both used to be
+         * accepted here and fail at the first transfer instead — a crash, or a download that
+         * looked stuck, hours after the build that got it wrong.
+         */
+        /**
+         * Confines every destination to [directoryPath]: a `filePath` that is not under it is
+         * refused with [PermanentNimbusErrorCause.PathOutsideDownloadRoot].
+         *
+         * Worth setting whenever the destination comes from somewhere else. On a kiosk it
+         * usually comes from a manifest the backend serves, which makes it input — and without
+         * a root the only check is that it contains no `..`, so an absolute path naming the
+         * app's own database is accepted and written to. A compromised backend, or a manifest
+         * over plain HTTP with someone in the middle, is all it takes.
+         *
+         * The check is lexical: paths are normalised (`.`, `..`, duplicate separators) and
+         * compared as strings. A symlink under the root pointing elsewhere still leads
+         * elsewhere, and nothing can see that before the file exists.
+         */
+        public fun withDownloadRoot(directoryPath: String): Builder =
+            apply {
+                require(directoryPath.isNotBlank()) { "downloadRoot must not be blank" }
+                downloadRoot = directoryPath
+            }
+
         public fun withDownloadBufferSize(size: Long): Builder =
-            apply { downloadBufferSize = size }
+            apply {
+                require(size in 1L..MAX_BUFFER_SIZE_BYTES) {
+                    "downloadBufferSize must be between 1 and $MAX_BUFFER_SIZE_BYTES bytes"
+                }
+                downloadBufferSize = size
+            }
 
         public fun withDownloadNotifyEveryBytes(bytes: Long): Builder =
-            apply { downloadNotifyEveryBytes = bytes }
+            apply {
+                require(bytes >= 1L) { "downloadNotifyEveryBytes must be >= 1" }
+                downloadNotifyEveryBytes = bytes
+            }
 
         /**
          * How a single download retries its own transport failures — a dropped connection, a
@@ -237,6 +279,15 @@ public class Nimbus private constructor(
              * relevant.
              */
             public const val DEFAULT_STALL_TIMEOUT_MS: Long = 60_000L
+
+            /**
+             * The largest transfer buffer this library will allocate: 16 MiB.
+             *
+             * Not a tuning limit — a sanity one. The buffer is allocated per transfer and
+             * lives in a `ByteArray`, so a value past this is a number that was meant to be
+             * something else.
+             */
+            public const val MAX_BUFFER_SIZE_BYTES: Long = 16L * 1024 * 1024
         }
 
         public fun build(): Nimbus {
@@ -262,6 +313,7 @@ public class Nimbus private constructor(
                 nimbusDownloadPort = nimbusDownloadPort!!,
                 nimbusStoragePort = nimbusStoragePort,
                 downloadManagerPath = downloadManagerPath!!,
+                downloadRoot = downloadRoot,
                 downloadBufferSize = downloadBufferSize,
                 downloadNotifyEveryBytes = downloadNotifyEveryBytes,
                 transportRetry = transportRetry,

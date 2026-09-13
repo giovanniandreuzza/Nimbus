@@ -140,6 +140,7 @@ class LifecycleTest {
                 Success(Checksum(DigestAlgorithm.SHA256, "0".repeat(64)))
             ),
             clock = FakeClock(),
+            downloadRoot = null,
             digestAlgorithm = null,
             minReservedDiskBytes = null,
             logger = RecordingLogger(),

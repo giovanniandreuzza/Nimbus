@@ -602,6 +602,7 @@ class DownloadServiceLifecycleTest {
                 Success(Checksum(DigestAlgorithm.SHA256, "0".repeat(64)))
             ),
             clock = FakeClock(),
+            downloadRoot = null,
             digestAlgorithm = digestAlgorithm,
             minReservedDiskBytes = minReservedDiskBytes,
             logger = logger,

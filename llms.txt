@@ -37,6 +37,7 @@ val api: NimbusAPI = Nimbus.Builder()
     .withMaxRetryAttempts(5)                  // shorthand for the transport attempt count
     .withRetryBaseDelayMs(500L)               // shorthand for the transport first wait
     .withStallTimeoutMs(60_000L)              // optional, default 60 s; null disables
+    .withDownloadRoot("/data/user/0/app/files/nimbus") // optional — confine every destination
     .withMinReservedDiskBytes(50 * 1024 * 1024L) // optional — disk headroom guard
     .withAutoStart(true)                      // optional, default false
     .withContentDigest(DigestAlgorithm.SHA256)// optional, default null (no hashing at all)
@@ -254,6 +255,7 @@ sealed class PermanentNimbusErrorCause {
     data class  FilePathInUse(filePath: String)
     data class  InsufficientDiskSpace(path: String, requiredBytes: Long, availableBytes: Long)
     data object Closed                 // the instance was closed; build a new one
+    data class  PathOutsideDownloadRoot(filePath: String, downloadRoot: String)
     data object ContentDigestDisabled  // a digest was asked for with no withContentDigest(...):
                                        // checksum(), or an expectedChecksum passed to
                                        // enqueueDownload/ensureDownloaded that nothing would check
@@ -517,6 +519,17 @@ have to discover from a bug report.
   starts from zero. `retryFailedDownload` applies the same rule — a validator that no longer
   matches discards the partial even when the size is identical, which is exactly the case
   (a re-encode, a regenerated manifest) that every previous check passed.
+- **`filePath` is only as safe as you make it.** The built-in check refuses `..` components and
+  control characters, and that is all it can do on its own. When destinations come from a
+  manifest — which on a kiosk they do — set `withDownloadRoot(dir)`: anything outside it is then
+  refused with `PermanentNimbusErrorCause.PathOutsideDownloadRoot`. Lexical check; a symlink
+  under the root pointing elsewhere is not caught.
+- **`Checksum` is built through `Checksum.of(algorithm, hex)`.** The constructor is internal as
+  of 2.5.0: it accepted any string, and a malformed digest mismatches on every transfer for
+  ever, since a mismatch is temporary and gets retried.
+- **Every `NimbusLogEvent` carries the full URL.** With signed URLs (S3 presigned, SAS,
+  CloudFront) the signature is in the query string and is a live credential — redact it in your
+  `NimbusLogger` before forwarding events anywhere.
 - **`DownloadTaskDTO` carries `createdAtEpochMs`, `finishedAtEpochMs` and `resumeValidator`**
   as of schema 3. Zero and null mean "this build has not seen it yet"; the migration stamps
   tasks from an older store with the time of the upgrade.

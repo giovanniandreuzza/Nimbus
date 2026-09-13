@@ -140,6 +140,7 @@ class PruneFinishedTest {
                 Success(Checksum(DigestAlgorithm.SHA256, "0".repeat(64)))
             ),
             clock = clock,
+            downloadRoot = null,
             digestAlgorithm = null,
             minReservedDiskBytes = null,
             logger = RecordingLogger(),

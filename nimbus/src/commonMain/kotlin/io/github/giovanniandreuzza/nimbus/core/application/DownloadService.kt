@@ -27,6 +27,8 @@ import io.github.giovanniandreuzza.nimbus.presentation.NimbusError
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogger
 import io.github.giovanniandreuzza.nimbus.presentation.PermanentNimbusErrorCause
+import io.github.giovanniandreuzza.nimbus.shared.utils.isInside
+import io.github.giovanniandreuzza.nimbus.shared.utils.normalizedPath
 import io.github.giovanniandreuzza.nimbus.shared.utils.takeUntil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
@@ -61,6 +63,8 @@ internal class DownloadService(
     private val storagePort: StoragePort,
     private val contentDigestPort: ContentDigestPort,
     private val clock: ClockPort,
+    /** When set, no download may write outside it. See `Nimbus.Builder.withDownloadRoot`. */
+    private val downloadRoot: String?,
     private val digestAlgorithm: DigestAlgorithm?,
     private val minReservedDiskBytes: Long?,
     private val logger: NimbusLogger?,
@@ -905,9 +909,18 @@ internal class DownloadService(
                 PermanentNimbusErrorCause.InvalidUrl
             )
         )
-        if (filePath.isBlank() || filePath.containsPathTraversal()) return Failure(
+        if (!filePath.isUsableFilePath()) return Failure(
             NimbusError.PermanentError(
                 PermanentNimbusErrorCause.InvalidPath
+            )
+        )
+        val root = downloadRoot
+        if (root != null && !filePath.isInside(root)) return Failure(
+            NimbusError.PermanentError(
+                PermanentNimbusErrorCause.PathOutsideDownloadRoot(
+                    filePath = filePath.normalizedPath(),
+                    downloadRoot = root.normalizedPath()
+                )
             )
         )
         if (!fileName.isValidFileName()) return Failure(
@@ -979,8 +992,20 @@ internal class DownloadService(
 // Private error-mapping extensions
 // ---------------------------------------------------------------------------
 
-private fun String.containsPathTraversal(): Boolean =
-    split('/', '\\').any { it == ".." }
+/**
+ * Whether this is a path this library is willing to open.
+ *
+ * A traversal component is refused whatever a download root says, because the two answer
+ * different questions: the root says where writing is allowed, this says the string is a path
+ * at all. The control characters are here for the reason they were already refused in a file
+ * name — a NUL truncates the path at the platform boundary on most systems, so what was
+ * checked and what is opened stop being the same string.
+ */
+private fun String.isUsableFilePath(): Boolean {
+    if (isBlank()) return false
+    if (split('/', '\\').any { it == ".." }) return false
+    return none { it.code < 32 }
+}
 
 /**
  * Whether this looks like a URI at all — syntax only, never which transport it names.

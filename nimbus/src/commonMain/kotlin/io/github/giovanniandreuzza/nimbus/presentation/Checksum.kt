@@ -3,11 +3,18 @@ package io.github.giovanniandreuzza.nimbus.presentation
 /**
  * A content digest of a downloaded file.
  *
+ * Built through [Checksum.of], which is the only way in: the constructor took whatever it was
+ * given, so `Checksum(SHA256, "abc")` compiled, was accepted by `enqueueDownload`, and produced
+ * a mismatch on every transfer — for ever, because a mismatch is temporary and gets retried.
+ * That is the same endless re-download the digest exists to prevent, entered through the front
+ * door.
+ *
  * @param algorithm the digest that produced [value].
  * @param value lowercase hex.
  * @author Giovanni Andreuzza
  */
-public data class Checksum(
+@ConsistentCopyVisibility
+public data class Checksum internal constructor(
     public val algorithm: DigestAlgorithm,
     public val value: String
 ) {

@@ -147,6 +147,7 @@ class EnsureDownloadedChecksumTest {
             storagePort = StorageAdapter(storage),
             contentDigestPort = FakeContentDigestPort(Success(EXPECTED)),
             clock = FakeClock(),
+            downloadRoot = null,
             digestAlgorithm = DigestAlgorithm.SHA256,
             minReservedDiskBytes = null,
             logger = logger,
