@@ -601,10 +601,19 @@ internal class DownloadService(
     ): KResult<List<String>, NimbusError> = withReady {
         require(olderThanMs >= 0L) { "olderThanMs must be >= 0" }
 
-        val cutoff = clock.nowEpochMs() - olderThanMs
+        val now = clock.nowEpochMs()
+        val cutoff = now - olderThanMs
         val stale = repository.getAllDownloadTasks().filter { task ->
-            val finishedAt = task.finishedAtEpochMs
-            task.state is DownloadState.Finished && finishedAt != null && finishedAt < cutoff
+            val finishedAt = task.finishedAtEpochMs ?: return@filter false
+            if (task.state !is DownloadState.Finished) return@filter false
+
+            // A finish time in the future is a clock that moved backwards — a device that had
+            // guessed the date and then learned it, or an operator correcting one. It is not
+            // an age, so it is not something to delete a file over. The stamps a device wrote
+            // before it knew the time are repaired at load.
+            if (finishedAt > now) return@filter false
+
+            finishedAt < cutoff
         }
 
         val pruned = mutableListOf<String>()

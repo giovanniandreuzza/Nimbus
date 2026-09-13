@@ -392,6 +392,8 @@ internal class DownloadRepository(
                 }
             }
 
+            repairStampsFromAnUnsetClock()
+
             return result
         }
 
@@ -401,13 +403,45 @@ internal class DownloadRepository(
          * Only where they are missing: a store already carrying them is left exactly as it is,
          * so a second migration — or a build that reads a v3 store — cannot move a date.
          */
+        private fun DownloadTaskStore.needsStamping(): Boolean =
+            createdAtEpochMs < EARLIEST_PLAUSIBLE_STAMP
+
         private fun DownloadTaskStore.stamped(now: Long): DownloadTaskStore {
-            if (createdAtEpochMs != 0L) return this
+            if (!needsStamping()) return this
             return copy(
                 createdAtEpochMs = now,
-                finishedAtEpochMs = finishedAtEpochMs
-                    ?: now.takeIf { state is DownloadStateStore.Finished }
+                finishedAtEpochMs = now.takeIf { state is DownloadStateStore.Finished }
             )
+        }
+
+        /**
+         * Restamps tasks recorded while the device did not know what time it was.
+         *
+         * The boards this library runs on often have no battery-backed clock: they come up at
+         * the epoch, or at some build date, and only learn the real time when the network
+         * appears. Anything finished in that window carries a timestamp from 1970 — and the
+         * first `pruneFinished(30 days)` after the clock syncs would read that as ancient and
+         * delete every file the device had just spent a night fetching.
+         *
+         * So a stamp from before this field could plausibly have been written is not a date,
+         * it is the absence of one, and it is replaced with the first moment the clock is
+         * believable. That is what the v2 migration already does for tasks that predate the
+         * field; this is the same repair for the same reason, applied when the reason is a
+         * clock rather than a schema.
+         *
+         * If the clock is *still* not believable, nothing is touched: stamping an unset clock
+         * with an unset clock records nothing, and the next boot gets another chance.
+         */
+        private suspend fun repairStampsFromAnUnsetClock() {
+            val now = clock.nowEpochMs()
+            if (now < EARLIEST_PLAUSIBLE_STAMP) return
+            if (data?.downloads?.values?.none { it.needsStamping() } != false) return
+
+            update { store ->
+                store.copy(
+                    downloads = store.downloads.mapValues { (_, task) -> task.stamped(now) }
+                )
+            }
         }
 
         fun getAll(): Map<DownloadId, DownloadTask> =
@@ -447,5 +481,13 @@ internal class DownloadRepository(
          * within the time it takes a person to notice anything happened.
          */
         const val DEFAULT_COALESCE_WINDOW_MS: Long = 250L
+
+        /**
+         * The earliest moment a task timestamp can honestly claim: 2025-01-01.
+         *
+         * The fields did not exist before 2.5.0, so anything below this was not written by a
+         * clock that knew the date — it was written by a device that had not been told yet.
+         */
+        const val EARLIEST_PLAUSIBLE_STAMP: Long = 1_735_689_600_000L
     }
 }

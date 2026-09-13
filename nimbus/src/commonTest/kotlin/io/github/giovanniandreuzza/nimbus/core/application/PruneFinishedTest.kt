@@ -127,6 +127,20 @@ class PruneFinishedTest {
     }
 
     @Test
+    fun `a finish time in the future is not an age`() = runTest {
+        // The clock moved backwards — a device that had guessed the date and then learned it,
+        // or an operator correcting one. Deleting a file over arithmetic that came out
+        // negative is not a decision anyone made.
+        val f = fixture()
+        f.finishedTask(URL, PATH, finishedAt = f.clock.nowEpochMs() + TEN_DAYS)
+
+        val pruned = f.service.pruneFinished(olderThanMs = ONE_DAY).valueOrFail()
+
+        assertTrue(pruned.isEmpty(), "pruned $pruned")
+        assertTrue(f.repository.current(URL) != null)
+    }
+
+    @Test
     fun `the file goes only when asked`() = runTest {
         val f = fixture()
         f.finishedTask(URL, PATH, finishedAt = f.clock.nowEpochMs())

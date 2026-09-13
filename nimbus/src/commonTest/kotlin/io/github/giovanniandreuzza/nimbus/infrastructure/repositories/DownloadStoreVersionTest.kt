@@ -169,6 +169,57 @@ class DownloadStoreVersionTest {
         assertEquals(recorded, task.createdAtEpochMs)
     }
 
+    @Test
+    fun `a stamp written before the device knew the date is repaired at load`() = runTest {
+        // The boards this runs on often have no battery-backed clock: they come up at the
+        // epoch and learn the time when the network appears. A task finished in that window
+        // is stamped 1970, and the first `pruneFinished(30 days)` after the sync would read
+        // that as ancient and delete a night's worth of downloads.
+        val storage = InMemoryStorage()
+        storage.write(
+            STORE_PATH,
+            ProtoBuf.encodeToByteArray(
+                storeStampedAt(
+                    DownloadStore.SCHEMA_VERSION,
+                    DownloadStateStore.Finished,
+                    createdAt = 90_000L
+                )
+            )
+        )
+        storage.write(FILE_PATH, ByteArray(FILE_SIZE.toInt()))
+
+        val repository = repositoryOn(storage, FakeClock(nowMs = MIGRATED_AT))
+        repository.loadDownloadTasks()
+
+        val task = assertNotNull(repository.allTasksForTest().values.firstOrNull())
+        assertEquals(MIGRATED_AT, task.createdAtEpochMs)
+        assertEquals(MIGRATED_AT, task.finishedAtEpochMs)
+    }
+
+    @Test
+    fun `a clock that is still unset repairs nothing`() = runTest {
+        // Stamping an unset clock with an unset clock records nothing, and the next boot gets
+        // another chance. Better an unprunable task than a date invented twice.
+        val storage = InMemoryStorage()
+        storage.write(
+            STORE_PATH,
+            ProtoBuf.encodeToByteArray(
+                storeStampedAt(
+                    DownloadStore.SCHEMA_VERSION,
+                    DownloadStateStore.Finished,
+                    createdAt = 90_000L
+                )
+            )
+        )
+        storage.write(FILE_PATH, ByteArray(FILE_SIZE.toInt()))
+
+        val repository = repositoryOn(storage, FakeClock(nowMs = 120_000L))
+        repository.loadDownloadTasks()
+
+        val task = assertNotNull(repository.allTasksForTest().values.firstOrNull())
+        assertEquals(90_000L, task.createdAtEpochMs, "left exactly as it was")
+    }
+
     private fun TestScope.repositoryOn(storage: InMemoryStorage): DownloadRepository {
         val dispatcher = StandardTestDispatcher(testScheduler)
         return DownloadRepository(

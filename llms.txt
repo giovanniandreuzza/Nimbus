@@ -545,6 +545,12 @@ have to discover from a bug report.
 - **`fileName` is a label, and optional.** `filePath` is the file in full — Nimbus writes there
   and creates the parent directories. `fileName` is validated, stored and reported in the DTO,
   and used by no file operation; it defaults to the last segment of the path.
+- **`pruneFinished` measures wall-clock ages, and a device's clock can be wrong.** Boards
+  without a battery-backed clock come up at the epoch and learn the time from the network;
+  anything finished in that window carries a 1970 stamp. Those are repaired at the next load
+  once the clock is believable — a stamp from before the field existed is treated as the
+  absence of one, not as an ancient date — and a finish time in the future, which is what a
+  clock moving backwards leaves, is never read as an age. Nothing is deleted on either.
 - **`filePath` is only as safe as you make it.** The built-in check refuses `..` components and
   control characters, and that is all it can do on its own. When destinations come from a
   manifest — which on a kiosk they do — set `withDownloadRoot(dir)`: anything outside it is then

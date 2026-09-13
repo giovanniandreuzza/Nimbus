@@ -176,6 +176,14 @@ public interface NimbusAPI {
      * are stamped with the time of the upgrade, so their age is measured from there rather
      * than from 1970, which would have the first call delete everything.
      *
+     * **Ages are wall-clock, so a clock that was wrong makes them wrong.** On a board with no
+     * battery-backed clock — most of them — the device comes up at the epoch and learns the
+     * time when the network appears, and anything finished in that window would look ancient.
+     * Those stamps are repaired at the next load once the clock is believable, and a finish
+     * time in the future, which is what a clock moving backwards leaves behind, is never read
+     * as an age. What is left is the ordinary case: a clock nudged by a few seconds moves an
+     * age by a few seconds.
+     *
      * @param deleteFiles whether the files go too. False keeps them on disk and forgets only
      * the metadata, which is the safer default when something else on the device reads them.
      */

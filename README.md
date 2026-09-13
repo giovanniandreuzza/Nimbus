@@ -202,7 +202,11 @@ nimbus.pruneFinished(olderThanMs = 30.days.inWholeMilliseconds, deleteFiles = tr
 ```
 
 Tasks stored before 2.5.0 are stamped at the upgrade, so their age is measured from there rather
-than from 1970 — the first call after an update does not empty the device.
+than from 1970 — the first call after an update does not empty the device. The same repair covers
+a device whose clock was not set yet: on a board with no battery-backed clock, whatever finished
+before the network appeared carries a 1970 stamp, and it is restamped at the next load rather
+than read as ancient. A finish time in the future — a clock corrected backwards — is never read
+as an age either.
 
 ### Shutting down
 
