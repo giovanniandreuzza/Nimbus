@@ -138,8 +138,10 @@ sealed class DownloadState {
 }
 ```
 
-`observeDownload` returns a `Flow<DownloadState>` that **auto-completes** when the state
-reaches `Finished` or `Failed`. No manual cancellation needed.
+`observeDownload` returns a `Flow<DownloadState>` that **auto-completes** when nothing further
+will happen: `Finished`, `Cancelled`, or `Failed`. With `withAutoStart(true)` a *temporary*
+failure does not end it — the library is about to retry and the flow is how you watch that — but
+a permanent one does. No manual cancellation needed.
 
 ## DownloadTaskDTO fields
 
@@ -152,7 +154,10 @@ data class DownloadTaskDTO(
     val fileSize: Long,    // bytes
     val state: DownloadState,
     val expectedChecksum: Checksum? = null,  // what the caller asked for, if anything
-    val checksum: Checksum? = null           // what the bytes hashed to, once Finished
+    val checksum: Checksum? = null,          // what the bytes hashed to, once Finished
+    val createdAtEpochMs: Long = 0L,         // 0 until this build has seen the task created
+    val finishedAtEpochMs: Long? = null,     // what pruneFinished measures an age against
+    val resumeValidator: String? = null      // ETag / Last-Modified, sent back as If-Range
 )
 ```
 
@@ -591,11 +596,17 @@ reaches your adapter rather than being refused first.
 
 **Two requirements your transport must satisfy** — these are the real limits of the model:
 
-1. `getFileSize` must answer before the transfer. The size drives progress, the disk-headroom
+1. `getRemoteFile` must answer before the transfer. The size drives progress, the disk-headroom
    check and the final integrity check. A transport that cannot announce a length does not fit.
+   The validator alongside it is optional: return null and resumes behave as they always did.
 2. `downloadFile` must honour `offset`. On resume the bytes you supply are appended to what is
    already on disk, so a transport that silently restarts from zero corrupts the file. If you
    cannot seek, return a failure instead — Nimbus handles that.
+3. `onSourceOpened` is called **exactly once**, with one `Source` for the whole body. Nimbus
+   opens the destination around that call and closes it when the call returns.
+4. Give the transport its own deadline for inactivity. Nimbus abandons a transfer that delivers
+   nothing for `withStallTimeoutMs`, and abandoning it means cancelling your call — which only
+   unwinds an implementation that *suspends* while it waits.
 
 FTP satisfies both (`SIZE`, `REST`), as do local and network filesystems.
 
@@ -605,13 +616,16 @@ onto a `Source`.
 
 ```kotlin
 interface NimbusDownloadPort {
-    suspend fun getFileSize(fileUrl: String): KResult<Long, GetFileSizeError>
+    suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError>
     suspend fun downloadFile(
         fileUrl: String,
         offset: Long,
+        resumeValidator: String?,   // what getRemoteFile reported; send it as If-Range
         onSourceOpened: suspend (Source) -> Unit
     ): KResult<Unit, DownloadError>
 }
+
+data class RemoteFile(val sizeBytes: Long, val validator: String? = null)
 ```
 
 The `onSourceOpened` lambda receives a `kotlinx.io.Source`. Stream it to the sink Nimbus
@@ -631,6 +645,10 @@ provides internally — do not buffer the entire response in memory.
 import io.github.giovanniandreuzza.nimbus.ktor.KtorDownloadAdapter
 
 val adapter = KtorDownloadAdapter(httpClient)   // caller owns HttpClient lifecycle
+// A 30 s socket timeout is imposed on every request it makes, on the request itself, so it
+// holds whether or not the client installed the HttpTimeout plugin. Pass
+// KtorDownloadAdapter(httpClient, socketTimeoutMillis = null) to leave the client's own
+// configuration alone — but then a wedged read cannot be interrupted by anything.
 
 val api = Nimbus.Builder()
     .withNimbusDownloadPort(adapter)
@@ -642,8 +660,10 @@ val api = Nimbus.Builder()
 
 `KtorDownloadAdapter` handles:
 - `HEAD` for size; falls back to `GET Range: bytes=0-0` + `Content-Range` when `Content-Length` is absent.
-- 206 / 200 / 416 mapping to the typed `DownloadError` hierarchy.
-- `InconsistentRangeResponse` guard for servers that return a full 200 body on a resume request.
+- `ETag` (else `Last-Modified`) as the resume validator, sent back as `If-Range` on a resume.
+- 206 / 200 / 416 mapping to the typed `DownloadError` hierarchy. A 200 answering a resume is
+  `RemoteFileChanged` when an `If-Range` was sent and `InconsistentRangeResponse` when not.
+- A socket timeout on every request, because its own body reads block a thread.
 
 ## Android — withAndroidContext extension
 

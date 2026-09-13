@@ -34,6 +34,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /**
  * What happens after HTTP 416.
@@ -170,6 +171,45 @@ class RangeNotSatisfiableTest {
         )
     }
 
+    @Test
+    fun `a file that changed at the origin is thrown away and fetched again`() = runTest {
+        // The transport reports it the way a 416 is reported, and the recovery is the same:
+        // the local bytes came from a file that no longer exists at that url, so keeping them
+        // would append the tail of one file to the head of another.
+        val h = harness(digestAlgorithm = DigestAlgorithm.SHA256)
+        h.storage.write(PATH, CONTENT.copyOf(40))
+
+        h.run(ChangedFilePort(CONTENT))
+
+        assertTrue(h.finished, "expected the download to finish, failures: ${h.failures}")
+        assertContentEquals(CONTENT, h.storage.read(PATH))
+        assertEquals(
+            CONTENT_SHA256,
+            h.finishedChecksum?.value,
+            "the digest has to describe the file that was actually fetched, not the prefix " +
+                    "that was discarded"
+        )
+    }
+
+    @Test
+    fun `an origin that keeps saying the file changed gives up instead of looping`() = runTest {
+        // Same cap as the 416: the attempt after the truncation asks from offset 0 with no
+        // validator to check, so an origin that answers *that* the same way will answer every
+        // one the same way.
+        val h = harness(maxRetryAttempts = 1)
+        val port = ChangedFilePort(CONTENT, changedForever = true)
+
+        h.run(port)
+
+        val failure = h.failures.lastOrNull() ?: fail("it has to be reported")
+        assertTrue(
+            failure is DownloadError.TemporaryError &&
+                    failure.errorCause is TemporaryDownloadErrorCause.RemoteFileChanged,
+            "got $failure"
+        )
+        assertEquals(3, port.requests, "one truncation, then the budget of one, and no more")
+    }
+
     // -- harness -----------------------------------------------------------
 
     @Test
@@ -275,6 +315,35 @@ class RangeNotSatisfiableTest {
  * Answers the first [rejectCount] requests with 416, then serves the content from the
  * offset asked for.
  */
+/** Answers a resume by saying the file is not the one the partial came from. */
+private class ChangedFilePort(
+    private val content: ByteArray,
+    private val changedForever: Boolean = false
+) : NimbusDownloadPort {
+
+    var requests: Int = 0
+        private set
+
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> =
+        Success(RemoteFile(content.size.toLong(), validator = "\"v2\""))
+
+    override suspend fun downloadFile(
+        fileUrl: String,
+        offset: Long,
+        resumeValidator: String?,
+        onSourceOpened: suspend (Source) -> Unit
+    ): KResult<Unit, DownloadError> {
+        requests++
+        if (changedForever || offset > 0L) {
+            return Failure(
+                DownloadError.TemporaryError(TemporaryDownloadErrorCause.RemoteFileChanged)
+            )
+        }
+        onSourceOpened(Buffer().apply { write(content) })
+        return Success(Unit)
+    }
+}
+
 private class RangeRejectingPort(
     private val content: ByteArray,
     private val rejectFirstRequest: Boolean,

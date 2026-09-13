@@ -154,6 +154,22 @@ class PruneFinishedTest {
         assertNull(f.storage.read(PATH), "reclaiming the space is the point of the flag")
     }
 
+    @Test
+    fun `a file that is already gone is not a failure`() = runTest {
+        // Deleting the file is the caller's intent, not a precondition: something else on the
+        // device may have cleared it, and a prune that failed there would stop before the
+        // tasks after it in the list.
+        val f = fixture()
+        f.finishedTask(URL, PATH, finishedAt = f.clock.nowEpochMs())
+        f.clock.advanceBy(TEN_DAYS)
+
+        val pruned = f.service.pruneFinished(olderThanMs = ONE_DAY, deleteFiles = true)
+            .valueOrFail()
+
+        assertEquals(listOf(URL), pruned)
+        assertNull(f.repository.current(URL))
+    }
+
     private fun TestScope.fixture(): Fixture {
         val storage = InMemoryStorage()
         val repository = FakeDownloadTaskRepository()

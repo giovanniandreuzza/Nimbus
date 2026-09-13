@@ -181,7 +181,7 @@ Every method is `suspend` and returns `KResult<T, NimbusError>` unless noted.
 | `cancelDownload(url)` | Stop and delete the partial file |
 | `retryFailedDownload(url)` | Reset a failed task to `Enqueued` |
 | `removeDownload(url, deleteAssociatedFile = false)` | Forget a finished or failed task |
-| `observeDownload(url)` | `Flow<DownloadState>`; completes on `Finished` or `Failed` |
+| `observeDownload(url)` | `Flow<DownloadState>`; completes on `Finished`, `Cancelled`, or a failure nothing will retry |
 | `observeAllDownloads()` | *Not suspend.* `Flow<List<DownloadTaskDTO>>`; never completes |
 | `getDownloadTask(url)` / `getAllDownloads()` | One task, or all of them |
 | `getFileSize(url)` | Remote size without downloading |
@@ -378,8 +378,9 @@ interface is public and stable.
 
 Two requirements, and they are the honest limits of the design:
 
-1. **Report the size before the transfer.** `getFileSize` is called at enqueue time, and the size
-   drives progress, the disk-headroom check and the integrity check at the end.
+1. **Report the size before the transfer.** `getRemoteFile` is called at enqueue time, and the
+   size drives progress, the disk-headroom check and the integrity check at the end. The
+   validator it returns alongside is optional — `null` and resumes behave as they always did.
 2. **Start from a byte offset.** `downloadFile` is called with `offset > 0` to resume, and the
    bytes you supply are appended to what is already on disk. A transport that cannot seek will
    corrupt the file if it silently restarts from zero — fail instead, and Nimbus will handle it.

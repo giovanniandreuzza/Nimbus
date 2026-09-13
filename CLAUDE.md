@@ -30,12 +30,14 @@ nimbus/src/commonMain/kotlin/…nimbus/
     NimbusAPI.kt                     ← public interface (all suspend, KResult returns)
     NimbusError.kt                   ← single public sealed error type
     NimbusLogEvent.kt                ← NimbusLogEvent sealed class + NimbusLogger fun interface
-    Checksum.kt                      ← public Checksum + DigestAlgorithm
+    Checksum.kt                      ← public Checksum (internal ctor, use `of`) + DigestAlgorithm
+    RetryPolicy.kt                   ← public retry shape; two instances: Transport, AutoRetry
   core/
     application/DownloadService.kt   ← implements NimbusAPI; all business logic lives here
     application/NimbusErrorMappers.kt ← internal extension functions mapping internal errors → NimbusError
     application/dtos/DownloadTaskDTO.kt
-    application/errors/              ← internal error types (DownloadError, GetFileSizeError, …)
+    application/errors/              ← internal error types (DownloadError, GetFileSizeError,
+                                       TransitionFailure, …)
     application/services/DownloadProgressService.kt
     domain/entities/DownloadTask.kt  ← aggregate root; owns state transitions
     domain/states/DownloadState.kt   ← sealed: Enqueued / Downloading / Paused / Failed / Finished
@@ -45,22 +47,28 @@ nimbus/src/commonMain/kotlin/…nimbus/
       StoragePort.kt                 ←   size/create/delete/usableSpaceBytes (impl: StorageAdapter)
       StoragePortError.kt            ←   core-side storage error family + CreateOutcome/DeleteOutcome
       ContentDigestPort.kt           ←   digest accumulation (impl: ContentDigestAdapter)
+      ClockPort.kt                   ←   wall clock (impl: SystemClock); testable timestamps
+      RemoteFileInfo.kt              ←   what a transport can say before transferring: size + validator
       DownloadTaskRepository.kt, DownloadProgressCallback.kt, IdProviderPort.kt
   infrastructure/
     ports/DownloadAdapter.kt         ← HTTP download execution, semaphore concurrency, retry
     ports/StorageAdapter.kt          ← implements StoragePort over NimbusStoragePort
     ports/ContentDigestAdapter.kt    ← implements ContentDigestPort over ContentDigest
     ports/IdProviderAdapter.kt       ← SHA-256(url) → stable task ID
-    digest/ContentDigest.kt          ← streaming digest accumulator
+    digest/ContentDigest.kt          ← streaming digest accumulator; counts what it consumed
+    time/SystemClock.kt              ← expect/actual wall clock per platform
     repositories/DownloadRepository.kt ← in-memory (Mutex-guarded) + ProtoBuf disk store
-    plugins/ports/download/NimbusDownloadPort.kt  ← public interface for HTTP client
+    plugins/ports/download/NimbusDownloadPort.kt  ← public transport interface + RemoteFile
     plugins/ports/storage/NimbusStoragePort.kt    ← public interface for file I/O
     plugins/adapters/storage/FileSystemNimbusStorageAdapter.kt  ← KMP-native impl
     plugins/adapters/storage/NimbusFileSystem.kt  ← internal seam over SystemFileSystem (testability)
     plugins/adapters/storage/UsableSpace.kt       ← expect/actual for platform usable-space query
   di/Module.kt                       ← wires all internal components together
+  di/AutoRetryScheduler.kt           ← the second retry loop: back-off after a task has Failed
   frameworks/store/StoreManager.kt   ← generic ProtoBuf persistence layer
-  shared/utils/                      ← FlowUtils (takeUntil), DownloadUtils (progress calc)
+  shared/utils/                      ← FlowUtils (takeUntil), DownloadUtils (progress calc),
+                                       RetryDelay (back-off arithmetic), PathUtils (normalise,
+                                       containment)
 
 nimbus/src/commonTest/kotlin/…nimbus/   ← runs on JVM, iOS and Android host
   testing/Fakes.kt                   ← fake ports (no filesystem, no network)
@@ -69,7 +77,13 @@ nimbus/src/commonTest/kotlin/…nimbus/   ← runs on JVM, iOS and Android host
 nimbus/src/jvmTest/kotlin/…nimbus/      ← only what is genuinely platform-bound
   ArchitectureTest.kt                ← source scan: no core/ import of infrastructure
   FileSystemNimbusStorageAdapterTest.kt, ContentDigestResumeTest.kt,
-  DownloadRepository{Observability,Persistence}Test.kt, DownloadStoreWriteAmplificationTest.kt
+  DownloadRepository{Observability,Persistence}Test.kt, DownloadStoreWriteAmplificationTest.kt,
+  DownloadServiceInitRetryTest.kt,
+  SlowLinkNotStalledTest.kt          ← a slow link has to wait *inside a read*, and
+                                       RawSource.readAtMostTo is not suspending: the only way to
+                                       model it is to block a thread, and a virtual clock would
+                                       report the wait as instant and prove nothing
+  RepositoryConcurrencyTest.kt       ← real threads against the transition lock
 
 nimbus-ktor/src/commonMain/kotlin/…ktor/
   KtorDownloadAdapter.kt             ← NimbusDownloadPort backed by Ktor HttpClient
@@ -224,6 +238,12 @@ These are used internally during boot (`loadDownloadTasks`) and retry flows:
 | `resetToEnqueued()`                      | `Finished`                     | Boot recovery when finished file is missing from disk                 |
 | `resetFromFailedToEnqueued(): Boolean`   | `Failed`                       | Used by `retryFailedDownload`; returns `false` if state wasn't Failed |
 | `updateExpectedFileSize(bytes): Boolean` | `Enqueued`, `Paused`, `Failed` | Updates size after re-fetching HEAD on retry                          |
+| `updateExpectedChecksum(c): Boolean`     | anything but `Finished`        | `ensureDownloaded` carrying a caller's expectation into an existing task |
+| `updateResumeValidator(v)`               | any                            | Adopts what the origin now says identifies the file                   |
+
+Both resets also clear `finishedAtEpochMs` and `checksum`: a task waiting to be downloaded that
+still carries a finish time is one `pruneFinished` will delete, and a checksum left behind
+describes a file that is missing or wrong — and would be reported for whatever arrives next.
 
 ## DownloadError hierarchy (internal — but reachable via DownloadState.Failed and NimbusError cause chains)
 
@@ -242,6 +262,7 @@ These are used internally during boot (`loadDownloadTasks`) and retry flows:
 | `FileIntegrityMismatch` | Downloaded size ≠ expected size; will retry                                    |
 | `FileNotAccessible`     | Local file could not be opened for writing; will retry                         |
 | `TruncateRace`          | Could not recreate file after 416 truncation; will retry                       |
+| `RemoteFileChanged`     | A conditional resume was answered with the whole file: the origin no longer has the file the partial came from. Discard and refetch |
 
 **`PermanentDownloadErrorCause` variants:**
 
@@ -251,6 +272,7 @@ These are used internally during boot (`loadDownloadTasks`) and retry flows:
 | `ClientError(statusCode)`          | HTTP 4xx (excluding 404) — non-recoverable client error           |
 | `InconsistentRangeResponse(reason)`| Server returned 200 with body when 206 was expected on resume     |
 | `LocalFileOversized`               | Local file is larger than the expected download size              |
+| `BodyLongerThanDeclared(declared)` | The body kept arriving past the declared size; the partial is discarded |
 | `InsufficientDiskSpace(cause)`     | The volume ran out of room while writing; detail in the cause     |
 | `StorageError(cause)`              | I/O or permission failure on local storage                        |
 | `UnexpectedError(cause?)`          | Unhandled exception                                               |
