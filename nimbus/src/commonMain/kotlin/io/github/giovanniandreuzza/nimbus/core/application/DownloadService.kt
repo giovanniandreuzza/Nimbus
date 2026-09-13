@@ -30,6 +30,7 @@ import io.github.giovanniandreuzza.nimbus.presentation.PermanentNimbusErrorCause
 import io.github.giovanniandreuzza.nimbus.shared.utils.isInside
 import io.github.giovanniandreuzza.nimbus.shared.utils.normalizedPath
 import io.github.giovanniandreuzza.nimbus.shared.utils.takeUntil
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
@@ -38,6 +39,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Download Service.
@@ -88,8 +90,16 @@ internal class DownloadService(
     private val loadMutex = Mutex()
     private var isLoaded = false
 
-    private val closeMutex = Mutex()
+    /**
+     * Guards the door rather than the work: admission and shutdown take it, an operation does
+     * not hold it while it runs. Without that, either two calls could not overlap at all — the
+     * concurrency limit exists precisely so they can — or `close` could not know whether any
+     * were still in flight.
+     */
+    private val closeGate = Mutex()
     private var isClosed = false
+    private var callsInFlight = 0
+    private var drained: CompletableDeferred<Unit>? = null
 
     private val scope = downloadScope
 
@@ -121,11 +131,36 @@ internal class DownloadService(
     private suspend fun <T> withReady(
         block: suspend () -> KResult<T, NimbusError>
     ): KResult<T, NimbusError> {
-        if (isClosed) {
+        if (!enterCall()) {
             return Failure(NimbusError.PermanentError(PermanentNimbusErrorCause.Closed))
         }
-        ensureLoaded().onFailure { return Failure(it) }
-        return block()
+        try {
+            ensureLoaded().onFailure { return Failure(it) }
+            return block()
+        } finally {
+            leaveCall()
+        }
+    }
+
+    /**
+     * Admits a call, or refuses it because the instance is closing.
+     *
+     * Checking a flag and then proceeding is not the same thing: a call that read `false` a
+     * moment before `close` set it would carry on past the flush and the scope cancellation,
+     * registering work that never runs. Admission and the count move together under one lock,
+     * so `close` knows exactly what is still inside.
+     */
+    private suspend fun enterCall(): Boolean = closeGate.withLock {
+        if (isClosed) return@withLock false
+        callsInFlight++
+        true
+    }
+
+    private suspend fun leaveCall() {
+        closeGate.withLock {
+            callsInFlight--
+            if (callsInFlight == 0) drained?.complete(Unit)
+        }
     }
 
     override suspend fun flush(): KResult<Unit, NimbusError> = withReady {
@@ -150,9 +185,18 @@ internal class DownloadService(
      * reported to the logger.
      */
     override suspend fun close() {
-        closeMutex.withLock {
+        val inFlight = closeGate.withLock {
             if (isClosed) return
             isClosed = true
+            if (callsInFlight == 0) null else CompletableDeferred<Unit>().also { drained = it }
+        }
+
+        // Calls admitted before the door shut are given a moment to finish, so that what they
+        // changed is part of what gets committed. Bounded, because one of them may be waiting
+        // on a server that never answers, and a shutdown that waits for a dead socket is a
+        // process the system kills instead — which is the outcome this method exists to avoid.
+        if (inFlight != null) {
+            withTimeoutOrNull(DRAIN_TIMEOUT_MS) { inFlight.await() }
         }
 
         downloadPort.stopAllDownloads()
@@ -178,7 +222,15 @@ internal class DownloadService(
     }
 
     override suspend fun isDownloaded(fileUrl: String): Boolean {
-        if (isClosed) return false
+        if (!enterCall()) return false
+        try {
+            return isDownloadedInternal(fileUrl)
+        } finally {
+            leaveCall()
+        }
+    }
+
+    private suspend fun isDownloadedInternal(fileUrl: String): Boolean {
         ensureLoaded().onFailure { return false }
         val id = idProvider.generateUniqueId(fileUrl)
         val finished = repository.readDownloadTask(DownloadId.create(id)) { task ->
@@ -642,7 +694,9 @@ internal class DownloadService(
         // after which the task no longer exists and the loop exits via the Failure branch.
         // A limit of 2 prevents an infinite loop if the state machine behaves unexpectedly.
         repeat(2) {
-            if (isDownloaded(fileUrl)) {
+            // The internal form: this call is already admitted, and counting it twice would
+            // only make close wait on itself.
+            if (isDownloadedInternal(fileUrl)) {
                 logger?.log(NimbusLogEvent.EnsureDownloadedAlreadyComplete(fileUrl))
                 return@withReady Success(flowOf(DownloadState.Finished))
             }
@@ -972,6 +1026,16 @@ internal class DownloadService(
         )
 
         return Success(Unit)
+    }
+
+    private companion object {
+        /**
+         * How long [close] waits for calls that were already running.
+         *
+         * Long enough for anything local or already answered, short enough that a request
+         * hanging on a dead link does not hold up a shutdown the caller asked for.
+         */
+        const val DRAIN_TIMEOUT_MS = 5_000L
     }
 
     private fun validateFileSize(fileSize: Long): KResult<Unit, NimbusError> {

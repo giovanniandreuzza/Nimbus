@@ -113,8 +113,12 @@ internal class DownloadTask private constructor(
     fun resetToEnqueued() {
         _state = DownloadState.Enqueued
         // It is not finished any more, and a timestamp saying otherwise would have
-        // `pruneFinished` delete a task that is waiting to be downloaded.
+        // `pruneFinished` delete a task that is waiting to be downloaded. The checksum goes
+        // with it: it describes a file that is missing or wrong, and left behind it would be
+        // reported for whatever arrives next — including a download that runs with no digest
+        // configured at all and therefore never overwrites it.
         _finishedAtEpochMs = null
+        _checksum = null
     }
 
     /**
@@ -126,6 +130,7 @@ internal class DownloadTask private constructor(
         if (_state !is DownloadState.Failed) return false
         _state = DownloadState.Enqueued
         _finishedAtEpochMs = null
+        _checksum = null
         return true
     }
 

@@ -5,7 +5,9 @@ import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Success
 import io.github.giovanniandreuzza.nimbus.core.application.errors.DownloadError
 import io.github.giovanniandreuzza.nimbus.core.application.errors.GetFileSizeError
+import io.github.giovanniandreuzza.nimbus.core.application.errors.PermanentGetFileSizeErrorCause
 import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryDownloadErrorCause
+import io.github.giovanniandreuzza.nimbus.core.application.errors.TemporaryGetFileSizeErrorCause
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.NimbusDownloadPort
 import io.github.giovanniandreuzza.nimbus.infrastructure.plugins.ports.download.RemoteFile
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusLogEvent
@@ -136,6 +138,44 @@ class AutoRetryBackoffTest {
         )
     }
 
+    @Test
+    fun `a preparation that failed on the link is tried again`() = runTest {
+        // Bringing a task back re-asks the origin for its size, so it fails for the same
+        // transient reasons a download does. Stopping there left the task `Failed` for good
+        // because one HEAD timed out — the opposite of what an unbounded policy promises.
+        val net = HeadFailsAfterFirstPort(permanently = false)
+        val f = fixture(net, RetryPolicy(maxAttempts = null, baseDelayMs = 1_000L, maxDelayMs = 8_000L))
+
+        f.api.enqueueDownload(URL, PATH, NAME)
+        advanceTimeBy(60_000L)
+        f.scope.cancel()
+
+        val scheduled = f.logger.events.filterIsInstance<NimbusLogEvent.AutoRetryScheduled>()
+        val failed = f.logger.events.filterIsInstance<NimbusLogEvent.AutoRetryFailed>()
+        assertTrue(
+            scheduled.size >= 3,
+            "the chain has to keep going while the reason is transient: $scheduled"
+        )
+        assertTrue(failed.size >= 2, "and each attempt says why it did not get anywhere")
+    }
+
+    @Test
+    fun `a preparation that cannot succeed is not tried again`() = runTest {
+        // A 404 on the size request answers the same way however many times it is asked.
+        val net = HeadFailsAfterFirstPort(permanently = true)
+        val f = fixture(net, RetryPolicy(maxAttempts = null, baseDelayMs = 1_000L, maxDelayMs = 8_000L))
+
+        f.api.enqueueDownload(URL, PATH, NAME)
+        advanceTimeBy(60_000L)
+        f.scope.cancel()
+
+        assertEquals(
+            1,
+            f.logger.events.filterIsInstance<NimbusLogEvent.AutoRetryScheduled>().size,
+            "one attempt, then it stops asking"
+        )
+    }
+
     private fun TestScope.fixture(port: NimbusDownloadPort, autoRetry: RetryPolicy): Fixture {
         val logger = RecordingLogger()
         // The auto-retry loop is unbounded by design, so the scope has to be stopped when the
@@ -193,6 +233,39 @@ class AutoRetryBackoffTest {
                 DownloadError.TemporaryError(TemporaryDownloadErrorCause.ServerError(503))
             )
         }
+    }
+
+    /**
+     * Answers the first size request — enough to enqueue — and refuses every one after it,
+     * which is what a retry runs into when the link is down or the file has gone.
+     */
+    private class HeadFailsAfterFirstPort(private val permanently: Boolean) : NimbusDownloadPort {
+        private var answered = false
+
+        override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFile, GetFileSizeError> {
+            if (!answered) {
+                answered = true
+                return Success(RemoteFile(SIZE))
+            }
+            return Failure(
+                if (permanently) {
+                    GetFileSizeError.PermanentError(PermanentGetFileSizeErrorCause.ResourceNotFound)
+                } else {
+                    GetFileSizeError.TemporaryError(
+                        TemporaryGetFileSizeErrorCause.ServerError(503)
+                    )
+                }
+            )
+        }
+
+        override suspend fun downloadFile(
+            fileUrl: String,
+            offset: Long,
+            resumeValidator: String?,
+            onSourceOpened: suspend (Source) -> Unit
+        ): KResult<Unit, DownloadError> = Failure(
+            DownloadError.TemporaryError(TemporaryDownloadErrorCause.ServerError(503))
+        )
     }
 
     /** Fails the next request, then serves the file. */

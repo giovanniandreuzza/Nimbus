@@ -15,10 +15,16 @@ import io.github.giovanniandreuzza.nimbus.testing.InMemoryStorage
 import io.github.giovanniandreuzza.nimbus.testing.RecordingLogger
 import io.github.giovanniandreuzza.nimbus.testing.ScriptedDownloadPort
 import io.github.giovanniandreuzza.nimbus.testing.UrlAsIdProvider
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -98,6 +104,54 @@ class LifecycleTest {
             f.repository.flushCount,
             "the second close has nothing left to commit and must not pretend otherwise"
         )
+    }
+
+    @Test
+    fun `close waits for a call that was already running`() = runTest {
+        // Otherwise the guarantee is only half true: the store is committed while an operation
+        // admitted a moment earlier is still writing, and what it wrote is not in the commit.
+        val f = fixture()
+        val held = CompletableDeferred<Unit>()
+        f.downloadPort.onGetRemoteFile = { held.await() }
+
+        // Foreground launches, driven a step at a time: `advanceUntilIdle` would run the
+        // drain's own timeout and the test would be watching that instead of the drain.
+        val enqueue = launch { f.service.enqueueDownload(URL, PATH, NAME) }
+        runCurrent()
+        val closing = launch { f.service.close() }
+        runCurrent()
+
+        assertEquals(
+            0,
+            f.repository.flushCount,
+            "the enqueue is still inside; committing now would commit without it"
+        )
+
+        held.complete(Unit)
+        advanceUntilIdle()
+
+        assertTrue(enqueue.isCompleted && closing.isCompleted)
+        assertEquals(1, f.repository.flushCount)
+        assertTrue(
+            f.repository.current(URL) != null,
+            "and what the call did is part of what was committed"
+        )
+    }
+
+    @Test
+    fun `close does not wait for ever on a call that never returns`() = runTest {
+        // A shutdown that waits on a dead socket is a process the system kills instead, which
+        // is the outcome close exists to avoid.
+        val f = fixture()
+        f.downloadPort.onGetRemoteFile = { awaitCancellation() }
+
+        backgroundScope.launch { f.service.enqueueDownload(URL, PATH, NAME) }
+        advanceUntilIdle()
+        val closing = backgroundScope.launch { f.service.close() }
+        advanceTimeBy(10_000L)
+
+        assertTrue(closing.isCompleted, "close is still waiting on a call that never ends")
+        assertEquals(1, f.repository.flushCount, "and it committed what it could")
     }
 
     @Test

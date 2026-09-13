@@ -1,5 +1,6 @@
 package io.github.giovanniandreuzza.nimbus.di
 
+import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.Failure
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.KResult
 import io.github.giovanniandreuzza.explicitarchitecture.shared.utilities.onFailure
 import io.github.giovanniandreuzza.nimbus.presentation.NimbusError
@@ -50,7 +51,15 @@ internal class AutoRetryScheduler(
     private val attempts = mutableMapOf<String, Int>()
 
     /**
-     * Queues a retry for [fileUrl].
+     * Queues a retry for [fileUrl], whatever kind of failure it was.
+     *
+     * Including a permanent one, which looks wrong and is not. Several permanent causes
+     * describe the *local* state rather than the origin — `LocalFileOversized`,
+     * `BodyLongerThanDeclared`, `InconsistentRangeResponse` — and the reset this loop performs
+     * is exactly what clears them: the partial is discarded and the file fetched again. A
+     * cause that really is permanent costs one round-trip and stops there, because
+     * `retryFailedDownload` re-asks the origin, gets the same answer, and the chain ends
+     * without rescheduling.
      *
      * Returns at once, and deliberately: it is called from inside the failing download's own
      * `onDownloadFailed`, which still has to return so the download coroutine can release its
@@ -66,28 +75,43 @@ internal class AutoRetryScheduler(
         mutex.withLock { attempts.remove(fileUrl) }
     }
 
+    /**
+     * A loop rather than a call that repeats itself: an unbounded policy against a backend
+     * that never answers would otherwise stack a suspended frame per attempt, for days.
+     */
     private suspend fun retryAfterBackoff(fileUrl: String) {
-        val attempt = mutex.withLock {
-            val next = (attempts[fileUrl] ?: 0) + 1
-            attempts[fileUrl] = next
-            next
-        }
+        while (true) {
+            val attempt = mutex.withLock {
+                val next = (attempts[fileUrl] ?: 0) + 1
+                attempts[fileUrl] = next
+                next
+            }
 
-        if (!policy.allowsAttempt(attempt)) {
-            logger?.log(NimbusLogEvent.AutoRetryExhausted(fileUrl, attempt - 1))
+            if (!policy.allowsAttempt(attempt)) {
+                logger?.log(NimbusLogEvent.AutoRetryExhausted(fileUrl, attempt - 1))
+                return
+            }
+
+            val wait = policy.delayForAttempt(attempt, random)
+            logger?.log(NimbusLogEvent.AutoRetryScheduled(fileUrl, wait, attempt))
+            delay(wait)
+
+            val prepared = retryFailedDownload(fileUrl)
+            if (prepared is Failure) {
+                logger?.log(NimbusLogEvent.AutoRetryFailed(fileUrl, prepared.error))
+
+                // Bringing the task back is itself a round-trip — it re-asks the origin for
+                // the size — so it fails for the same transient reasons a download does.
+                // Stopping there left a task `Failed` for good because one HEAD timed out,
+                // which is the opposite of what an unbounded policy promises. A permanent
+                // failure does stop it: asking again gets the same answer.
+                if (prepared.error.isRetryable) continue else return
+            }
+
+            startDownload(fileUrl).onFailure {
+                logger?.log(NimbusLogEvent.AutoStartFailed(fileUrl, it))
+            }
             return
-        }
-
-        val wait = policy.delayForAttempt(attempt, random)
-        logger?.log(NimbusLogEvent.AutoRetryScheduled(fileUrl, wait, attempt))
-        delay(wait)
-
-        retryFailedDownload(fileUrl).onFailure {
-            logger?.log(NimbusLogEvent.AutoRetryFailed(fileUrl, it))
-            return
-        }
-        startDownload(fileUrl).onFailure {
-            logger?.log(NimbusLogEvent.AutoStartFailed(fileUrl, it))
         }
     }
 }

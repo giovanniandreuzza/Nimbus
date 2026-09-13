@@ -66,6 +66,23 @@ class RetryDelayTest {
     }
 
     @Test
+    fun `the spread never pushes a wait past the ceiling`() {
+        // `maxDelayMs` is documented as the longest wait. Spreading after the cap made +20 %
+        // of it reachable — six minutes from a five-minute limit a caller wrote precisely to
+        // rule that out.
+        val policy = RetryPolicy(maxAttempts = null, baseDelayMs = 1_000L, maxDelayMs = 5_000L)
+        val random = Random(seed = 20260913)
+
+        val waits = (1..200).map { policy.delayForAttempt(attempt = 20, random = random) }
+
+        assertTrue(waits.all { it <= 5_000L }, "saw ${waits.max()}")
+        assertTrue(
+            waits.any { it < 5_000L },
+            "and it must still vary downwards, or a fleet at the ceiling retries in lockstep"
+        )
+    }
+
+    @Test
     fun `a bounded policy stops allowing attempts past its count`() {
         val policy = RetryPolicy(maxAttempts = 3, baseDelayMs = 500L, maxDelayMs = 60_000L)
 

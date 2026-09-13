@@ -38,9 +38,12 @@ import kotlin.coroutines.cancellation.CancellationException
  * **Behaviour:**
  * - Uses `HEAD` for size; if `Content-Length` is missing or zero, probes with
  *   `GET` + `Range: bytes=0-0` and reads total length from `Content-Range`.
- * - When [offset] > 0, accepts **206** with a matching `Content-Range` start,
- *   or **200** only if the body is empty (some servers signal empty range that way).
- * - Rejects **200** with a non-empty body when [offset] > 0 (mapped to [DownloadError.PermanentError]).
+ * - When resuming ([offset] > 0), accepts **206** with a `Content-Range` whose start matches
+ *   the offset, and nothing else. A **200** is the whole file: with an `If-Range` sent it means
+ *   the file changed ([TemporaryDownloadErrorCause.RemoteFileChanged], discard and refetch),
+ *   and without one it is a server ignoring the range
+ *   ([PermanentDownloadErrorCause.InconsistentRangeResponse]) — appending either to the partial
+ *   would corrupt it, so neither body is read.
  * - Maps **416** to [DownloadError.TemporaryError] (cause code `range_not_satisfiable`); the
  *   adapter layer will truncate the local file and restart from byte 0.
  *

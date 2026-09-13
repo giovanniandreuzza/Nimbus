@@ -14,9 +14,10 @@ private const val JITTER_FRACTION = 0.2
  * The wait before retry number [attempt], counting the first retry as 1.
  *
  * Doubles per attempt from [RetryPolicy.baseDelayMs] and stops at [RetryPolicy.maxDelayMs],
- * then spreads the result by ±20 %. The doubling is computed in a way that cannot overflow:
- * an unbounded auto-retry loop on a device that has been up for months would otherwise shift a
- * Long past its sign bit and start asking for negative delays.
+ * then spreads the result by ±20 % without ever exceeding that ceiling. The doubling is
+ * computed in a way that cannot overflow: an unbounded auto-retry loop on a device that has
+ * been up for months would otherwise shift a Long past its sign bit and start asking for
+ * negative delays.
  *
  * @param random injectable so a test can assert the arithmetic rather than a range.
  */
@@ -32,7 +33,12 @@ internal fun RetryPolicy.delayForAttempt(
     val capped = doubled.coerceAtMost(maxDelayMs.toDouble())
 
     val spread = 1.0 - JITTER_FRACTION + random.nextDouble() * (2 * JITTER_FRACTION)
-    return (capped * spread).toLong().coerceAtLeast(1L)
+
+    // Clamped after the spread as well as before it. `maxDelayMs` is documented as the longest
+    // wait, and +20 % of a five-minute ceiling is six minutes — a number the caller wrote a
+    // limit specifically to rule out. At the ceiling the spread therefore only shortens, which
+    // still separates a fleet.
+    return (capped * spread).toLong().coerceIn(1L, maxDelayMs)
 }
 
 /**

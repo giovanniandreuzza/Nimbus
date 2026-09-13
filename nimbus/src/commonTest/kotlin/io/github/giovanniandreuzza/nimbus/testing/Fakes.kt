@@ -156,8 +156,14 @@ internal class ScriptedDownloadPort(
     /** What the origin claims identifies the file. Change it to make a resume look stale. */
     var remoteValidator: String? = null
 
-    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFileInfo, GetFileSizeError> =
-        sizeFailure?.let { Failure(it) } ?: Success(RemoteFileInfo(remoteSize, remoteValidator))
+    /** Runs before the size is answered, so a test can hold a call open. */
+    var onGetRemoteFile: (suspend () -> Unit)? = null
+
+    override suspend fun getRemoteFile(fileUrl: String): KResult<RemoteFileInfo, GetFileSizeError> {
+        onGetRemoteFile?.invoke()
+        return sizeFailure?.let { Failure(it) }
+            ?: Success(RemoteFileInfo(remoteSize, remoteValidator))
+    }
 
     override suspend fun startDownload(downloadTask: DownloadTaskDTO): KResult<Unit, DownloadError> {
         started.add(downloadTask)

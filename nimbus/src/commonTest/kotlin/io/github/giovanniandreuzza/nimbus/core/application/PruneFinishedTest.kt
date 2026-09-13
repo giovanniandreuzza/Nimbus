@@ -100,6 +100,33 @@ class PruneFinishedTest {
     }
 
     @Test
+    fun `a task that stops being finished stops reporting a checksum`() = runTest {
+        // The digest described the file that was there. Left behind on a reset it would be
+        // reported for whatever arrives next — including a redownload with no digest
+        // configured, which never overwrites it.
+        val f = fixture()
+        f.repository.seed(
+            DownloadTask.restore(
+                id = URL,
+                fileUrl = URL,
+                filePath = PATH,
+                fileName = NAME,
+                fileSize = SIZE,
+                state = DownloadState.Finished,
+                checksum = Checksum.of(DigestAlgorithm.SHA256, "b".repeat(64)),
+                createdAtEpochMs = f.clock.nowEpochMs(),
+                finishedAtEpochMs = f.clock.nowEpochMs()
+            )
+        )
+
+        val task = f.repository.current(URL) ?: fail("seeded task is gone")
+        task.resetToEnqueued()
+
+        assertNull(task.checksum, "it describes a file this task no longer has")
+        assertNull(task.finishedAtEpochMs)
+    }
+
+    @Test
     fun `the file goes only when asked`() = runTest {
         val f = fixture()
         f.finishedTask(URL, PATH, finishedAt = f.clock.nowEpochMs())
