@@ -81,8 +81,23 @@ internal class DownloadRepository(
      * boot cost two million comparisons and two thousand map copies, on a device whose
      * catalogue only ever grows. A path is fixed for the life of a task, so an index of them
      * needs maintaining in exactly the two places a task appears and disappears.
+     *
+     * Counted rather than a set, so that it answers what the scan answered. `enqueueDownload`
+     * refuses a path that is taken, so two tasks cannot normally share one — but a store can
+     * be older than that rule, or edited, or corrupt, and with a set the first of the two to
+     * be deleted would free a path the other is still writing to. The next enqueue would then
+     * be handed a destination that already belongs to something.
      */
-    private val filePathsInUse = mutableSetOf<String>()
+    private val filePathUsers = mutableMapOf<String, Int>()
+
+    private fun claimFilePath(path: String) {
+        filePathUsers[path] = (filePathUsers[path] ?: 0) + 1
+    }
+
+    private fun releaseFilePath(path: String) {
+        val remaining = (filePathUsers[path] ?: 0) - 1
+        if (remaining <= 0) filePathUsers.remove(path) else filePathUsers[path] = remaining
+    }
 
     /**
      * Monotonic counter bumped on every mutation, and the only thing the hot path pushes.
@@ -149,7 +164,7 @@ internal class DownloadRepository(
                 }
                 tasks[id] = task
                 stateFlows[id] = MutableStateFlow(task.state)
-                filePathsInUse += task.filePath.value
+                claimFilePath(task.filePath.value)
             }
             revision.value++
         }
@@ -175,7 +190,7 @@ internal class DownloadRepository(
     }
 
     override suspend fun isFilePathInUse(filePath: String): Boolean = mutex.withLock {
-        filePath in filePathsInUse
+        filePathUsers.containsKey(filePath)
     }
 
     /**
@@ -206,8 +221,11 @@ internal class DownloadRepository(
         // another transition may be changing — and what reached the disk would be neither
         // state in full.
         val snapshot = mutex.withLock {
-            tasks[downloadTask.entityId.id] = downloadTask
-            filePathsInUse += downloadTask.filePath.value
+            // Saving the same task twice — a state change on one that already exists — must
+            // not count its path twice, or nothing would ever release it.
+            if (tasks.put(downloadTask.entityId.id, downloadTask) == null) {
+                claimFilePath(downloadTask.filePath.value)
+            }
             stateFlows[downloadTask.entityId.id]?.update { downloadTask.state }
                 ?: run {
                     stateFlows[downloadTask.entityId.id] = MutableStateFlow(downloadTask.state)
@@ -290,7 +308,7 @@ internal class DownloadRepository(
 
     override suspend fun deleteDownloadTask(id: DownloadId): KResult<Unit, KError> {
         mutex.withLock {
-            tasks.remove(id)?.let { filePathsInUse -= it.filePath.value }
+            tasks.remove(id)?.let { releaseFilePath(it.filePath.value) }
             stateFlows.remove(id)
             revision.value++
         }

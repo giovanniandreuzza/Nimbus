@@ -142,6 +142,55 @@ class DownloadStoreRecoveryTest {
         )
     }
 
+    @Test
+    fun `two tasks on one path keep it claimed until both are gone`() = runTest {
+        // `enqueueDownload` refuses a path that is taken, so this cannot arise from the API —
+        // but a store can be older than that rule, or edited, or corrupt. With the index as a
+        // plain set, deleting the first would free a path the second is still writing to, and
+        // the next enqueue would be handed a destination that already belongs to something.
+        val repository = repositoryOn(InMemoryStorage())
+        repository.loadDownloadTasks()
+        val first = taskOn(TAKEN_PATH, id = "task-1")
+        val second = taskOn(TAKEN_PATH, id = "task-2")
+        repository.saveDownloadTask(first)
+        repository.saveDownloadTask(second)
+
+        repository.deleteDownloadTask(first.entityId.id)
+
+        assertTrue(
+            repository.isFilePathInUse(TAKEN_PATH),
+            "the second task still writes there"
+        )
+
+        repository.deleteDownloadTask(second.entityId.id)
+
+        assertTrue(!repository.isFilePathInUse(TAKEN_PATH), "and now nobody does")
+    }
+
+    @Test
+    fun `saving the same task again does not claim its path twice`() = runTest {
+        // Every state change goes through a save. Counting each one would leave a path
+        // claimed for ever by a task that has been deleted.
+        val repository = repositoryOn(InMemoryStorage())
+        repository.loadDownloadTasks()
+        val task = taskOn(TAKEN_PATH)
+        repository.saveDownloadTask(task)
+        repository.saveDownloadTask(task)
+        repository.saveDownloadTask(task)
+
+        repository.deleteDownloadTask(task.entityId.id)
+
+        assertTrue(!repository.isFilePathInUse(TAKEN_PATH), "one task, one claim")
+    }
+
+    private fun taskOn(path: String, id: String = "task-1") = DownloadTask.create(
+        id = id,
+        fileUrl = "https://example.com/$id",
+        filePath = path,
+        fileName = "clip.mp4",
+        fileSize = 1_024L
+    )
+
     private fun TestScope.repositoryOn(
         storage: InMemoryStorage,
         logger: NimbusLogger? = null
