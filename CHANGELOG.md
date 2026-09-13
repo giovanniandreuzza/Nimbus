@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.1](https://github.com/giovanniandreuzza/Nimbus/compare/v2.5.0...v2.5.1) (2026-09-13)
+
+
+### Documentation
+
+* the spec and the plan behind 2.5.0 ([#29](https://github.com/giovanniandreuzza/Nimbus/issues/29)) ([df196a7](https://github.com/giovanniandreuzza/Nimbus/commit/df196a73ad73f907dce0007f28f53922997b9818))
+
 ## [2.5.0](https://github.com/giovanniandreuzza/Nimbus/compare/v2.4.0...v2.5.0) (2026-09-13)
 
 A field audit of the library against what it claims to be built for — a kiosk or a signage
