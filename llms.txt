@@ -216,14 +216,17 @@ back by one without.
 
 **Resume correctness.** The resume offset comes from the length of the partial file on disk, so a
 digest accumulated only across one streaming session would hash the tail alone after a process
-restart and produce a value that is well-formed, plausible and wrong. The digest is therefore
-primed from the bytes already on disk at the start of *every* streaming attempt, with no
-conditional: a fresh download reads nothing, a resume re-reads its prefix, and retries and 416
-truncations are covered by the same rule. A download that ran straight through and one that was
-interrupted and resumed produce the same digest.
+restart and produce a value that is well-formed, plausible and wrong. What the digest has consumed
+must therefore be exactly the bytes on disk, and that is checked rather than assumed: the digest
+tracks how much it has taken and is rebuilt from the partial whenever the two lengths disagree —
+on the first attempt, after a process restart, after a 416 truncation, and after any attempt that
+died with bytes buffered but unwritten. When they agree, which is the common case for a link that
+merely dropped, the partial is not read again. A download that ran straight through and one that
+was interrupted and resumed produce the same digest.
 
 **Cost.** Every byte already passes through the write path exactly once, so hashing adds the hash
-and no extra pass. `checksum(fileUrl)` is the exception: it reads the whole file back.
+and no extra pass. A resume adds a re-read of the partial only when the digest does not already
+stand for it. `checksum(fileUrl)` is the exception: it always reads the whole file back.
 
 ## NimbusError sealed class — exhaustive list
 
@@ -497,9 +500,10 @@ have to discover from a bug report.
   not a generic storage error. Detail is in its `cause`. The pre-flight headroom guard
   (`withMinReservedDiskBytes`) reports `PermanentNimbusErrorCause.InsufficientDiskSpace` instead —
   same condition, two channels, because one is a returned error and the other is a task state.
-- **A digest survives a resume.** It is primed from the bytes already on disk at the start of every
-  attempt, so an interrupted-and-resumed download hashes to the same value as one that ran straight
-  through.
+- **A digest survives a resume.** What it has consumed is kept equal to what is on disk — rebuilt
+  from the partial when the two disagree, carried when they do not — so an interrupted-and-resumed
+  download hashes to the same value as one that ran straight through, without re-reading its own
+  partial on every attempt.
 - **A transfer that delivers nothing for `withStallTimeoutMs` (60 s by default) is abandoned and
   retried,** reported as `TemporaryDownloadErrorCause.TransportFailure` with cause code
   `transfer_stalled`; a size request that never answers fails with `size_request_stalled`. The

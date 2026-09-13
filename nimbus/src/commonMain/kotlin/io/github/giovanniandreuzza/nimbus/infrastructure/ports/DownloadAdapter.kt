@@ -405,24 +405,18 @@ internal class DownloadAdapter(
         var digest: ContentDigest? = null
 
         downloadLoop@ while (currentCoroutineContext().isActive) {
-            // Prime from disk at the start of every attempt, then feed the digest the bytes
-            // streamed after that.
+            // The digest covers the bytes on disk, always, and the offset comes from the file.
             //
-            // The resume offset comes from the length of the file on disk and nothing about
-            // it is held in memory, so a resume survives a process restart. A digest
-            // accumulated only across a streaming session would therefore cover only what
-            // that session transferred: after a restart-and-resume it would hash the tail
-            // alone and produce a value that is well-formed, plausible and wrong. The
-            // consumer would compare it later, conclude the file is corrupt, and delete and
-            // re-download it on every pass, forever.
+            // The resume offset is the length of the partial and nothing about it is held in
+            // memory, so a resume survives a process restart. A digest accumulated only
+            // across a streaming session would therefore cover only what that session
+            // transferred: after a restart-and-resume it would hash the tail alone and
+            // produce a value that is well-formed, plausible and wrong. The consumer would
+            // compare it later, conclude the file is corrupt, and delete and re-download it
+            // on every pass, forever.
             //
-            // One code path, no condition. On a fresh download the prime reads nothing. On
-            // a resume it re-reads the prefix already fetched — a cost paid only when a
-            // transfer was already interrupted, which is to say when far more has already
-            // been wasted. Re-priming at the top of each attempt is also what makes the
-            // rule hold across a 416 truncation and every transport retry.
-            // The offset comes from the file, for the same reason the digest does, and at the
-            // same moment.
+            // Which is why the digest is checked against the file below rather than assumed
+            // to match it.
             //
             // Holding it in memory instead looks equivalent and is not: the assignment that
             // records it only runs when the transfer returns, so an attempt whose body stopped
@@ -437,9 +431,28 @@ internal class DownloadAdapter(
 
             val algorithm = digestAlgorithm
             if (algorithm != null) {
-                val primed = ContentDigest(algorithm)
-                if (!primeFromDisk(downloadTask.filePath, id, primed)) return null
-                digest = primed
+                // Read the partial back only when the digest does not already stand for it.
+                //
+                // The rule that matters is unchanged: what the digest has consumed must be
+                // exactly the bytes on disk, because the resume offset comes from the file's
+                // length and a digest covering anything else produces a value that is
+                // well-formed, plausible and wrong. What changes is how often that has to be
+                // established by re-reading. Within one job, an attempt that ends after
+                // writing 15 MB leaves a digest that has consumed those same 15 MB, and
+                // re-reading them to learn what is already known cost O(partial × attempts) —
+                // 60 MB of eMMC reads and hashing for a 20 MB asset that drops three times.
+                //
+                // The comparison is what makes it safe, and it is the file that is asked.
+                // The byte counter advances before the buffered sink flushes, so an attempt
+                // that died mid-write can leave the digest ahead of the disk; the lengths then
+                // disagree and the prime happens. So it does after a 416 truncation, after a
+                // restart, and on the first attempt — every case where the two could differ.
+                val carried = digest
+                if (carried == null || carried.consumedBytes != progressBytes) {
+                    val primed = ContentDigest(algorithm)
+                    if (!primeFromDisk(downloadTask.filePath, id, primed)) return null
+                    digest = primed
+                }
             }
 
             // The file is already whole, so there is nothing left to ask for. Reached when an

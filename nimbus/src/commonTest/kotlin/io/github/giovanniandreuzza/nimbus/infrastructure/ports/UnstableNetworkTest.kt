@@ -125,6 +125,57 @@ class UnstableNetworkTest {
     }
 
     @Test
+    fun `a resume does not read back what the digest already stands for`() = runTest {
+        // The digest has to cover the bytes on disk, and the way it used to establish that was
+        // to read the partial again at the top of every attempt. Correct, and O(partial ×
+        // attempts): a 20 MB asset dropping three times near the end cost 60 MB of reads and
+        // hashing per cycle, on eMMC, for bytes this process had just hashed itself.
+        val net = HostileNetwork(CONTENT) { attempt, _ ->
+            if (attempt <= 5) Behaviour.Deliver(bytes = 700) else Behaviour.Complete
+        }
+        val h = Harness(this, net, maxRetryAttempts = 10)
+
+        h.run()
+
+        assertTrue(h.finished, "expected a finish: ${h.failure}")
+        assertEquals(
+            0L,
+            h.storage.bytesReadBack,
+            "six attempts and not one byte re-read: the digest already stood for what was on " +
+                    "disk. The single open is the empty file at the start, which reads nothing"
+        )
+    }
+
+    @Test
+    fun `a digest that no longer matches the file is rebuilt from it`() = runTest {
+        // The partial is there before the transfer starts — from an earlier process — so the
+        // digest at the top of the first attempt stands for nothing while the file holds
+        // 1 000 bytes. That is the case the comparison exists for, and the check that the
+        // shortcut cannot swallow it.
+        val h = Harness(
+            this,
+            HostileNetwork(CONTENT) { _, _ -> Behaviour.Complete },
+            maxRetryAttempts = 1
+        )
+        h.storage.write(PATH, CONTENT.copyOf(1_000))
+
+        h.run()
+
+        assertTrue(h.finished, "expected a finish: ${h.failure}")
+        assertEquals(
+            1_000L,
+            h.storage.bytesReadBack,
+            "the prefix is read once, to establish what the digest stands for, and not again"
+        )
+        assertContentEquals(CONTENT, h.storage.read(PATH))
+        assertEquals(
+            digestOf(CONTENT),
+            h.checksum,
+            "the digest has to describe the whole file, prefix included"
+        )
+    }
+
+    @Test
     fun `a server that ignores the resume offset is caught while it is still arriving`() =
         runTest {
             // The body arrives from byte 0 again and is appended to what is already there, so

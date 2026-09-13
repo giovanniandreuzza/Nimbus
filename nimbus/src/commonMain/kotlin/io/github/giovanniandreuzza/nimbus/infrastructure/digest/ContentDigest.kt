@@ -17,9 +17,20 @@ internal class ContentDigest(private val algorithm: DigestAlgorithm) {
         DigestAlgorithm.SHA256 -> SHA256()
     }
 
+    /**
+     * How many bytes have gone through it.
+     *
+     * A hash cannot be asked what it has seen, and the answer decides whether an interrupted
+     * transfer has to read its own partial file back before resuming. Compared against the
+     * length of that file, this says whether the two describe the same bytes.
+     */
+    var consumedBytes: Long = 0L
+        private set
+
     fun update(bytes: ByteArray, offset: Int, length: Int) {
         if (length <= 0) return
         digest.update(bytes, offset, length)
+        consumedBytes += length.toLong()
     }
 
     /** Consumes the accumulated state and returns the digest. */
