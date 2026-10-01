@@ -28,18 +28,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-        # v3 defaults to 'tools platform-tools', and Google no longer serves
-        # 'tools': sdkmanager fails on it and takes the job down. The build
-        # never used it.
-        with:
-          packages: platform-tools
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@v4
+      # Not v6: v6 moves the caching under Gradle's proprietary terms of use,
+      # and accepting those is a decision, not a version bump.
+      - uses: gradle/actions/setup-gradle@v5
       - name: Build every target and run every test
         run: ./gradlew build --stacktrace
       - name: Upload test reports
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: test-reports
           path: '**/build/reports/tests/**'
