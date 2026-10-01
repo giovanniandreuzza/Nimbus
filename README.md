@@ -301,7 +301,11 @@ lives in the query string and is valid for hours. A logger that ships events to 
 backend ships those credentials with them:
 
 ```kotlin
-NimbusLogger { event -> Timber.tag("Nimbus").d("%s", event.redactingQueryStrings()) }
+// A URL's query, up to the next space: a signature may contain "," and ")"
+val urlQuery = Regex("""(://[^?\s]*)\?\S+""")
+NimbusLogger { event ->
+    Timber.tag("Nimbus").d("%s", event.toString().replace(urlQuery, "$1?redacted"))
+}
 ```
 
 ## Handling errors
