@@ -51,6 +51,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        # Same as ci.yml: v3's default asks for 'tools', which Google no longer
+        # serves.
+        with:
+          packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
       - name: Publish to Maven Central
         # Uploads and releases in one step: no manual button in the Central Portal.
