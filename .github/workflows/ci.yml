@@ -29,6 +29,11 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        # v3 defaults to 'tools platform-tools', and Google no longer serves
+        # 'tools': sdkmanager fails on it and takes the job down. The build
+        # never used it.
+        with:
+          packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
       - name: Build every target and run every test
         run: ./gradlew build --stacktrace
