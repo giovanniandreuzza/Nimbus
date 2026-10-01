@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.2](https://github.com/giovanniandreuzza/Nimbus/compare/v2.5.1...v2.5.2) (2026-10-01)
+
+
+### Documentation
+
+* **readme:** redact signed query strings inside the logger example ([#32](https://github.com/giovanniandreuzza/Nimbus/issues/32)) ([5e729c4](https://github.com/giovanniandreuzza/Nimbus/commit/5e729c469f6b0bf9aafa0e24b03a58e56b5f4261))
+
 ## [2.5.1](https://github.com/giovanniandreuzza/Nimbus/compare/v2.5.0...v2.5.1) (2026-09-13)
 
 
